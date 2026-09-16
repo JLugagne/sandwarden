@@ -1,4 +1,5 @@
 import { Desktop } from "@/bindings/github.com/JLugagne/sandwarden/internal/desktop";
+import { Notify } from "@/bindings/github.com/JLugagne/sandwarden/internal/desktop/notifier";
 import type {
   CacheInput,
   CacheMount,
@@ -32,6 +33,7 @@ const asArray = <T>(value: T[] | null | undefined): T[] => value ?? [];
 
 export const api = {
   health: () => Desktop.Health() as Promise<Health>,
+  notify: (title: string, body: string) => Notify(title, body),
 
   listSandboxes: () =>
     Desktop.ListSandboxes().then((rows) => asArray(rows) as unknown as SandboxSummary[]),

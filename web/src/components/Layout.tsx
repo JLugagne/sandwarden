@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { useConnectionStatus } from "@/app/RealtimeProvider";
-import { requestNotificationPermission } from "@/components/Toaster";
+import { notificationsEnabled, setNotificationsEnabled } from "@/lib/notifications";
 import { Button } from "@/components/ui";
 
 const NAV = [
@@ -22,6 +23,7 @@ const STATUS_META = {
 export function Layout() {
   const status = useConnectionStatus();
   const meta = STATUS_META[status];
+  const [notificationsOn, setNotificationsOn] = useState(notificationsEnabled());
 
   return (
     <div className="flex min-h-dvh">
@@ -53,8 +55,16 @@ export function Layout() {
             <span className={cn("size-1.5 rounded-full", meta.className)} aria-hidden="true" />
             {meta.label}
           </span>
-          <Button variant="ghost" size="sm" onClick={requestNotificationPermission}>
-            Notifications
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const next = !notificationsOn;
+              setNotificationsOn(next);
+              setNotificationsEnabled(next);
+            }}
+          >
+            Notifications {notificationsOn ? "on" : "off"}
           </Button>
         </div>
       </aside>

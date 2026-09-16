@@ -87,19 +87,6 @@ export function useToasts(): ToastApi {
   return api;
 }
 
-/** Ask for browser notification permission once, from a user gesture. */
-export function requestNotificationPermission(): void {
-  if ("Notification" in window && Notification.permission === "default") {
-    void Notification.requestPermission();
-  }
-}
-
-export function notifyBrowser(title: string, body: string): void {
-  if ("Notification" in window && Notification.permission === "granted") {
-    new Notification(title, { body });
-  }
-}
-
 /** Auto-scroll a container to the bottom while it is pinned near the bottom. */
 export function useStickToBottom<T extends HTMLElement>(dependency: unknown) {
   const ref = useRef<T | null>(null);

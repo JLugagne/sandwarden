@@ -4,7 +4,7 @@ import { api } from "@/api/client";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { queryKeys } from "@/store/realtime";
 import { useConnectionStatus } from "@/app/RealtimeProvider";
-import { requestNotificationPermission } from "@/components/Toaster";
+import { notificationsEnabled, setNotificationsEnabled } from "@/lib/notifications";
 import {
   Badge,
   Button,
@@ -103,7 +103,7 @@ const EMPTY_CACHE: CacheInput = {
 export function SettingsPage() {
   const health = useQuery({ queryKey: queryKeys.health, queryFn: api.health, retry: 0 });
   const status = useConnectionStatus();
-  const notificationsEnabled = "Notification" in window && Notification.permission === "granted";
+  const [notificationsOn, setNotificationsOn] = useState(notificationsEnabled());
 
   const caches = useQuery({ queryKey: queryKeys.caches, queryFn: api.caches });
   const [editing, setEditing] = useState<{ mode: "create" } | { mode: "edit"; cache: CacheMount } | null>(null);
@@ -226,13 +226,18 @@ export function SettingsPage() {
           )}
         </Panel>
 
-        <Panel title="Notifications" description="Browser notifications for newly blocked hosts.">
+        <Panel title="Notifications" description="Native desktop notifications for newly blocked hosts.">
           <div className="flex items-center gap-3">
-            <Button onClick={requestNotificationPermission} disabled={notificationsEnabled}>
-              Enable notifications
-            </Button>
+            <CheckboxField
+              label="enable desktop notifications"
+              checked={notificationsOn}
+              onChange={(value) => {
+                setNotificationsOn(value);
+                setNotificationsEnabled(value);
+              }}
+            />
             <span className="text-xs text-muted">
-              {notificationsEnabled ? "Enabled for this browser." : "Not enabled yet."}
+              {notificationsOn ? "Sent by the desktop app." : "Not enabled."}
             </span>
           </div>
         </Panel>

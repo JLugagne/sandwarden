@@ -317,3 +317,10 @@ func TestAssetMiddlewareServesSPAShell(t *testing.T) {
 		})
 	}
 }
+
+func TestNotifierRejectsEmpty(t *testing.T) {
+	notifier := NewNotifier()
+	if err := notifier.Notify("  ", " "); err == nil {
+		t.Fatal("expected an error for an empty notification")
+	}
+}

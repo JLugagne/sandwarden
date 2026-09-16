@@ -53,12 +53,14 @@ func main() {
 	core.Start(ctx)
 
 	service := desktop.New(core, ctx)
+	notifier := desktop.NewNotifier()
 
 	wailsApp := application.New(application.Options{
 		Name:        "sandwarden",
 		Description: "Manage Docker Sandboxes",
 		Services: []application.Service{
 			application.NewService(service),
+			application.NewService(notifier),
 		},
 		Assets: application.AssetOptions{
 			Handler:    application.AssetFileServerFS(assets),

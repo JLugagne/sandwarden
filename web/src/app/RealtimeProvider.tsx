@@ -3,7 +3,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { RealtimeClient, type ConnectionStatus } from "@/api/ws";
 import { applyEvent } from "@/store/realtime";
 import { routeJobEvent } from "@/store/jobs";
-import { notifyBrowser, useToasts } from "@/components/Toaster";
+import { useToasts } from "@/components/Toaster";
+import { notifyDesktop } from "@/lib/notifications";
 import type { BlockedEvent } from "@/types";
 
 const RealtimeContext = createContext<{ status: ConnectionStatus }>({ status: "connecting" });
@@ -35,7 +36,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
           title: `Blocked: ${data.host}`,
           body: `sandbox ${data.sandbox} · rule ${data.rule}`,
         });
-        notifyBrowser(`Traffic blocked in ${data.sandbox}`, data.host);
+        notifyDesktop(`Traffic blocked in ${data.sandbox}`, data.host);
         return;
       }
       applyEvent(queryClient, event);
