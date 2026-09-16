@@ -4,6 +4,9 @@ set -e
 REPO="JLugagne/sandwarden"
 BINARY="sandwarden"
 INSTALL_DIR="${SANDWARDEN_INSTALL_DIR:-$HOME/.local/bin}"
+
+# Channel: latest (default), unstable, or a version tag such as v0.1.0.
+CHANNEL="${1:-${SANDWARDEN_CHANNEL:-latest}}"
 VERSION="${SANDWARDEN_VERSION:-}"
 
 # Resolve OS
@@ -38,16 +41,37 @@ if [ "$OS" = "darwin" ] && [ "$ARCH" != "arm64" ]; then
   exit 1
 fi
 
-# Resolve version: latest stable release unless pinned. SANDWARDEN_VERSION=unstable
-# installs the rolling pre-release built from the main branch.
-if [ -z "$VERSION" ]; then
-  VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
-fi
+# Resolve the channel without the rate-limited API: the latest stable release
+# page redirects to its tag. When no stable release exists yet (fresh repo) or
+# the redirect cannot be read, fall back to the unstable pre-release.
+resolve_latest() {
+  target="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+    "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
+  case "$target" in
+    */releases/tag/*) printf '%s\n' "${target##*/tag/}" ;;
+    *) return 1 ;;
+  esac
+}
 
 if [ -z "$VERSION" ]; then
-  echo "Could not determine the latest version. Set SANDWARDEN_VERSION to override." >&2
-  exit 1
+  case "$CHANNEL" in
+    unstable)
+      VERSION="unstable"
+      ;;
+    latest)
+      if ! VERSION="$(resolve_latest)"; then
+        echo "No stable release is published yet; installing the unstable pre-release."
+        VERSION="unstable"
+      fi
+      ;;
+    v*)
+      VERSION="$CHANNEL"
+      ;;
+    *)
+      echo "Unknown channel '$CHANNEL'. Use latest, unstable, or a version tag." >&2
+      exit 1
+      ;;
+  esac
 fi
 
 ARCHIVE="sandwarden_${OS}_${ARCH}.tar.gz"

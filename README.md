@@ -76,20 +76,20 @@ web/                 React 19 + Vite + TanStack Query UI (web/src/bindings is ge
 
 ## Install
 
-Prebuilt binaries are published for Linux (amd64) and macOS (Apple silicon):
+Prebuilt binaries are published for Linux (amd64) and macOS (Apple silicon). Two one-liners:
 
 ```sh
+# latest stable release
 curl -fsSL https://raw.githubusercontent.com/JLugagne/sandwarden/main/install.sh | bash
+
+# rolling unstable pre-release (main branch)
+curl -fsSL https://raw.githubusercontent.com/JLugagne/sandwarden/main/install-unstable.sh | bash
 ```
 
-The script verifies the release checksum and installs to `~/.local/bin/sandwarden`
-(`SANDWARDEN_INSTALL_DIR` overrides the location). Pin a version with `SANDWARDEN_VERSION=v0.1.0`.
-
-Every push to `main` also publishes a rolling **unstable** pre-release:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/JLugagne/sandwarden/main/install.sh | SANDWARDEN_VERSION=unstable sh
-```
+Before the first stable release exists, the stable command falls back to the unstable pre-release.
+The scripts verify the release checksum and install to `~/.local/bin/sandwarden`
+(`SANDWARDEN_INSTALL_DIR` overrides the location). Pin a version with `SANDWARDEN_VERSION=v0.1.0`,
+or pass a channel directly: `... | bash -s unstable`.
 
 Stable releases are cut from `v*` tags. The Settings page checks the latest stable release and reports
 when an update is available, with the install command to run.
