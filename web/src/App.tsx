@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "@/components/Layout";
+import { KitsPage } from "@/pages/KitsPage";
 import { ProfilesPage } from "@/pages/ProfilesPage";
 import { SandboxDetailPage } from "@/pages/SandboxDetailPage";
 import { SandboxesPage } from "@/pages/SandboxesPage";
@@ -16,6 +17,7 @@ export function App() {
         <Route path="sandboxes/:name" element={<SandboxDetailPage />} />
         <Route path="profiles" element={<ProfilesPage />} />
         <Route path="skills" element={<SkillsPage />} />
+        <Route path="kits" element={<KitsPage />} />
         <Route path="traffic" element={<TrafficPage />} />
         <Route path="secrets" element={<SecretsPage />} />
         <Route path="settings" element={<SettingsPage />} />

@@ -19,6 +19,23 @@ export interface CacheMount {
 }
 
 /**
+ * KitStore is a git checkout of a kit repository.
+ */
+export interface KitStore {
+    "id": number;
+    "name": string;
+    "description": string;
+    "url": string;
+    "ref": string;
+    "auth": string;
+    "path": string;
+    "synced_at": string;
+    "error": string;
+    "created_at": string;
+    "updated_at": string;
+}
+
+/**
  * Profile is a named, reusable set of allow/deny URL patterns.
  */
 export interface Profile {
@@ -29,6 +46,20 @@ export interface Profile {
     "is_global": boolean;
     "created_at": string;
     "updated_at": string;
+}
+
+/**
+ * ProfileMount is a bind mount a profile applies by default to every sandbox
+ * it is assigned to. It is applied at runtime (like caches) and re-applied by
+ * the reconcile pass whenever the sandbox is running.
+ */
+export interface ProfileMount {
+    "id": number;
+    "profile_id": number;
+    "host_path": string;
+    "target_path": string;
+    "read_only": boolean;
+    "created_at": string;
 }
 
 /**

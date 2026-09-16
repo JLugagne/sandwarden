@@ -9,6 +9,7 @@ type CreateSandboxRequest struct {
 	Memory       string          `json:"memory"`
 	Profile      string          `json:"profile"`
 	Template     string          `json:"template"`
+	Kits         []string        `json:"kits"`
 	Publish      []string        `json:"publish"`
 	Env          []string        `json:"env"`
 	DenyNetwork  []string        `json:"deny_network"`
@@ -92,6 +93,15 @@ type ImportSecretsRequest struct {
 	JobID   string `json:"job_id"`
 }
 
+// KitStoreRequest is the kit repository create/update payload.
+type KitStoreRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	URL         string `json:"url"`
+	Ref         string `json:"ref"`
+	Auth        string `json:"auth"`
+}
+
 // CacheInput is the shared-cache create/update payload.
 type CacheInput struct {
 	Name        string `json:"name"`
@@ -133,4 +143,11 @@ type SkillStoreRequest struct {
 	URL         string `json:"url"`
 	Ref         string `json:"ref"`
 	Auth        string `json:"auth"`
+}
+
+// ProfileMountRequest is the default profile mount payload.
+type ProfileMountRequest struct {
+	HostPath   string `json:"host_path"`
+	TargetPath string `json:"target_path"`
+	ReadOnly   bool   `json:"read_only"`
 }

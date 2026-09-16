@@ -3,7 +3,9 @@
 
 export type {
     CacheMount,
+    KitStore,
     Profile,
+    ProfileMount,
     Rule,
     SkillItem,
     SkillStore

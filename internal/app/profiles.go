@@ -12,9 +12,11 @@ import (
 // ProfileView is a profile with its rules and the sandboxes it is assigned to.
 type ProfileView struct {
 	store.Profile
-	Rules     []store.Rule      `json:"rules"`
-	Items     []store.SkillItem `json:"items"`
-	Sandboxes []string          `json:"sandboxes"`
+	Rules     []store.Rule         `json:"rules"`
+	Items     []store.SkillItem    `json:"items"`
+	Mounts    []store.ProfileMount `json:"mounts"`
+	Caches    []store.CacheMount   `json:"caches"`
+	Sandboxes []string             `json:"sandboxes"`
 }
 
 // ListProfiles returns every profile with rules and assignments loaded.
@@ -31,9 +33,23 @@ func (a *App) ListProfiles(ctx context.Context) ([]ProfileView, error) {
 	if err != nil {
 		return nil, err
 	}
+	mountsByProfile, err := a.Store.AllProfileMounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cachesByProfile, err := a.Store.AllProfileCaches(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]ProfileView, 0, len(profiles))
 	for _, p := range profiles {
-		view := ProfileView{Profile: p, Rules: rulesByProfile[p.ID], Items: itemsByProfile[p.ID]}
+		view := ProfileView{
+			Profile: p,
+			Rules:   rulesByProfile[p.ID],
+			Items:   itemsByProfile[p.ID],
+			Mounts:  mountsByProfile[p.ID],
+			Caches:  cachesByProfile[p.ID],
+		}
 		sandboxes, err := a.Store.SandboxesForProfile(ctx, p.ID)
 		if err != nil {
 			return nil, err
@@ -58,11 +74,19 @@ func (a *App) GetProfileView(ctx context.Context, id int64) (ProfileView, error)
 	if err != nil {
 		return ProfileView{}, err
 	}
+	mounts, err := a.Store.ListProfileMounts(ctx, id)
+	if err != nil {
+		return ProfileView{}, err
+	}
+	caches, err := a.Store.ListProfileCaches(ctx, id)
+	if err != nil {
+		return ProfileView{}, err
+	}
 	sandboxes, err := a.Store.SandboxesForProfile(ctx, id)
 	if err != nil {
 		return ProfileView{}, err
 	}
-	return ProfileView{Profile: p, Rules: rules, Items: items, Sandboxes: sandboxes}, nil
+	return ProfileView{Profile: p, Rules: rules, Items: items, Mounts: mounts, Caches: caches, Sandboxes: sandboxes}, nil
 }
 
 // CreateProfile creates a profile and pushes it globally when flagged global.
@@ -122,6 +146,17 @@ func (a *App) DeleteProfile(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+	mounts, err := a.Store.ListProfileMounts(ctx, id)
+	if err != nil {
+		return err
+	}
+	caches, err := a.Store.ListProfileCaches(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := a.Store.PurgeProfileOptOuts(ctx, id); err != nil {
+		return err
+	}
 	for _, target := range targets {
 		if err := a.unapplyProfileFromTarget(ctx, old, target); err != nil {
 			return err
@@ -131,12 +166,16 @@ func (a *App) DeleteProfile(ctx context.Context, id int64) error {
 		return err
 	}
 	for _, target := range targets {
-		if target != "" {
-			a.reconcileSandboxSkills(ctx, target)
+		if target == "" {
+			continue
 		}
+		a.reconcileSandboxSkills(ctx, target)
+		a.syncProfileMounts(ctx, target, mounts)
+		a.releaseStaleCaches(ctx, target, caches)
 	}
 	a.Notify(TopicProfiles)
 	a.Notify(TopicSkills)
+	a.Notify(TopicCaches)
 	a.Notify(TopicSandboxes)
 	return nil
 }
@@ -192,10 +231,15 @@ func (a *App) ApplyProfile(ctx context.Context, sandbox string, profileID int64)
 			return err
 		}
 	}
+	if err := a.Store.ClearOptOutsForProfile(ctx, profileID); err != nil {
+		return err
+	}
 	if err := a.applyProfileToTarget(ctx, p, sandbox); err != nil {
 		return err
 	}
 	a.reconcileSandboxSkills(ctx, sandbox)
+	a.ReapplyCaches(ctx, sandbox)
+	a.syncProfileMounts(ctx, sandbox, nil)
 	a.Notify(TopicProfiles)
 	a.Notify(TopicSandboxes)
 	a.Notify(TopicSandbox(sandbox))
@@ -207,6 +251,14 @@ func (a *App) ApplyProfile(ctx context.Context, sandbox string, profileID int64)
 // will not re-add it.
 func (a *App) UnapplyProfile(ctx context.Context, sandbox string, profileID int64) error {
 	p, err := a.Store.GetProfile(ctx, profileID)
+	if err != nil {
+		return err
+	}
+	mounts, err := a.Store.ListProfileMounts(ctx, profileID)
+	if err != nil {
+		return err
+	}
+	caches, err := a.Store.ListProfileCaches(ctx, profileID)
 	if err != nil {
 		return err
 	}
@@ -222,6 +274,8 @@ func (a *App) UnapplyProfile(ctx context.Context, sandbox string, profileID int6
 		}
 	}
 	a.reconcileSandboxSkills(ctx, sandbox)
+	a.syncProfileMounts(ctx, sandbox, mounts)
+	a.releaseStaleCaches(ctx, sandbox, caches)
 	a.Notify(TopicProfiles)
 	a.Notify(TopicSandboxes)
 	a.Notify(TopicSandbox(sandbox))
@@ -258,6 +312,9 @@ func (a *App) Reconcile(ctx context.Context) error {
 	for name, ids := range assignments {
 		if !exists[name] {
 			if err := a.Store.DropSandboxAssignments(ctx, name); err != nil {
+				return err
+			}
+			if err := a.Store.DropSandboxOptOuts(ctx, name); err != nil {
 				return err
 			}
 			continue
@@ -315,6 +372,37 @@ func (a *App) Reconcile(ctx context.Context) error {
 		for _, s := range sandboxes {
 			if s.Running() {
 				a.reconcileSandboxSkills(ctx, s.Name)
+			}
+		}
+	}
+
+	defaultMounts, err := a.Store.AllProfileMounts(ctx)
+	if err != nil {
+		return err
+	}
+	defaultCaches, err := a.Store.AllProfileCaches(ctx)
+	if err != nil {
+		return err
+	}
+	if len(defaultMounts) > 0 || len(defaultCaches) > 0 {
+		for _, s := range sandboxes {
+			if !s.Running() {
+				continue
+			}
+			profiles, err := a.Store.ListProfilesForSandbox(ctx, s.Name)
+			if err != nil {
+				return err
+			}
+			wantsMounts, wantsCaches := false, false
+			for _, p := range profiles {
+				wantsMounts = wantsMounts || len(defaultMounts[p.ID]) > 0
+				wantsCaches = wantsCaches || len(defaultCaches[p.ID]) > 0
+			}
+			if wantsCaches {
+				a.ReapplyCaches(ctx, s.Name)
+			}
+			if wantsMounts {
+				a.syncProfileMounts(ctx, s.Name, nil)
 			}
 		}
 	}
@@ -410,8 +498,7 @@ func (a *App) applyProfileToTarget(ctx context.Context, p store.Profile, target 
 			if res.Failed() {
 				return errors.New(res.Error)
 			}
-			refs := append(append([]sbx.PolicyRuleRef{}, res.Created...), res.Existing...)
-			for _, ref := range refs {
+			for _, ref := range res.Created {
 				if err := a.Store.RecordAppliedRule(ctx, p.ID, target, ref.RuleID, ref.Resource, g.action); err != nil {
 					return err
 				}

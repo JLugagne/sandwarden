@@ -96,6 +96,23 @@ export function IconChevronRight({ className }: IconProps) {
   );
 }
 
+export function IconChevronDown({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" className={base(className)} aria-hidden="true">
+      <path d="m4 6 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function IconSearch({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" className={base(className)} aria-hidden="true">
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="m10.5 10.5 3 3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function IconAlert({ className }: IconProps) {
   return (
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" className={base(className)} aria-hidden="true">

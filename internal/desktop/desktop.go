@@ -2,7 +2,6 @@ package desktop
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"github.com/JLugagne/sandwarden/internal/app"
@@ -76,13 +75,8 @@ func (d *Desktop) PickFolder(start string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if path == "" {
-		return "", errCancelled
-	}
 	return path, nil
 }
-
-var errCancelled = errors.New("folder selection cancelled")
 
 // StartDaemon starts the sandboxd daemon.
 func (d *Desktop) StartDaemon() error {

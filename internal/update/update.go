@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,8 +17,10 @@ const (
 	repoName  = "sandwarden"
 )
 
-// apiBase is overridable in tests.
-var apiBase = "https://api.github.com"
+// webBase is overridable in tests. The public web host is used instead of the
+// REST API because unauthenticated API calls share a 60-requests-per-hour quota
+// per IP and surface 403s to the user.
+var webBase = "https://github.com"
 
 // checkInterval bounds how often the GitHub API is queried; the last result is
 // reused within that window unless the caller forces a refresh.
@@ -34,6 +35,10 @@ type State struct {
 	LatestVersion string    `json:"latest_version,omitempty"`
 	ReleaseURL    string    `json:"release_url,omitempty"`
 }
+
+// ErrNoStableRelease reports that the repository has no stable release yet,
+// only pre-releases.
+var ErrNoStableRelease = errors.New("no stable release published")
 
 // Result describes the outcome of an update check.
 type Result struct {
@@ -58,6 +63,10 @@ func Check(ctx context.Context, cacheDir, current string, force bool) (Result, e
 		return cachedResult(cacheDir, current), nil
 	}
 	latest, err := fetchLatest(ctx)
+	if errors.Is(err, ErrNoStableRelease) {
+		saveState(cacheDir, State{LastCheck: time.Now()})
+		return Result{CurrentVersion: current}, nil
+	}
 	if err != nil {
 		return Result{CurrentVersion: current}, err
 	}
@@ -129,31 +138,33 @@ func cachedResult(cacheDir, current string) Result {
 }
 
 func fetchLatest(ctx context.Context) (release, error) {
-	url := apiBase + "/repos/" + repoOwner + "/" + repoName + "/releases/latest"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	base := webBase + "/" + repoOwner + "/" + repoName
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/releases/latest", nil)
 	if err != nil {
 		return release{}, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "sandwarden")
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{
+		Timeout:       10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return release{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode >= http.StatusBadRequest {
 		return release{}, fmt.Errorf("github returned %s", resp.Status)
 	}
-	var payload struct {
-		TagName string `json:"tag_name"`
-		HTMLURL string `json:"html_url"`
+	const marker = "/releases/tag/"
+	loc := resp.Header.Get("Location")
+	idx := strings.LastIndex(loc, marker)
+	if idx < 0 {
+		return release{}, ErrNoStableRelease
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
-		return release{}, err
-	}
-	if strings.TrimSpace(payload.TagName) == "" {
+	tag := strings.Trim(loc[idx+len(marker):], "/")
+	if tag == "" {
 		return release{}, errors.New("latest release has no tag")
 	}
-	return release{tag: payload.TagName, url: payload.HTMLURL}, nil
+	return release{tag: tag, url: base + marker + tag}, nil
 }

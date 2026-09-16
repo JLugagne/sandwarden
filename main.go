@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/JLugagne/sandwarden/internal/app"
@@ -74,13 +75,21 @@ func main() {
 	})
 	desktop.Attach(service, wailsApp)
 
+	route := "/"
+	if r := strings.TrimPrefix(os.Getenv("SANDWARDEN_ROUTE"), "#"); r != "" {
+		if !strings.HasPrefix(r, "/") {
+			r = "/" + r
+		}
+		route = "/#" + r
+	}
+
 	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:                      "sandwarden",
 		Width:                      1280,
 		Height:                     820,
 		MinWidth:                   960,
 		MinHeight:                  600,
-		URL:                        "/",
+		URL:                        route,
 		BackgroundColour:           application.NewRGB(6, 7, 15),
 		DefaultContextMenuDisabled: true,
 		Permissions: map[application.PermissionType]application.Permission{
@@ -96,6 +105,11 @@ func main() {
 	go desktop.Bridge(ctx, service, func(event app.Event) {
 		wailsApp.Event.Emit(desktop.EventName, event)
 	})
+
+	go func() {
+		<-ctx.Done()
+		wailsApp.Quit()
+	}()
 
 	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)

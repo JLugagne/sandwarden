@@ -6,8 +6,16 @@ import { queryKeys } from "@/store/realtime";
 import { useConnectionStatus } from "@/app/RealtimeProvider";
 import { notificationsEnabled, setNotificationsEnabled } from "@/lib/notifications";
 import {
+  defaultTerminal,
+  enabledTerminals,
+  loadTerminalPrefs,
+  saveTerminalPrefs,
+  type TerminalPrefs,
+} from "@/lib/terminals";
+import {
   Badge,
   Button,
+  Checkbox,
   CheckboxField,
   CommandLine,
   ConfirmDialog,
@@ -16,6 +24,7 @@ import {
   EmptyState,
   Field,
   IconPlus,
+  IconRefresh,
   Input,
   Modal,
   PageHeader,
@@ -110,6 +119,28 @@ export function SettingsPage() {
   const [editing, setEditing] = useState<{ mode: "create" } | { mode: "edit"; cache: CacheMount } | null>(null);
   const [deleting, setDeleting] = useState<CacheMount | null>(null);
 
+  const terminals = useQuery({ queryKey: queryKeys.terminals, queryFn: api.terminals, staleTime: 60_000 });
+  const [terminalPrefs, setTerminalPrefs] = useState<TerminalPrefs>(loadTerminalPrefs);
+  const terminalRows = terminals.data ?? [];
+  const enabledIds = new Set(enabledTerminals(terminalRows, terminalPrefs).map((terminal) => terminal.id));
+  const currentDefault = defaultTerminal(terminalRows, terminalPrefs);
+
+  function updateTerminalPrefs(next: TerminalPrefs) {
+    setTerminalPrefs(next);
+    saveTerminalPrefs(next);
+  }
+
+  function toggleTerminal(id: string, enabled: boolean) {
+    const base = terminalPrefs.enabled ?? terminalRows.map((terminal) => terminal.id);
+    const next = enabled ? Array.from(new Set([...base, id])) : base.filter((value) => value !== id);
+    updateTerminalPrefs({ enabled: next, default: terminalPrefs.default });
+  }
+
+  function makeDefaultTerminal(id: string) {
+    const enabled = terminalPrefs.enabled ?? terminalRows.map((terminal) => terminal.id);
+    updateTerminalPrefs({ enabled, default: id });
+  }
+
   const startDaemon = useApiMutation({
     mutationFn: () => api.startDaemon(),
     success: "sandboxd started",
@@ -126,7 +157,11 @@ export function SettingsPage() {
   const checkUpdates = useApiMutation({
     mutationFn: () => api.checkUpdates(true),
     success: (info) =>
-      info.update_available ? `Version ${info.latest_version} is available` : "sandwarden is up to date",
+      !info.latest_version
+        ? "No stable release published yet"
+        : info.update_available
+          ? `Version ${info.latest_version} is available`
+          : "sandwarden is up to date",
     invalidate: [queryKeys.updates],
   });
 
@@ -152,7 +187,7 @@ export function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        subtitle="Connection, shared cache directories and notifications."
+        subtitle="Connection, shared cache directories, terminals and notifications."
       />
 
       <div className="flex flex-col gap-4">
@@ -266,6 +301,78 @@ export function SettingsPage() {
           )}
         </Panel>
 
+        <Panel
+          title="Terminals"
+          description="Terminal emulators found on this host. The Open buttons next to sandbox commands launch the default one in the sandbox workspace."
+          actions={
+            <Button loading={terminals.isFetching} onClick={() => void terminals.refetch()}>
+              <IconRefresh /> Rescan
+            </Button>
+          }
+          bodyClassName="p-0"
+        >
+          {terminals.isLoading ? (
+            <div className="flex justify-center p-6">
+              <Spinner />
+            </div>
+          ) : terminalRows.length === 0 ? (
+            <EmptyState
+              title="No terminal emulator found."
+              description="Install one (GNOME Terminal, Konsole, iTerm2, kitty, …) on this machine and rescan."
+              action={
+                <Button loading={terminals.isFetching} onClick={() => void terminals.refetch()}>
+                  <IconRefresh /> Rescan
+                </Button>
+              }
+              className="rounded-none border-0"
+            />
+          ) : (
+            <TableWrap className="border-0">
+              <thead>
+                <tr>
+                  <TH>Terminal</TH>
+                  <TH>Binary</TH>
+                  <TH>Default</TH>
+                  <TH>Enabled</TH>
+                </tr>
+              </thead>
+              <tbody>
+                {terminalRows.map((terminal) => {
+                  const isEnabled = enabledIds.has(terminal.id);
+                  const isDefault = currentDefault?.id === terminal.id;
+                  return (
+                    <TRow key={terminal.id}>
+                      <TD className="font-medium">{terminal.name}</TD>
+                      <TD className="font-mono text-xs">{terminal.binary}</TD>
+                      <TD>
+                        {isDefault ? (
+                          <Badge tone="accent">default</Badge>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={!isEnabled}
+                            onClick={() => makeDefaultTerminal(terminal.id)}
+                          >
+                            Use by default
+                          </Button>
+                        )}
+                      </TD>
+                      <TD>
+                        <Checkbox
+                          label="enabled"
+                          checked={isEnabled}
+                          onChange={(value) => toggleTerminal(terminal.id, value)}
+                        />
+                      </TD>
+                    </TRow>
+                  );
+                })}
+              </tbody>
+            </TableWrap>
+          )}
+        </Panel>
+
         <Panel title="Notifications" description="Native desktop notifications for newly blocked hosts.">
           <div className="flex items-center gap-3">
             <CheckboxField
@@ -297,10 +404,12 @@ export function SettingsPage() {
                 <Description label="Latest stable">
                   {updates.isLoading ? (
                     <span className="text-xs text-muted">checking…</span>
+                  ) : updates.error ? (
+                    <span className="text-xs text-muted">unknown</span>
                   ) : updates.data?.latest_version ? (
                     <span className="font-mono text-xs">{updates.data.latest_version}</span>
                   ) : (
-                    <span className="text-xs text-muted">unknown</span>
+                    <span className="text-xs text-muted">none published yet</span>
                   )}
                 </Description>
               </DescriptionList>
@@ -371,6 +480,9 @@ function CacheDialog({
   const [loadedId, setLoadedId] = useState<number | "new" | null>(null);
 
   const target = cache ? cache.id : ("new" as const);
+  if (!open && loadedId !== null) {
+    setLoadedId(null);
+  }
   if (open && loadedId !== target) {
     setLoadedId(target);
     setInput(

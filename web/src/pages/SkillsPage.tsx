@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { queryKeys } from "@/store/realtime";
+import { cn } from "@/lib/cn";
 import {
   Badge,
   Button,
@@ -32,6 +34,8 @@ export function SkillsPage() {
     null,
   );
   const [deleting, setDeleting] = useState<SkillStore | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [highlightId, setHighlightId] = useState<number | null>(null);
 
   const create = useApiMutation({
     mutationFn: (body: SkillStoreInput) => api.createSkillStore(body),
@@ -55,6 +59,32 @@ export function SkillsPage() {
 
   const rows = stores.data ?? [];
   const catalog = items.data ?? [];
+
+  // Deep link from the global search overlay: `/skills?item=<id>` briefly
+  // highlights the item and scrolls its store panel into view.
+  useEffect(() => {
+    const raw = searchParams.get("item");
+    if (!raw) return;
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) setHighlightId(parsed);
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.delete("item");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (highlightId === null || catalog.length === 0) return;
+    const item = catalog.find((entry) => entry.id === highlightId);
+    if (!item) return;
+    document.getElementById(`skill-store-${item.store_id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const timer = window.setTimeout(() => setHighlightId(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [highlightId, catalog]);
 
   return (
     <>
@@ -95,15 +125,17 @@ export function SkillsPage() {
         </Panel>
 
         {rows.map((store) => (
-          <StorePanel
-            key={store.id}
-            store={store}
-            items={catalog.filter((item) => item.store_id === store.id)}
-            refreshing={refresh.isPending && refresh.variables === store.id}
-            onRefresh={() => refresh.mutate(store.id)}
-            onEdit={() => setEditing({ mode: "edit", store })}
-            onDelete={() => setDeleting(store)}
-          />
+          <div key={store.id} id={`skill-store-${store.id}`}>
+            <StorePanel
+              store={store}
+              items={catalog.filter((item) => item.store_id === store.id)}
+              highlightId={highlightId}
+              refreshing={refresh.isPending && refresh.variables === store.id}
+              onRefresh={() => refresh.mutate(store.id)}
+              onEdit={() => setEditing({ mode: "edit", store })}
+              onDelete={() => setDeleting(store)}
+            />
+          </div>
         ))}
       </div>
 
@@ -134,6 +166,7 @@ export function SkillsPage() {
 function StorePanel({
   store,
   items,
+  highlightId,
   refreshing,
   onRefresh,
   onEdit,
@@ -141,6 +174,7 @@ function StorePanel({
 }: {
   store: SkillStore;
   items: SkillItem[];
+  highlightId: number | null;
   refreshing: boolean;
   onRefresh: () => void;
   onEdit: () => void;
@@ -200,7 +234,7 @@ function StorePanel({
           </thead>
           <tbody>
             {items.map((item) => (
-              <TRow key={item.id}>
+              <TRow key={item.id} className={cn(item.id === highlightId && "bg-accent-soft")}>
                 <TD>
                   <KindBadge kind={item.kind} />
                 </TD>
@@ -237,6 +271,9 @@ function StoreDialog({
   const [loadedId, setLoadedId] = useState<number | "new" | null>(null);
 
   const target = store ? store.id : ("new" as const);
+  if (!open && loadedId !== null) {
+    setLoadedId(null);
+  }
   if (open && loadedId !== target) {
     setLoadedId(target);
     setInput(

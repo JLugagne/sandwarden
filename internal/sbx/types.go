@@ -109,4 +109,29 @@ type MountInfo struct {
 type InspectDetail struct {
 	Workspace     string      `json:"workspace"`
 	RuntimeMounts []MountInfo `json:"runtime_mounts"`
+	Mounts        []MountInfo `json:"mounts"`
+	Kits          []string    `json:"kits"`
+	Image         string      `json:"image"`
+	ImageDigest   string      `json:"image_digest"`
+}
+
+// UnmarshalJSON accepts both the container_target field and the target alias
+// used by some sbx builds.
+func (m *MountInfo) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		HostPath        string `json:"host_path"`
+		ContainerTarget string `json:"container_target"`
+		Target          string `json:"target"`
+		ReadOnly        bool   `json:"read_only"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	m.HostPath = raw.HostPath
+	m.Target = raw.ContainerTarget
+	if m.Target == "" {
+		m.Target = raw.Target
+	}
+	m.ReadOnly = raw.ReadOnly
+	return nil
 }

@@ -25,6 +25,7 @@ export interface CreateSandboxRequest {
     "memory": string;
     "profile": string;
     "template": string;
+    "kits": string[] | null;
     "publish": string[] | null;
     "env": string[] | null;
     "deny_network": string[] | null;
@@ -79,6 +80,17 @@ export interface ImportSecretsRequest {
 }
 
 /**
+ * KitStoreRequest is the kit repository create/update payload.
+ */
+export interface KitStoreRequest {
+    "name": string;
+    "description": string;
+    "url": string;
+    "ref": string;
+    "auth": string;
+}
+
+/**
  * MountRequest is the add-mount payload.
  */
 export interface MountRequest {
@@ -95,6 +107,15 @@ export interface PolicyActionRequest {
     "resources": string[] | null;
     "sandbox_id": string;
     "id": string;
+}
+
+/**
+ * ProfileMountRequest is the default profile mount payload.
+ */
+export interface ProfileMountRequest {
+    "host_path": string;
+    "target_path": string;
+    "read_only": boolean;
 }
 
 /**

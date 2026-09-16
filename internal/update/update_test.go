@@ -2,7 +2,6 @@ package update
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -36,27 +35,25 @@ func TestCheckFetchesAndCaches(t *testing.T) {
 	var hits int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
-		if r.URL.Path != "/repos/JLugagne/sandwarden/releases/latest" {
+		if r.URL.Path != "/JLugagne/sandwarden/releases/latest" {
 			http.NotFound(w, r)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"tag_name": "v0.2.0",
-			"html_url": "https://example.com/v0.2.0",
-		})
+		http.Redirect(w, r, "/JLugagne/sandwarden/releases/tag/v0.2.0", http.StatusFound)
 	}))
 	defer server.Close()
 
-	previous := apiBase
-	apiBase = server.URL
-	t.Cleanup(func() { apiBase = previous })
+	previous := webBase
+	webBase = server.URL
+	t.Cleanup(func() { webBase = previous })
 
 	cacheDir := t.TempDir()
 	got, err := Check(context.Background(), cacheDir, "v0.1.0", false)
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	if !got.UpdateAvailable || got.LatestVersion != "v0.2.0" || got.ReleaseURL != "https://example.com/v0.2.0" {
+	wantURL := server.URL + "/JLugagne/sandwarden/releases/tag/v0.2.0"
+	if !got.UpdateAvailable || got.LatestVersion != "v0.2.0" || got.ReleaseURL != wantURL {
 		t.Fatalf("unexpected result: %+v", got)
 	}
 
@@ -75,21 +72,40 @@ func TestCheckFetchesAndCaches(t *testing.T) {
 		t.Fatalf("forced check: %v", err)
 	}
 	if hits != 2 {
-		t.Fatalf("expected the forced check to hit the API, got %d requests", hits)
+		t.Fatalf("expected the forced check to hit the web host, got %d requests", hits)
 	}
 }
 
-func TestCheckSurfacesAPIError(t *testing.T) {
+func TestCheckSurfacesWebError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
-	previous := apiBase
-	apiBase = server.URL
-	t.Cleanup(func() { apiBase = previous })
+	previous := webBase
+	webBase = server.URL
+	t.Cleanup(func() { webBase = previous })
 
 	if _, err := Check(context.Background(), t.TempDir(), "v0.1.0", true); err == nil {
-		t.Fatal("expected an error for a failing API")
+		t.Fatal("expected an error for a failing web host")
+	}
+}
+
+func TestCheckWithoutStableRelease(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/JLugagne/sandwarden/releases", http.StatusFound)
+	}))
+	defer server.Close()
+
+	previous := webBase
+	webBase = server.URL
+	t.Cleanup(func() { webBase = previous })
+
+	got, err := Check(context.Background(), t.TempDir(), "v0.1.0", true)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if got.LatestVersion != "" || got.UpdateAvailable {
+		t.Fatalf("expected no stable release, got %+v", got)
 	}
 }

@@ -39,6 +39,20 @@ export function OverviewTab({ detail }: { detail: SandboxDetail }) {
           </Description>
           <Description label="Created">{formatTime(sandbox.created_at)}</Description>
           <Description label="Stopped">{sandbox.stopped_at ? formatTime(sandbox.stopped_at) : "—"}</Description>
+          <Description label="Image">
+            <span className="font-mono text-xs">{detail.image || "—"}</span>
+          </Description>
+          <Description label="Kits">
+            {detail.kits && detail.kits.length > 0 ? (
+              <span className="flex flex-wrap gap-1.5">
+                {detail.kits.map((kit) => (
+                  <Chip key={kit}>{kit}</Chip>
+                ))}
+              </span>
+            ) : (
+              <span className="text-faint">none</span>
+            )}
+          </Description>
           <Description label="sbx profile">{sandbox.daemon_profile ?? "—"}</Description>
           <Description label="Mount policy">
             {sandbox.mount_policy_denied ? (
@@ -52,8 +66,8 @@ export function OverviewTab({ detail }: { detail: SandboxDetail }) {
 
       <Panel title="Connect" description="Run these on the host, not inside the sandbox.">
         <div className="flex flex-col gap-2">
-          <CommandLine command={sandbox.connect.run} />
-          <CommandLine command={sandbox.connect.shell} />
+          <CommandLine command={sandbox.connect.run} openDir={sandbox.workspace} />
+          <CommandLine command={sandbox.connect.shell} openDir={sandbox.workspace} />
         </div>
       </Panel>
     </div>

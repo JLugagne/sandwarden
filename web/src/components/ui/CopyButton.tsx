@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { cn } from "@/lib/cn";
 import { IconCheck, IconCopy } from "@/components/ui/Icons";
+import { OpenInTerminalButton } from "@/components/ui/OpenInTerminalButton";
 
 export function CopyButton({
   value,
@@ -33,7 +34,16 @@ export function CopyButton({
   );
 }
 
-export function CommandLine({ command, className }: { command: string; className?: string }) {
+export function CommandLine({
+  command,
+  className,
+  openDir,
+}: {
+  command: string;
+  className?: string;
+  /** When set, an Open button launches the command in a terminal, cd'd here. */
+  openDir?: string;
+}) {
   return (
     <div
       className={cn(
@@ -42,6 +52,7 @@ export function CommandLine({ command, className }: { command: string; className
       )}
     >
       <code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs whitespace-nowrap text-muted">{command}</code>
+      {openDir ? <OpenInTerminalButton dir={openDir} command={command} /> : null}
       <CopyButton value={command} />
     </div>
   );

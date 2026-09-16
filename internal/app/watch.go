@@ -18,6 +18,7 @@ func (a *App) Start(ctx context.Context) {
 	go a.watchEvents(ctx)
 	go a.pollBlocked(ctx)
 	go a.reconcileLoop(ctx)
+	go a.watchStats(ctx)
 }
 
 // Traffic returns the proxy's current allowed/blocked host log.

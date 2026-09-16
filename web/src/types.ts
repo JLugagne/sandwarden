@@ -35,6 +35,9 @@ export interface SandboxSummary {
   mount_policy_denied: boolean;
   profiles: string[] | null;
   connect: ConnectInfo;
+  cpu_percent: number;
+  memory_used_bytes: number;
+  memory_total_bytes: number;
 }
 
 export interface Profile {
@@ -55,9 +58,20 @@ export interface Rule {
   created_at: string;
 }
 
+export interface ProfileMount {
+  id: number;
+  profile_id: number;
+  host_path: string;
+  target_path: string;
+  read_only: boolean;
+  created_at: string;
+}
+
 export interface ProfileView extends Profile {
   rules: Rule[] | null;
   items: SkillItem[] | null;
+  mounts: ProfileMount[] | null;
+  caches: CacheMount[] | null;
   sandboxes: string[] | null;
 }
 
@@ -138,10 +152,15 @@ export interface SandboxDetail {
   sandbox: SandboxSummary;
   profiles: Profile[] | null;
   mounts: MountInfo[] | null;
+  mounts_error?: string;
+  image?: string;
+  image_digest?: string;
+  kits?: string[] | null;
   secrets: Secret[] | null;
   custom_secrets: CustomSecret[] | null;
   policy_rules: PolicyRule[] | null;
   caches: SandboxCache[] | null;
+  profile_mounts: SandboxProfileMount[] | null;
   skills?: SandboxSkill[] | null;
   additional_workspaces?: WorkspaceMount[] | null;
 }
@@ -187,6 +206,7 @@ export interface CreateSandboxRequest {
   memory?: string;
   profile?: string;
   template?: string;
+  kits?: string[];
   publish?: string[];
   env?: string[];
   deny_network?: string[];
@@ -233,6 +253,12 @@ export interface ImportSecretsRequest {
   job_id?: string;
 }
 
+export interface Terminal {
+  id: string;
+  name: string;
+  binary: string;
+}
+
 export interface Health {
   ok: boolean;
   socket: string;
@@ -262,6 +288,19 @@ export interface CacheMount {
 }
 
 export interface SandboxCache extends CacheMount {
+  attached: boolean;
+  direct: boolean;
+  profiles: string[] | null;
+  opted_out: boolean;
+}
+
+export interface SandboxProfileMount {
+  host_path: string;
+  target_path: string;
+  read_only: boolean;
+  profile_names: string[] | null;
+  profile_mount_ids: number[] | null;
+  opted_out: boolean;
   attached: boolean;
 }
 
@@ -321,4 +360,147 @@ export interface SkillReconcileResult {
   applied: number;
   removed: number;
   errors: string[] | null;
+}
+
+export interface KitStore {
+  id: number;
+  name: string;
+  description: string;
+  url: string;
+  ref: string;
+  auth: string;
+  path: string;
+  synced_at: string;
+  error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KitStoreInput {
+  name: string;
+  description: string;
+  url: string;
+  ref: string;
+  auth: string;
+}
+
+export interface KitRequires {
+  agent?: string;
+}
+
+export interface KitCommandSet {
+  default?: string[] | null;
+  interactive?: string[] | null;
+}
+
+export interface KitSandbox {
+  image?: string;
+  entrypoint?: string[] | null;
+  command?: KitCommandSet;
+}
+
+export interface KitEnvironment {
+  variables?: Record<string, string> | null;
+}
+
+export interface KitNetworkPolicy {
+  allow?: string[] | null;
+  deny?: string[] | null;
+}
+
+export interface KitPermissions {
+  network?: KitNetworkPolicy;
+}
+
+export interface KitPort {
+  container: number;
+  protocol?: string;
+  name?: string;
+}
+
+export interface KitCommand {
+  command?: string;
+  user?: string;
+  description?: string;
+}
+
+export interface KitFile {
+  path: string;
+  mode?: string;
+  description?: string;
+}
+
+export interface KitSetup {
+  install?: KitCommand[] | null;
+  startup?: KitCommand[] | null;
+  files?: KitFile[] | null;
+}
+
+export interface KitArgument {
+  default?: string | null;
+  required?: boolean;
+  description?: string;
+  enum?: string[] | null;
+  pattern?: string;
+}
+
+export interface KitSpec {
+  schemaVersion: string;
+  kind: string;
+  name: string;
+  version?: string;
+  displayName?: string;
+  description?: string;
+  sourceURL?: string;
+  requires?: KitRequires;
+  sandbox?: KitSandbox;
+  environment?: KitEnvironment;
+  permissions?: KitPermissions;
+  ports?: KitPort[] | null;
+  setup?: KitSetup;
+  arguments?: Record<string, KitArgument> | null;
+}
+
+export interface KitItemView {
+  id: number;
+  store_id: number;
+  store_name: string;
+  kind: string;
+  name: string;
+  display_name: string;
+  description: string;
+  version: string;
+  image: string;
+  requires_agent: string;
+  rel_path: string;
+  ref: string;
+  spec: KitSpec;
+}
+
+export interface KitValidation {
+  ok: boolean;
+  output: string;
+}
+
+export interface Template {
+  id: string;
+  repository: string;
+  tag: string;
+  flavor: string;
+  created_at: string;
+  size: number;
+}
+
+export interface SearchResult {
+  kind: "skill" | "command" | "kit";
+  id: number;
+  store_id: number;
+  store_name: string;
+  name: string;
+  display_name?: string;
+  description: string;
+  plugin?: string;
+  kit_kind?: string;
+  score: number;
+  snippet?: string;
 }

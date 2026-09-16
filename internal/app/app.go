@@ -10,23 +10,30 @@ import (
 	"sync"
 
 	"github.com/JLugagne/sandwarden/internal/sbx"
+	"github.com/JLugagne/sandwarden/internal/search"
 	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 // App coordinates the sandboxd client, the profile store, the event hub and
 // background jobs.
 type App struct {
-	Sbx      *sbx.Client
-	Store    *store.Store
-	Hub      *Hub
-	Jobs     *JobBroker
-	notifier *notifier
-
+	Sbx         *sbx.Client
+	Store       *store.Store
+	Hub         *Hub
+	Jobs        *JobBroker
+	notifier    *notifier
+	stats       *statsTracker
 	mu          sync.Mutex
 	rootCtx     context.Context
 	seenBlocked map[string]bool
 	lastLogSig  string
 	reconcileCh chan struct{}
+	// searchMu guards the lazily built search index.
+	searchMu sync.Mutex
+	// searchIdx caches the BM25 index over the skill and kit catalogs.
+	searchIdx *search.Index
+	// searchFingerprint is the catalog digest the cached index was built from.
+	searchFingerprint string
 }
 
 // New builds an App and its hub.
@@ -39,6 +46,7 @@ func New(client *sbx.Client, st *store.Store) *App {
 		Jobs:        NewJobBroker(hub),
 		seenBlocked: make(map[string]bool),
 		reconcileCh: make(chan struct{}, 1),
+		stats:       newStatsTracker(),
 	}
 	a.notifier = newNotifier(a.publishTopic)
 	return a

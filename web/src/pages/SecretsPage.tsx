@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
-import { useApiMutation } from "@/hooks/useApiMutation";
+import { errorMessage, useApiMutation } from "@/hooks/useApiMutation";
 import { queryKeys } from "@/store/realtime";
 import { useJob } from "@/hooks/useJob";
 import { jobHub, newJobId } from "@/store/jobs";
-import { useStickToBottom } from "@/components/Toaster";
+import { useStickToBottom, useToasts } from "@/components/Toaster";
 import {
   Badge,
   Button,
@@ -45,6 +45,8 @@ const SERVICES = [
 ];
 
 type ScopeValue = "all" | "global" | string;
+
+const SecretScopeHostOnly = "(host only)";
 
 export function SecretsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -87,6 +89,13 @@ export function SecretsPage() {
     return value;
   }
 
+  function selectScope(value: ScopeValue) {
+    const next = new URLSearchParams(searchParams);
+    if (value === "all") next.delete("sandbox");
+    else next.set("sandbox", value);
+    setSearchParams(next, { replace: true });
+  }
+
   return (
     <>
       <PageHeader
@@ -99,13 +108,7 @@ export function SecretsPage() {
           <span className="text-xs font-medium text-muted">Scope</span>
           <Select
             value={scope}
-            onChange={(event) => {
-              const value = event.target.value;
-              const next = new URLSearchParams(searchParams);
-              if (value === "all") next.delete("sandbox");
-              else next.set("sandbox", value);
-              setSearchParams(next, { replace: true });
-            }}
+            onChange={(event) => selectScope(event.target.value as ScopeValue)}
             className="w-64"
           >
             <option value="all">All scopes</option>
@@ -143,7 +146,7 @@ export function SecretsPage() {
         {addTab === "dynamic" ? <DynamicForm scope={scope} /> : null}
         {addTab === "registry" ? <RegistryForm scope={scope} /> : null}
         {addTab === "custom" ? <CustomForm scope={scope} /> : null}
-        {addTab === "import" ? <ImportForm /> : null}
+        {addTab === "import" ? <ImportForm scope={scope} onScopeChange={selectScope} /> : null}
       </div>
 
       <Panel title="Stored secrets" bodyClassName="p-0">
@@ -226,9 +229,17 @@ export function SecretsPage() {
         title="Remove this secret?"
         body={
           deleting?.kind === "secret" ? (
-            <span className="font-mono text-xs">
-              {deleting.secret.name} ({scopeLabel(deleting.secret.scope)})
-            </span>
+            <div className="flex flex-col gap-2">
+              <span className="font-mono text-xs">
+                {deleting.secret.name} ({scopeLabel(deleting.secret.scope)})
+              </span>
+              {deleting.secret.type === "registry" && deleting.secret.scope === SecretScopeHostOnly ? (
+                <span className="text-xs text-danger">
+                  sbx cannot remove the host-only credential alone: this also removes the all-sandboxes credential for
+                  the same registry.
+                </span>
+              ) : null}
+            </div>
           ) : deleting?.kind === "custom" ? (
             <span className="font-mono text-xs">
               {deleting.secret.env} ({scopeLabel(deleting.secret.scope)})
@@ -497,16 +508,24 @@ function useSandboxNames(): string[] {
   return (sandboxes.data ?? []).map((sandbox) => sandbox.name);
 }
 
-function ImportForm() {
+function ImportForm({ scope, onScopeChange }: { scope: ScopeValue; onScopeChange: (value: ScopeValue) => void }) {
   const [jobId, setJobId] = useState<string | null>(null);
   const job = useJob(jobId);
   const logRef = useStickToBottom<HTMLPreElement>(job.output);
+  const toast = useToasts();
 
   async function start(dryRun: boolean, force: boolean) {
     const id = newJobId();
     jobHub.reset(id);
     setJobId(id);
-    await api.importSecrets({ dry_run: dryRun, force, job_id: id }).catch(() => undefined);
+    await api
+      .importSecrets({ dry_run: dryRun, force, job_id: id })
+      .then(() => {
+        if (!dryRun && scope !== "all" && scope !== "global") onScopeChange("global");
+      })
+      .catch((error) => {
+        toast.push({ tone: "danger", title: "Import failed to start", body: errorMessage(error) });
+      });
   }
 
   return (
@@ -522,7 +541,18 @@ function ImportForm() {
         <Button onClick={() => void start(false, true)}>Import + overwrite</Button>
       </div>
       {jobId ? (
-        <div className="mt-3">
+        <div className="mt-3 flex flex-col gap-1.5">
+          <div className="flex items-center gap-2 text-xs text-faint">
+            <span>job {jobId.slice(0, 8)}</span>
+            <span
+              className={
+                job.status === "error" ? "text-danger" : job.status === "done" ? "text-success" : "text-warning"
+              }
+            >
+              {job.status}
+              {job.error ? `: ${job.error}` : ""}
+            </span>
+          </div>
           <LogView text={job.output} empty="Waiting for output…" autoScrollRef={logRef} />
         </div>
       ) : null}

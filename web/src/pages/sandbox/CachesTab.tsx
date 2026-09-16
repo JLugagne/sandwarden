@@ -17,12 +17,14 @@ import {
   TH,
   TRow,
 } from "@/components/ui";
+import { useToasts } from "@/components/Toaster";
 import type { SandboxCache, SandboxDetail } from "@/types";
 
 export function CachesTab({ name, detail }: { name: string; detail: SandboxDetail }) {
   const caches = useQuery({ queryKey: queryKeys.caches, queryFn: api.caches });
   const [selected, setSelected] = useState("");
   const [detaching, setDetaching] = useState<SandboxCache | null>(null);
+  const toast = useToasts();
 
   const attach = useApiMutation({
     mutationFn: (cacheId: number) => api.attachCache(name, cacheId),
@@ -30,7 +32,10 @@ export function CachesTab({ name, detail }: { name: string; detail: SandboxDetai
     onSuccess: () => setSelected(""),
   });
   const detach = useApiMutation({
-    mutationFn: (cacheId: number) => api.detachCache(name, cacheId),
+    mutationFn: async (cache: SandboxCache) => {
+      if (cache.direct) await api.detachCache(name, cache.id);
+      if ((cache.profiles ?? []).length > 0) await api.detachProfileCache(name, cache.id);
+    },
     success: "Cache detached",
     onSuccess: () => setDetaching(null),
   });
@@ -38,22 +43,27 @@ export function CachesTab({ name, detail }: { name: string; detail: SandboxDetai
     mutationFn: () => api.reapplyCaches(name),
     onSuccess: (result) => {
       if (result.errors && result.errors.length > 0) {
+        toast.push({ tone: "danger", title: "Cache re-apply failed", body: result.errors.join("; ") });
         return undefined;
       }
       return result.applied > 0 ? `Re-mounted ${result.applied} cache(s)` : "All caches already mounted";
     },
   });
+  const applyProfile = useApiMutation({
+    mutationFn: (cacheId: number) => api.applyProfileCache(name, cacheId),
+    success: "Profile cache re-enabled",
+  });
 
   const assigned = detail.caches ?? [];
   const assignedIds = new Set(assigned.map((cache) => cache.id));
   const available = (caches.data ?? []).filter((cache) => !assignedIds.has(cache.id) && cache.enabled);
-  const drift = assigned.filter((cache) => cache.enabled && !cache.attached);
+  const drift = assigned.filter((cache) => cache.enabled && !cache.attached && !cache.opted_out);
 
   return (
     <div className="flex flex-col gap-4">
       <Panel
         title="Shared caches"
-        description="Host directories bind-mounted into this sandbox (Go module/build caches, npm, pnpm, yarn). The same host directory can be shared by several sandboxes."
+        description="Host directories bind-mounted into this sandbox (Go module/build caches, npm, pnpm, yarn). The same host directory can be shared by several sandboxes, and profiles can attach caches by default."
         actions={
           <>
             <Button
@@ -91,43 +101,70 @@ export function CachesTab({ name, detail }: { name: string; detail: SandboxDetai
                 <TH>Cache</TH>
                 <TH>Host → sandbox</TH>
                 <TH>Mode</TH>
+                <TH>Source</TH>
                 <TH>State</TH>
                 <TH className="w-24" />
               </tr>
             </thead>
             <tbody>
-              {assigned.map((cache) => (
-                <TRow key={cache.id}>
-                  <TD className="font-medium">
-                    {cache.name}
-                    {cache.auto_attach ? <Badge className="ml-2">auto</Badge> : null}
-                  </TD>
-                  <TD className="font-mono text-xs">
-                    {cache.host_path}
-                    <span className="text-faint"> → </span>
-                    {cache.target_path}
-                  </TD>
-                  <TD>{cache.read_only ? <Badge tone="warning">ro</Badge> : <Badge>rw</Badge>}</TD>
-                  <TD>
-                    {!cache.enabled ? (
-                      <Badge tone="neutral">disabled</Badge>
-                    ) : cache.attached ? (
-                      <Badge tone="success" dot>
-                        mounted
-                      </Badge>
-                    ) : (
-                      <Badge tone="warning" dot>
-                        not mounted
-                      </Badge>
-                    )}
-                  </TD>
-                  <TD className="text-right">
-                    <Button size="sm" variant="ghost" onClick={() => setDetaching(cache)}>
-                      Detach
-                    </Button>
-                  </TD>
-                </TRow>
-              ))}
+              {assigned.map((cache) => {
+                const profiles = cache.profiles ?? [];
+                return (
+                  <TRow key={cache.id}>
+                    <TD className="font-medium">
+                      {cache.name}
+                      {cache.auto_attach ? <Badge className="ml-2">auto</Badge> : null}
+                    </TD>
+                    <TD className="font-mono text-xs">
+                      {cache.host_path}
+                      <span className="text-faint"> → </span>
+                      {cache.target_path}
+                    </TD>
+                    <TD>{cache.read_only ? <Badge tone="warning">ro</Badge> : <Badge>rw</Badge>}</TD>
+                    <TD>
+                      <span className="flex flex-wrap gap-1">
+                        {cache.direct ? <Badge tone="neutral">direct</Badge> : null}
+                        {profiles.map((profile) => (
+                          <Badge key={profile} tone="accent">
+                            {profile}
+                          </Badge>
+                        ))}
+                      </span>
+                    </TD>
+                    <TD>
+                      {!cache.enabled ? (
+                        <Badge tone="neutral">disabled</Badge>
+                      ) : cache.attached ? (
+                        <Badge tone="success" dot>
+                          mounted
+                        </Badge>
+                      ) : cache.opted_out ? (
+                        <Badge tone="neutral">detached</Badge>
+                      ) : (
+                        <Badge tone="warning" dot>
+                          not mounted
+                        </Badge>
+                      )}
+                    </TD>
+                    <TD className="text-right">
+                      {cache.opted_out && !cache.direct ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          loading={applyProfile.isPending}
+                          onClick={() => applyProfile.mutate(cache.id)}
+                        >
+                          Apply
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="ghost" onClick={() => setDetaching(cache)}>
+                          Detach
+                        </Button>
+                      )}
+                    </TD>
+                  </TRow>
+                );
+              })}
             </tbody>
           </TableWrap>
         )}
@@ -166,10 +203,10 @@ export function CachesTab({ name, detail }: { name: string; detail: SandboxDetai
       <ConfirmDialog
         open={detaching !== null}
         title={`Detach ${detaching?.name ?? "cache"}?`}
-        body="The desired state is removed and the bind is released if the sandbox is running."
+        body="Direct attachments are removed, profile defaults are marked detached on this sandbox and the bind is released when the sandbox is running."
         confirmLabel="Detach"
         busy={detach.isPending}
-        onConfirm={() => detaching && detach.mutate(detaching.id)}
+        onConfirm={() => detaching && detach.mutate(detaching)}
         onClose={() => setDetaching(null)}
       />
     </div>

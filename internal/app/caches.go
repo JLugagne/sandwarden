@@ -110,7 +110,7 @@ func (a *App) UnassignCache(ctx context.Context, sandbox string, cacheID int64) 
 // ReapplyCaches mounts every desired cache that is missing from a running
 // sandbox. Errors are per-cache and never abort the whole pass.
 func (a *App) ReapplyCaches(ctx context.Context, sandbox string) (int, []string) {
-	caches, err := a.Store.ListCachesForSandbox(ctx, sandbox)
+	caches, err := a.desiredCaches(ctx, sandbox)
 	if err != nil {
 		return 0, []string{err.Error()}
 	}
@@ -156,8 +156,15 @@ func (a *App) mountCache(ctx context.Context, sandbox string, c store.CacheMount
 // reapplyCachesWhenReady waits for a freshly started sandbox and re-mounts its
 // desired caches, retrying briefly while the VM comes up.
 func (a *App) reapplyCachesWhenReady(ctx context.Context, name string) {
-	caches, err := a.Store.ListCachesForSandbox(ctx, name)
-	if err != nil || len(caches) == 0 {
+	caches, err := a.desiredCaches(ctx, name)
+	if err != nil {
+		return
+	}
+	mounts, err := a.Store.ProfileMountsForSandbox(ctx, name)
+	if err != nil {
+		return
+	}
+	if len(caches) == 0 && len(mounts) == 0 {
 		return
 	}
 	for attempt := 0; attempt < 8; attempt++ {
@@ -166,7 +173,9 @@ func (a *App) reapplyCachesWhenReady(ctx context.Context, name string) {
 		}
 		info, err := a.Sbx.InspectSandbox(ctx, name)
 		if err == nil && info.Running() {
-			if applied, errs := a.ReapplyCaches(ctx, name); applied > 0 || len(errs) == 0 {
+			_, errs := a.ReapplyCaches(ctx, name)
+			a.syncProfileMounts(ctx, name, nil)
+			if len(errs) == 0 {
 				return
 			}
 		}

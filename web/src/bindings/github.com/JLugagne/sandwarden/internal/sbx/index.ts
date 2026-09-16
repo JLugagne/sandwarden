@@ -3,6 +3,18 @@
 
 export type {
     CustomSecret,
+    KitArgument,
+    KitCommand,
+    KitCommandSet,
+    KitEnvironment,
+    KitFile,
+    KitNetworkPolicy,
+    KitPermissions,
+    KitPort,
+    KitRequires,
+    KitSandbox,
+    KitSetup,
+    KitSpec,
     LogEntry,
     MountInfo,
     PolicyActionResult,
@@ -12,5 +24,6 @@ export type {
     PublishedPort,
     Secret,
     SecretList,
+    Template,
     WorkspaceMount
 } from "./models.js";

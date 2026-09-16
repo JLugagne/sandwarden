@@ -9,26 +9,27 @@ import {
   Button,
   ConfirmDialog,
   EmptyState,
+  MenuSelect,
   Panel,
-  Select,
   Spinner,
   TableWrap,
   TD,
   TH,
   TRow,
 } from "@/components/ui";
+import { skillMenuGroups } from "@/lib/catalog";
+import { useToasts } from "@/components/Toaster";
 import { KindBadge } from "@/pages/SkillsPage";
 import type { SandboxDetail, SandboxSkill } from "@/types";
 
 export function SkillsTab({ name, detail }: { name: string; detail: SandboxDetail }) {
   const items = useQuery({ queryKey: queryKeys.skillItems, queryFn: () => api.skillItems() });
-  const [selected, setSelected] = useState("");
   const [detaching, setDetaching] = useState<SandboxSkill | null>(null);
+  const toast = useToasts();
 
   const attach = useApiMutation({
     mutationFn: (itemId: number) => api.attachSkillItem(name, itemId),
     success: "Attached",
-    onSuccess: () => setSelected(""),
   });
   const detach = useApiMutation({
     mutationFn: (itemId: number) => api.detachSkillItem(name, itemId),
@@ -42,11 +43,17 @@ export function SkillsTab({ name, detail }: { name: string; detail: SandboxDetai
       const changed = result.applied + result.removed;
       return changed > 0 ? `Applied ${result.applied}, removed ${result.removed}` : "Everything is already mounted";
     },
+    onSuccess: (result) => {
+      if (result.errors.length > 0) {
+        toast.push({ tone: "danger", title: "Skill reconcile failed", body: result.errors.join("; ") });
+      }
+    },
   });
 
   const skills = detail.skills ?? [];
   const desiredIds = new Set(skills.filter((skill) => !skill.orphan).map((skill) => skill.id));
   const available = (items.data ?? []).filter((item) => !desiredIds.has(item.id));
+  const groups = skillMenuGroups(available);
   const drift = skills.filter((skill) => !skill.orphan && !skill.missing && !skill.conflict && !skill.mounted);
 
   return (
@@ -137,25 +144,14 @@ export function SkillsTab({ name, detail }: { name: string; detail: SandboxDetai
             description="Add a skill store first, or every discovered item is already selected."
           />
         ) : (
-          <div className="flex items-center gap-2">
-            <Select value={selected} onChange={(event) => setSelected(event.target.value)} className="max-w-md">
-              <option value="">Choose a skill or command…</option>
-              {available.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.store_name} · {item.kind === "command" ? "/" : ""}
-                  {item.name}
-                </option>
-              ))}
-            </Select>
-            <Button
-              variant="primary"
-              disabled={!selected || !detail.sandbox.running}
-              loading={attach.isPending}
-              onClick={() => attach.mutate(Number(selected))}
-            >
-              Attach
-            </Button>
-          </div>
+          <MenuSelect
+            groups={groups}
+            onChange={(itemId) => attach.mutate(Number(itemId))}
+            placeholder="Choose a skill or command…"
+            searchPlaceholder="Search skills and commands…"
+            disabled={!detail.sandbox.running || attach.isPending}
+            className="max-w-md"
+          />
         )}
       </Panel>
 

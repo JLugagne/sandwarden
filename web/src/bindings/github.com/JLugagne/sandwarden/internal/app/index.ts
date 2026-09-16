@@ -9,9 +9,12 @@ export type {
     ConnectInfo,
     Event,
     JobView,
+    KitItemView,
+    KitValidation,
     ProfileView,
     SandboxCache,
     SandboxDetail,
+    SandboxProfileMount,
     SandboxSkill,
     SandboxSummary,
     SkillReconcileResult

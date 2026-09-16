@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,19 +33,29 @@ type SandboxSummary struct {
 	MountPolicyDenied bool                `json:"mount_policy_denied"`
 	Profiles          []string            `json:"profiles"`
 	Connect           ConnectInfo         `json:"connect"`
+	// CPUPercent is the sampled CPU usage, 0-100 across the sandbox CPUs.
+	CPUPercent float64 `json:"cpu_percent"`
+	// MemoryUsed/MemoryTotal are the sampled memory figures in bytes.
+	MemoryUsed  int64 `json:"memory_used_bytes"`
+	MemoryTotal int64 `json:"memory_total_bytes"`
 }
 
 // SandboxDetail is the per-sandbox projection pushed on TopicSandbox.
 type SandboxDetail struct {
-	Sandbox              SandboxSummary       `json:"sandbox"`
-	Profiles             []store.Profile      `json:"profiles"`
-	Mounts               []sbx.MountInfo      `json:"mounts"`
-	Secrets              []sbx.Secret         `json:"secrets"`
-	CustomSecrets        []sbx.CustomSecret   `json:"custom_secrets"`
-	PolicyRules          []sbx.PolicyRule     `json:"policy_rules"`
-	Caches               []SandboxCache       `json:"caches"`
-	AdditionalWorkspaces []sbx.WorkspaceMount `json:"additional_workspaces,omitempty"`
-	Skills               []SandboxSkill       `json:"skills"`
+	Sandbox              SandboxSummary        `json:"sandbox"`
+	Profiles             []store.Profile       `json:"profiles"`
+	Mounts               []sbx.MountInfo       `json:"mounts"`
+	MountsError          string                `json:"mounts_error,omitempty"`
+	Image                string                `json:"image,omitempty"`
+	ImageDigest          string                `json:"image_digest,omitempty"`
+	Kits                 []string              `json:"kits,omitempty"`
+	Secrets              []sbx.Secret          `json:"secrets"`
+	CustomSecrets        []sbx.CustomSecret    `json:"custom_secrets"`
+	PolicyRules          []sbx.PolicyRule      `json:"policy_rules"`
+	Caches               []SandboxCache        `json:"caches"`
+	ProfileMounts        []SandboxProfileMount `json:"profile_mounts"`
+	AdditionalWorkspaces []sbx.WorkspaceMount  `json:"additional_workspaces,omitempty"`
+	Skills               []SandboxSkill        `json:"skills"`
 }
 
 // SandboxSummaries builds the list projection of every sandbox.
@@ -66,7 +78,9 @@ func (a *App) SandboxSummaries(ctx context.Context) ([]SandboxSummary, error) {
 	}
 	out := make([]SandboxSummary, 0, len(sandboxes))
 	for _, s := range sandboxes {
-		out = append(out, buildSummary(s, assignments[s.Name], byID))
+		summary := buildSummary(s, assignments[s.Name], byID)
+		a.stats.apply(&summary)
+		out = append(out, summary)
 	}
 	return out, nil
 }
@@ -87,13 +101,23 @@ func (a *App) SandboxDetail(ctx context.Context, name string) (SandboxDetail, er
 		byID[p.ID] = p
 		ids = append(ids, p.ID)
 	}
+	summary := buildSummary(info, ids, byID)
+	a.stats.apply(&summary)
 	detail := SandboxDetail{
-		Sandbox:              buildSummary(info, ids, byID),
+		Sandbox:              summary,
 		Profiles:             profiles,
 		AdditionalWorkspaces: info.AdditionalWorkspaces,
 	}
-	if mounts, err := a.Sbx.Mounts(ctx, name); err == nil {
-		detail.Mounts = mounts
+	if inspected, err := a.Sbx.InspectDetail(ctx, name); err == nil {
+		detail.Mounts = inspected.RuntimeMounts
+		if len(detail.Mounts) == 0 {
+			detail.Mounts = inspected.Mounts
+		}
+		detail.Image = inspected.Image
+		detail.ImageDigest = inspected.ImageDigest
+		detail.Kits = inspected.Kits
+	} else {
+		detail.MountsError = err.Error()
 	}
 	if list, err := a.Sbx.ListSecrets(ctx); err == nil {
 		for _, s := range list.Stored {
@@ -110,8 +134,9 @@ func (a *App) SandboxDetail(ctx context.Context, name string) (SandboxDetail, er
 	if rules, err := a.Sbx.ListPolicyRules(ctx, name); err == nil {
 		detail.PolicyRules = rules
 	}
-	if caches, err := a.Store.ListCachesForSandbox(ctx, name); err == nil {
-		detail.Caches = buildSandboxCaches(caches, detail.Mounts)
+	detail.Caches = a.sandboxCaches(ctx, name, detail.Mounts)
+	if profileMounts, err := a.profileMountsForSandbox(ctx, name, detail.Mounts); err == nil {
+		detail.ProfileMounts = profileMounts
 	}
 	if skills := a.sandboxSkills(ctx, name, detail.Mounts); len(skills) > 0 {
 		detail.Skills = skills
@@ -246,31 +271,59 @@ func (n *notifier) drain() {
 // sandbox.
 type SandboxCache struct {
 	store.CacheMount
-	Attached bool `json:"attached"`
-}
-
-// buildSandboxCaches marks each configured cache as attached when a matching
-// bind mount is live in the sandbox.
-func buildSandboxCaches(caches []store.CacheMount, mounts []sbx.MountInfo) []SandboxCache {
-	out := make([]SandboxCache, 0, len(caches))
-	for _, c := range caches {
-		out = append(out, SandboxCache{CacheMount: c, Attached: cacheMounted(mounts, c)})
-	}
-	return out
+	Attached bool     `json:"attached"`
+	Direct   bool     `json:"direct"`
+	Profiles []string `json:"profiles"`
+	OptedOut bool     `json:"opted_out"`
 }
 
 func cacheMounted(mounts []sbx.MountInfo, c store.CacheMount) bool {
-	for _, m := range mounts {
-		if m.HostPath != c.HostPath {
-			continue
+	return mountPresent(mounts, c.HostPath, c.TargetPath)
+}
+
+// sandboxCaches projects the caches of one sandbox: direct assignments plus
+// profile defaults, with live attachment and opt-out state. The desired set
+// feeds the reconcile pass; this one feeds the UI.
+func (a *App) sandboxCaches(ctx context.Context, sandbox string, mounts []sbx.MountInfo) []SandboxCache {
+	direct, err := a.Store.ListCachesForSandbox(ctx, sandbox)
+	if err != nil {
+		return nil
+	}
+	profiled, err := a.Store.ProfileCachesForSandbox(ctx, sandbox)
+	if err != nil {
+		return nil
+	}
+	optOuts, err := a.Store.ProfileOptOuts(ctx, sandbox)
+	if err != nil {
+		return nil
+	}
+	merged := map[int64]*SandboxCache{}
+	var order []int64
+	row := func(c store.CacheMount) *SandboxCache {
+		if existing, ok := merged[c.ID]; ok {
+			return existing
 		}
-		target := m.Target
-		if target == "" {
-			target = m.HostPath
-		}
-		if target == c.TargetPath {
-			return true
+		created := &SandboxCache{CacheMount: c, Attached: cacheMounted(mounts, c)}
+		merged[c.ID] = created
+		order = append(order, c.ID)
+		return created
+	}
+	for _, c := range profiled {
+		entry := row(c.CacheMount)
+		if !slices.Contains(entry.Profiles, c.ProfileName) {
+			entry.Profiles = append(entry.Profiles, c.ProfileName)
 		}
 	}
-	return false
+	for _, c := range direct {
+		row(c).Direct = true
+	}
+	out := make([]SandboxCache, 0, len(order))
+	for _, id := range order {
+		entry := merged[id]
+		entry.OptedOut = !entry.Direct && optOuts[store.ProfileOptOutKey(store.OptOutCache, id)]
+		sort.Strings(entry.Profiles)
+		out = append(out, *entry)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }

@@ -139,3 +139,19 @@ func TestUnmountFolderBreaksStaleDeadlock(t *testing.T) {
 		}
 	}
 }
+
+func TestMountsAcceptsSchemaVariants(t *testing.T) {
+	fixture := `{"workspace":"/w","mounts":[{"host_path":"/data/one","target":"/ctr/one","read_only":true}]}`
+	newStubSbx(t, fixture)
+
+	mounts, err := New("/nonexistent.sock").Mounts(context.Background(), "box")
+	if err != nil {
+		t.Fatalf("mounts: %v", err)
+	}
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %+v", mounts)
+	}
+	if mounts[0].HostPath != "/data/one" || mounts[0].Target != "/ctr/one" || !mounts[0].ReadOnly {
+		t.Fatalf("unexpected mount: %+v", mounts[0])
+	}
+}

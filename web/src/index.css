@@ -88,3 +88,33 @@
     font-family: var(--font-mono);
   }
 }
+
+/* Dropdown popovers are anchored to their trigger with CSS anchor positioning,
+   so they track scroll, resize and layout without any script. The trigger sets
+   --anchor to a unique anchor name. */
+.anchor-trigger {
+  anchor-name: var(--anchor);
+}
+
+.anchor-popover {
+  position: fixed;
+  position-anchor: var(--anchor);
+  top: calc(anchor(var(--anchor) bottom) + 0.25rem);
+  left: anchor(var(--anchor) left);
+  width: min(
+    calc(100vw - 1rem),
+    max(18.75rem, anchor-size(var(--anchor) width))
+  );
+  max-height: min(23.75rem, calc(100dvh - 1rem));
+  position-try-fallbacks: --anchor-above, --anchor-inline;
+}
+
+@position-try --anchor-above {
+  top: auto;
+  bottom: calc(anchor(var(--anchor) top) + 0.25rem);
+}
+
+@position-try --anchor-inline {
+  left: auto;
+  right: anchor(var(--anchor) right);
+}

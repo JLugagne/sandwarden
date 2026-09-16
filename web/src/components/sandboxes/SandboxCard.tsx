@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApiMutation } from "@/hooks/useApiMutation";
-import { formatPort, formatTime, joinList } from "@/lib/format";
+import { cn } from "@/lib/cn";
+import { formatBytes, formatPort, formatTime, joinList } from "@/lib/format";
 import {
   Badge,
   Button,
@@ -89,6 +90,26 @@ export function SandboxCard({ sandbox }: { sandbox: SandboxSummary }) {
           </div>
         </div>
 
+        {sandbox.running && sandbox.memory_total_bytes > 0 ? (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            <ResourceMeter
+              label="CPU"
+              value={sandbox.cpu_percent}
+              max={100}
+              display={`${Math.round(sandbox.cpu_percent)}%`}
+              title={`${sandbox.cpu_percent.toFixed(1)}% of the sandbox CPUs`}
+            />
+            <ResourceMeter
+              label="MEM"
+              value={sandbox.memory_used_bytes}
+              max={sandbox.memory_total_bytes}
+              display={`${formatBytes(sandbox.memory_used_bytes)} / ${formatBytes(sandbox.memory_total_bytes)}`}
+              title="Memory used by the sandbox"
+              warnFrom={85}
+            />
+          </div>
+        ) : null}
+
         {sandbox.ports && sandbox.ports.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
             {sandbox.ports.map((port, index) => (
@@ -109,8 +130,8 @@ export function SandboxCard({ sandbox }: { sandbox: SandboxSummary }) {
         ) : null}
 
         <div className="flex flex-col gap-1.5" onClick={(event) => event.stopPropagation()}>
-          <CommandLine command={sandbox.connect.run} />
-          <CommandLine command={sandbox.connect.shell} />
+          <CommandLine command={sandbox.connect.run} openDir={sandbox.workspace} />
+          <CommandLine command={sandbox.connect.shell} openDir={sandbox.workspace} />
         </div>
 
         <div className="flex items-center justify-between border-t border-border pt-3">
@@ -139,5 +160,37 @@ export function SandboxCard({ sandbox }: { sandbox: SandboxSummary }) {
         onClose={() => setConfirming(false)}
       />
     </>
+  );
+}
+
+/** Compact usage bar used for the CPU and memory indicators of a running sandbox. */
+function ResourceMeter({
+  label,
+  value,
+  max,
+  display,
+  title,
+  warnFrom,
+}: {
+  label: string;
+  value: number;
+  max: number;
+  display: string;
+  title: string;
+  warnFrom?: number;
+}) {
+  const percent = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
+  const tone = warnFrom !== undefined && percent >= warnFrom ? "bg-warning" : "bg-accent";
+  return (
+    <span className="inline-flex items-center gap-1.5" title={title}>
+      <span className="text-2xs font-medium text-faint">{label}</span>
+      <span className="h-1.5 w-20 overflow-hidden rounded-full bg-hover">
+        <span
+          className={cn("block h-full rounded-full transition-[width] duration-500", tone)}
+          style={{ width: `${percent}%` }}
+        />
+      </span>
+      <span className="text-2xs text-muted tabular-nums">{display}</span>
+    </span>
   );
 }

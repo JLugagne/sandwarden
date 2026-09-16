@@ -106,6 +106,58 @@ var migrations = []string{
 	);`,
 	`CREATE INDEX idx_sandbox_skill_items_item ON sandbox_skill_items (item_id);`,
 	`ALTER TABLE skill_stores ADD COLUMN auth TEXT NOT NULL DEFAULT '';`,
+	`CREATE TABLE kit_stores (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		name        TEXT NOT NULL UNIQUE,
+		description TEXT NOT NULL DEFAULT '',
+		url         TEXT NOT NULL,
+		ref         TEXT NOT NULL DEFAULT '',
+		auth        TEXT NOT NULL DEFAULT '',
+		path        TEXT NOT NULL,
+		synced_at   TEXT NOT NULL DEFAULT '',
+		error       TEXT NOT NULL DEFAULT '',
+		created_at  TEXT NOT NULL,
+		updated_at  TEXT NOT NULL
+	);`,
+	`CREATE TABLE kit_items (
+		id             INTEGER PRIMARY KEY AUTOINCREMENT,
+		store_id       INTEGER NOT NULL REFERENCES kit_stores(id) ON DELETE CASCADE,
+		kind           TEXT NOT NULL,
+		name           TEXT NOT NULL,
+		display_name   TEXT NOT NULL DEFAULT '',
+		description    TEXT NOT NULL DEFAULT '',
+		version        TEXT NOT NULL DEFAULT '',
+		image          TEXT NOT NULL DEFAULT '',
+		requires_agent TEXT NOT NULL DEFAULT '',
+		rel_path       TEXT NOT NULL,
+		spec           TEXT NOT NULL DEFAULT '',
+		created_at     TEXT NOT NULL,
+		UNIQUE (store_id, name)
+	);`,
+	`CREATE INDEX idx_kit_items_store ON kit_items (store_id);`,
+	`CREATE TABLE profile_mounts (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+		host_path   TEXT NOT NULL,
+		target_path TEXT NOT NULL DEFAULT '',
+		read_only   INTEGER NOT NULL DEFAULT 0,
+		created_at  TEXT NOT NULL,
+		UNIQUE (profile_id, host_path, target_path)
+	);`,
+	`CREATE INDEX idx_profile_mounts_profile ON profile_mounts (profile_id);`,
+	`CREATE TABLE profile_caches (
+		profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+		cache_id   INTEGER NOT NULL REFERENCES cache_mounts(id) ON DELETE CASCADE,
+		added_at   TEXT NOT NULL,
+		PRIMARY KEY (profile_id, cache_id)
+	);`,
+	`CREATE TABLE sandbox_profile_optouts (
+		sandbox_name TEXT NOT NULL,
+		kind         TEXT NOT NULL CHECK (kind IN ('mount','cache')),
+		ref_id       INTEGER NOT NULL,
+		opted_out_at TEXT NOT NULL,
+		PRIMARY KEY (sandbox_name, kind, ref_id)
+	);`,
 }
 
 // Store is the SQLite-backed profile store.

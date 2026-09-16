@@ -107,15 +107,15 @@ func (c *Client) UnmountFolder(ctx context.Context, sandbox, hostPath string, re
 // Mounts returns the sandbox's runtime mounts by parsing `sbx inspect --json`.
 // The daemon exposes no REST listing for them.
 func (c *Client) Mounts(ctx context.Context, sandbox string) ([]MountInfo, error) {
-	raw, err := c.runCLI(ctx, nil, nil, "inspect", sandbox, "--json")
+	detail, err := c.InspectDetail(ctx, sandbox)
 	if err != nil {
 		return nil, err
 	}
-	var detail InspectDetail
-	if err := json.Unmarshal([]byte(raw), &detail); err != nil {
-		return nil, fmt.Errorf("decode inspect output: %w", err)
+	mounts := detail.RuntimeMounts
+	if len(mounts) == 0 {
+		mounts = detail.Mounts
 	}
-	return detail.RuntimeMounts, nil
+	return mounts, nil
 }
 
 // MountFolderAt bind-mounts hostPath inside the sandbox at target. An empty
@@ -168,4 +168,18 @@ func (c *Client) UnmountFolderAt(ctx context.Context, sandbox, hostPath, target 
 func (c *Client) MkdirAll(ctx context.Context, sandbox, path string) error {
 	_, err := c.runCLI(ctx, nil, nil, "exec", sandbox, "mkdir", "-p", path)
 	return err
+}
+
+// InspectDetail parses `sbx inspect --json`, the only source of runtime mounts,
+// kit references and image metadata. The daemon exposes no REST equivalent.
+func (c *Client) InspectDetail(ctx context.Context, sandbox string) (InspectDetail, error) {
+	raw, err := c.runCLI(ctx, nil, nil, "inspect", sandbox, "--json")
+	if err != nil {
+		return InspectDetail{}, err
+	}
+	var detail InspectDetail
+	if err := json.Unmarshal([]byte(raw), &detail); err != nil {
+		return InspectDetail{}, fmt.Errorf("decode inspect output: %w", err)
+	}
+	return detail, nil
 }

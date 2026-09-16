@@ -3,12 +3,14 @@ import { NavLink, Outlet } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { useConnectionStatus } from "@/app/RealtimeProvider";
 import { notificationsEnabled, setNotificationsEnabled } from "@/lib/notifications";
-import { Button } from "@/components/ui";
+import { Button, IconSearch } from "@/components/ui";
+import { OPEN_SEARCH_EVENT, SearchOverlay } from "@/components/SearchOverlay";
 
 const NAV = [
   { to: "/", label: "Sandboxes", end: true },
   { to: "/profiles", label: "Profiles" },
   { to: "/skills", label: "Skills" },
+  { to: "/kits", label: "Kits" },
   { to: "/traffic", label: "Traffic" },
   { to: "/secrets", label: "Secrets" },
   { to: "/settings", label: "Settings" },
@@ -30,6 +32,18 @@ export function Layout() {
       <aside className="sticky top-0 flex h-dvh w-56 shrink-0 flex-col border-r border-border bg-surface/60">
         <div className="flex h-14 items-center px-4 text-[15px] font-semibold tracking-tight">
           sand<span className="text-accent">warden</span>
+        </div>
+
+        <div className="px-2 pb-1">
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new Event(OPEN_SEARCH_EVENT))}
+            className="flex w-full items-center gap-2 rounded-sm border border-border px-2.5 py-1.5 text-xs text-muted transition-colors hover:bg-hover hover:text-fg"
+          >
+            <IconSearch className="size-3.5 shrink-0" />
+            Search
+            <kbd className="ml-auto rounded border border-border px-1 text-2xs text-faint">⌘K</kbd>
+          </button>
         </div>
 
         <nav className="flex flex-1 flex-col gap-0.5 px-2" aria-label="Main">
@@ -74,6 +88,8 @@ export function Layout() {
           <Outlet />
         </div>
       </main>
+
+      <SearchOverlay />
     </div>
   );
 }

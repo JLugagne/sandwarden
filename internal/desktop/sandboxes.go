@@ -28,6 +28,7 @@ func (d *Desktop) CreateSandbox(req CreateSandboxRequest) (string, error) {
 		Memory:      strings.TrimSpace(req.Memory),
 		Profile:     strings.TrimSpace(req.Profile),
 		Template:    strings.TrimSpace(req.Template),
+		Kits:        cleanStrings(req.Kits),
 		Publish:     cleanStrings(req.Publish),
 		Env:         cleanStrings(req.Env),
 		DenyNetwork: cleanStrings(req.DenyNetwork),

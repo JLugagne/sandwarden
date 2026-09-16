@@ -35,6 +35,7 @@ type CreateOptions struct {
 	Memory      string
 	Profile     string
 	Template    string
+	Kits        []string
 	Publish     []string
 	Env         []string
 	DenyNetwork []string
@@ -62,6 +63,11 @@ func (o CreateOptions) Args() ([]string, error) {
 	}
 	if o.Template != "" {
 		args = append(args, "--template", o.Template)
+	}
+	for _, kit := range o.Kits {
+		if strings.TrimSpace(kit) != "" {
+			args = append(args, "--kit", kit)
+		}
 	}
 	for _, p := range o.Publish {
 		args = append(args, "-p", p)

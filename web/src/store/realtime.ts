@@ -13,8 +13,12 @@ export const queryKeys = {
   caches: ["caches"] as const,
   skillStores: ["skill-stores"] as const,
   skillItems: ["skill-items"] as const,
+  kitStores: ["kit-stores"] as const,
+  kitItems: ["kit-items"] as const,
+  templates: ["templates"] as const,
   version: ["version"] as const,
   updates: ["updates"] as const,
+  terminals: ["terminals"] as const,
 };
 
 /**
@@ -28,7 +32,8 @@ export function applyEvent(client: QueryClient, event: EventEnvelope): void {
   const { topic, data } = event;
 
   if (topic === "sandboxes") {
-    const list = Array.isArray(data) ? (data as SandboxSummary[]) : [];
+    if (!Array.isArray(data)) return;
+    const list = data as SandboxSummary[];
     const names = new Set(list.map((sandbox) => sandbox.name));
     client.setQueryData(queryKeys.sandboxes, list);
     for (const query of client.getQueryCache().findAll({ queryKey: ["sandbox"] })) {

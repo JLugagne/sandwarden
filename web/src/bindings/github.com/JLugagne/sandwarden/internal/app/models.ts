@@ -36,6 +36,34 @@ export interface JobView {
 }
 
 /**
+ * KitItemView is one catalog kit with the reference usable at create time and
+ * its parsed spec for the detail view.
+ */
+export interface KitItemView {
+    "id": number;
+    "store_id": number;
+    "store_name": string;
+    "kind": string;
+    "name": string;
+    "display_name": string;
+    "description": string;
+    "version": string;
+    "image": string;
+    "requires_agent": string;
+    "rel_path": string;
+    "ref": string;
+    "spec": sbx$0.KitSpec;
+}
+
+/**
+ * KitValidation is the verdict of `sbx kit validate`.
+ */
+export interface KitValidation {
+    "ok": boolean;
+    "output": string;
+}
+
+/**
  * ProfileView is a profile with its rules and the sandboxes it is assigned to.
  */
 export interface ProfileView {
@@ -48,6 +76,8 @@ export interface ProfileView {
     "updated_at": string;
     "rules": store$0.Rule[] | null;
     "items": store$0.SkillItem[] | null;
+    "mounts": store$0.ProfileMount[] | null;
+    "caches": store$0.CacheMount[] | null;
     "sandboxes": string[] | null;
 }
 
@@ -67,6 +97,9 @@ export interface SandboxCache {
     "created_at": string;
     "updated_at": string;
     "attached": boolean;
+    "direct": boolean;
+    "profiles": string[] | null;
+    "opted_out": boolean;
 }
 
 /**
@@ -76,12 +109,36 @@ export interface SandboxDetail {
     "sandbox": SandboxSummary;
     "profiles": store$0.Profile[] | null;
     "mounts": sbx$0.MountInfo[] | null;
+    "mounts_error"?: string;
+    "image"?: string;
+    "image_digest"?: string;
+    "kits"?: string[] | null;
     "secrets": sbx$0.Secret[] | null;
     "custom_secrets": sbx$0.CustomSecret[] | null;
     "policy_rules": sbx$0.PolicyRule[] | null;
     "caches": SandboxCache[] | null;
+    "profile_mounts": SandboxProfileMount[] | null;
     "additional_workspaces"?: sbx$0.WorkspaceMount[] | null;
     "skills": SandboxSkill[] | null;
+}
+
+/**
+ * SandboxProfileMount is a profile mount as seen from one sandbox: the merged
+ * target plus its opt-out and live attachment state.
+ */
+export interface SandboxProfileMount {
+    "host_path": string;
+    "target_path": string;
+    "read_only": boolean;
+    "profile_names": string[] | null;
+
+    /**
+     * ProfileMountIDs lists the declaring profile_mounts rows so the UI can
+     * opt out of (or re-enable) every declaration at once.
+     */
+    "profile_mount_ids": number[] | null;
+    "opted_out": boolean;
+    "attached": boolean;
 }
 
 /**
@@ -122,6 +179,17 @@ export interface SandboxSummary {
     "mount_policy_denied": boolean;
     "profiles": string[] | null;
     "connect": ConnectInfo;
+
+    /**
+     * CPUPercent is the sampled CPU usage, 0-100 across the sandbox CPUs.
+     */
+    "cpu_percent": number;
+
+    /**
+     * MemoryUsed/MemoryTotal are the sampled memory figures in bytes.
+     */
+    "memory_used_bytes": number;
+    "memory_total_bytes": number;
 }
 
 /**

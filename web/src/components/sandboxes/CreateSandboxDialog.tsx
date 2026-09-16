@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useJob } from "@/hooks/useJob";
 import { errorMessage } from "@/hooks/useApiMutation";
@@ -8,6 +9,7 @@ import { queryKeys } from "@/store/realtime";
 import { useStickToBottom, useToasts } from "@/components/Toaster";
 import {
   Button,
+  Checkbox,
   CheckboxField,
   Field,
   IconFolder,
@@ -15,12 +17,14 @@ import {
   IconTrash,
   Input,
   LogView,
+  MenuSelect,
   Modal,
-  Select,
+  Tabs,
   TextArea,
 } from "@/components/ui";
 import { splitList } from "@/lib/format";
-import type { WorkspaceInput } from "@/types";
+import { agentMenuGroups } from "@/lib/catalog";
+import type { KitItemView, Template, WorkspaceInput } from "@/types";
 
 const AGENTS = [
   "claude",
@@ -38,10 +42,16 @@ const AGENTS = [
 
 const EMPTY_WORKSPACES: WorkspaceInput[] = [{ path: "", read_only: false }];
 
+function templateReference(template: Template): string {
+  if (!template.repository || !template.tag) return template.id;
+  return `${template.repository}:${template.tag}`;
+}
+
 export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const toast = useToasts();
   const queryClient = useQueryClient();
 
+  const [tab, setTab] = useState("general");
   const [agent, setAgent] = useState("claude");
   const [workspaces, setWorkspaces] = useState<WorkspaceInput[]>(EMPTY_WORKSPACES);
   const [name, setName] = useState("");
@@ -49,17 +59,36 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
   const [memory, setMemory] = useState("");
   const [profile, setProfile] = useState("");
   const [template, setTemplate] = useState("");
+  const [kits, setKits] = useState("");
   const [publish, setPublish] = useState("");
   const [env, setEnv] = useState("");
   const [denyNetwork, setDenyNetwork] = useState("");
   const [clone, setClone] = useState(false);
   const [attachCaches, setAttachCaches] = useState(true);
 
+  const templates = useQuery({ queryKey: queryKeys.templates, queryFn: api.templates });
+  const kitItems = useQuery({ queryKey: queryKeys.kitItems, queryFn: () => api.kitItems() });
+  const agentGroups = useMemo(() => agentMenuGroups(AGENTS, kitItems.data ?? []), [kitItems.data]);
+  const mixinGroups = useMemo(() => {
+    const groups = new Map<string, KitItemView[]>();
+    for (const item of kitItems.data ?? []) {
+      if (item.kind === "sandbox") continue;
+      const store = item.store_name || "—";
+      groups.set(store, [...(groups.get(store) ?? []), item]);
+    }
+    return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
+  }, [kitItems.data]);
+  const selectedKits = splitList(kits);
+
   const [jobId, setJobId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const reported = useRef<string | null>(null);
   const job = useJob(jobId);
   const logRef = useStickToBottom<HTMLPreElement>(job.output);
+
+  useEffect(() => {
+    if (jobId) setTab("progress");
+  }, [jobId]);
 
   useEffect(() => {
     if (!jobId || job.status === "running" || reported.current === jobId) return;
@@ -74,12 +103,14 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
   }, [job.status, jobId, job.error, name, queryClient, toast]);
 
   function reset() {
+    setTab("general");
     setWorkspaces(EMPTY_WORKSPACES);
     setName("");
     setCPUs("");
     setMemory("");
     setProfile("");
     setTemplate("");
+    setKits("");
     setPublish("");
     setEnv("");
     setDenyNetwork("");
@@ -93,6 +124,14 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
     if (busy) return;
     reset();
     onClose();
+  }
+
+  function toggleKit(ref: string) {
+    setKits((current) => {
+      const refs = splitList(current);
+      const next = refs.includes(ref) ? refs.filter((item) => item !== ref) : [...refs, ref];
+      return next.join("\n");
+    });
   }
 
   async function pickFolder(index: number) {
@@ -121,6 +160,7 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
         memory: memory.trim() || undefined,
         profile: profile.trim() || undefined,
         template: template.trim() || undefined,
+        kits: splitList(kits),
         publish: splitList(publish),
         env: splitList(env),
         deny_network: splitList(denyNetwork),
@@ -139,7 +179,7 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
       open={open}
       onClose={close}
       title="New sandbox"
-      description="Every `sbx create` option is available here; progress streams below."
+      description="Every `sbx create` option is one tab away; the output streams in the Progress tab."
       size="lg"
       footer={
         <>
@@ -153,140 +193,228 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
       }
     >
       <div className="flex flex-col gap-5">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Agent" htmlFor="cs-agent">
-            <Select id="cs-agent" value={agent} onChange={(event) => setAgent(event.target.value)}>
-              {AGENTS.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Name (optional)" htmlFor="cs-name" hint="Auto-generated when left empty.">
-            <Input id="cs-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="my-sandbox" />
-          </Field>
-        </div>
+        <Tabs
+          tabs={[
+            { id: "general", label: "General" },
+            { id: "resources", label: "Resources" },
+            { id: "network", label: "Network" },
+            { id: "options", label: "Options" },
+            ...(jobId ? [{ id: "progress", label: "Progress" }] : []),
+          ]}
+          active={tab}
+          onChange={setTab}
+        />
 
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-medium text-muted">Workspaces</span>
-          {workspaces.map((workspace, index) => (
-            <div key={index} className="flex items-center gap-2">
-              <Input
-                value={workspace.path}
-                onChange={(event) =>
-                  setWorkspaces((current) =>
-                    current.map((item, i) => (i === index ? { ...item, path: event.target.value } : item)),
-                  )
-                }
-                placeholder="/absolute/host/path"
-                className="flex-1 font-mono text-xs"
-              />
-              <Button size="icon" variant="ghost" title="Choose folder…" onClick={() => void pickFolder(index)}>
-                <IconFolder className="size-3.5" />
-              </Button>
-              <CheckboxField
-                label="ro"
-                checked={workspace.read_only}
-                onChange={(read_only) =>
-                  setWorkspaces((current) => current.map((item, i) => (i === index ? { ...item, read_only } : item)))
-                }
-              />
-              <Button
-                size="icon"
-                variant="ghost"
-                title="Remove workspace"
-                disabled={workspaces.length === 1}
-                onClick={() => setWorkspaces((current) => current.filter((_, i) => i !== index))}
-              >
-                <IconTrash className="size-3.5" />
-              </Button>
+        {tab === "general" ? (
+          <div className="flex flex-col gap-5">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Agent" htmlFor="cs-agent" hint="A built-in agent or an agent kit from your repositories.">
+                <MenuSelect
+                  id="cs-agent"
+                  groups={agentGroups}
+                  value={agent}
+                  onChange={setAgent}
+                  placeholder="Choose an agent…"
+                  searchPlaceholder="Search agents and kits…"
+                  emptyLabel="No agent available."
+                />
+              </Field>
+              <Field label="Name (optional)" htmlFor="cs-name" hint="Auto-generated when left empty.">
+                <Input id="cs-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="my-sandbox" />
+              </Field>
+              <Field label="Template (optional)" htmlFor="cs-template" hint="Base image for the sandbox; local templates are suggested.">
+                <Input
+                  id="cs-template"
+                  list="cs-templates"
+                  value={template}
+                  onChange={(event) => setTemplate(event.target.value)}
+                  placeholder="myimage:v1.0"
+                />
+                <datalist id="cs-templates">
+                  {(templates.data ?? []).map((item) => (
+                    <option key={item.id} value={templateReference(item)} />
+                  ))}
+                </datalist>
+              </Field>
+              <Field label="Policy profile (optional)" htmlFor="cs-profile" hint="sbx --profile name, not the UI profiles.">
+                <Input id="cs-profile" value={profile} onChange={(event) => setProfile(event.target.value)} />
+              </Field>
             </div>
-          ))}
-          <div>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setWorkspaces((current) => [...current, { path: "", read_only: false }])}
-            >
-              <IconPlus className="size-3.5" /> Add workspace
-            </Button>
+
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-medium text-muted">Workspaces</span>
+              {workspaces.map((workspace, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <Input
+                    value={workspace.path}
+                    onChange={(event) =>
+                      setWorkspaces((current) =>
+                        current.map((item, i) => (i === index ? { ...item, path: event.target.value } : item)),
+                      )
+                    }
+                    placeholder="/absolute/host/path"
+                    className="flex-1 font-mono text-xs"
+                  />
+                  <Button size="icon" variant="ghost" title="Choose folder…" onClick={() => void pickFolder(index)}>
+                    <IconFolder className="size-3.5" />
+                  </Button>
+                  <CheckboxField
+                    label="ro"
+                    checked={workspace.read_only}
+                    onChange={(read_only) =>
+                      setWorkspaces((current) => current.map((item, i) => (i === index ? { ...item, read_only } : item)))
+                    }
+                  />
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    title="Remove workspace"
+                    disabled={workspaces.length === 1}
+                    onClick={() => setWorkspaces((current) => current.filter((_, i) => i !== index))}
+                  >
+                    <IconTrash className="size-3.5" />
+                  </Button>
+                </div>
+              ))}
+              <div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setWorkspaces((current) => [...current, { path: "", read_only: false }])}
+                >
+                  <IconPlus className="size-3.5" /> Add workspace
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Field
+                label="Kit mixins (optional)"
+                htmlFor="cs-kits"
+                hint="One reference per line: git+https://…, a ZIP path, a directory or an OCI reference (`sbx create --kit`)."
+              >
+                <TextArea
+                  id="cs-kits"
+                  rows={4}
+                  value={kits}
+                  onChange={(event) => setKits(event.target.value)}
+                  placeholder={"git+https://github.com/docker/sbx-kits-contrib#dir=code-server&ref=main"}
+                />
+              </Field>
+              {mixinGroups.length > 0 ? (
+                <div className="rounded-sm border border-border">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-1.5">
+                    <span className="text-2xs font-medium tracking-wide text-faint uppercase">
+                      From your repositories · {selectedKits.length} selected
+                    </span>
+                    <Link to="/kits" className="text-xs text-accent hover:underline">
+                      Manage kits
+                    </Link>
+                  </div>
+                  <div className="max-h-56 overflow-y-auto p-3">
+                    {mixinGroups.map(([store, items]) => (
+                      <div key={store} className="mb-3 last:mb-0">
+                        <div className="mb-1.5 text-2xs font-semibold tracking-wide text-faint uppercase">{store}</div>
+                        <div className="flex flex-col gap-1.5">
+                          {items.map((item) => (
+                            <Checkbox
+                              key={item.id}
+                              checked={selectedKits.includes(item.ref)}
+                              onChange={() => toggleKit(item.ref)}
+                              label={
+                                <span className="inline-flex items-center gap-2">
+                                  <span>{item.display_name || item.name}</span>
+                                  {item.version ? <span className="text-faint">v{item.version}</span> : null}
+                                </span>
+                              }
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
+        ) : null}
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="CPUs (optional)" htmlFor="cs-cpus" hint="0 = auto (all host CPUs).">
-            <Input
-              id="cs-cpus"
-              type="number"
-              min={0}
-              value={cpus}
-              onChange={(event) => setCPUs(event.target.value)}
-              placeholder="0"
-            />
-          </Field>
-          <Field label="Memory (optional)" htmlFor="cs-memory" hint="e.g. 4g. Defaults to 2 CPUs / 4 GiB.">
-            <Input id="cs-memory" value={memory} onChange={(event) => setMemory(event.target.value)} placeholder="4g" />
-          </Field>
-          <Field label="Policy profile (optional)" htmlFor="cs-profile" hint="sbx --profile name, not the UI profiles.">
-            <Input id="cs-profile" value={profile} onChange={(event) => setProfile(event.target.value)} />
-          </Field>
-          <Field label="Template (optional)" htmlFor="cs-template">
-            <Input id="cs-template" value={template} onChange={(event) => setTemplate(event.target.value)} />
-          </Field>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Published ports" htmlFor="cs-publish" hint="One per line, e.g. 8080:80 or 127.0.0.1:3000:3000/tcp.">
-            <TextArea
-              id="cs-publish"
-              rows={2}
-              value={publish}
-              onChange={(event) => setPublish(event.target.value)}
-              placeholder={"8080:80"}
-            />
-          </Field>
-          <Field label="Denied network" htmlFor="cs-deny" hint="Egress host patterns denied at creation.">
-            <TextArea
-              id="cs-deny"
-              rows={2}
-              value={denyNetwork}
-              onChange={(event) => setDenyNetwork(event.target.value)}
-              placeholder={"telemetry.example.com"}
-            />
-          </Field>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Environment" htmlFor="cs-env" hint="One KEY=VALUE per line.">
-            <TextArea
-              id="cs-env"
-              rows={2}
-              value={env}
-              onChange={(event) => setEnv(event.target.value)}
-              placeholder={"NODE_ENV=development"}
-            />
-          </Field>
-          <div className="flex flex-col gap-3 pt-5">
-            <CheckboxField
-              label="Clone the Git repository in-container"
-              hint="Commits come back through the sandbox-<name> git remote."
-              checked={clone}
-              onChange={setClone}
-            />
-            <CheckboxField
-              label="Attach shared caches"
-              hint="Mounts caches flagged auto-attach in Settings (Go, npm, …)."
-              checked={attachCaches}
-              onChange={setAttachCaches}
-            />
+        {tab === "resources" ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="CPUs (optional)" htmlFor="cs-cpus" hint="0 = auto (all host CPUs).">
+              <Input
+                id="cs-cpus"
+                type="number"
+                min={0}
+                value={cpus}
+                onChange={(event) => setCPUs(event.target.value)}
+                placeholder="0"
+              />
+            </Field>
+            <Field label="Memory (optional)" htmlFor="cs-memory" hint="e.g. 4g. Defaults to 2 CPUs / 4 GiB.">
+              <Input id="cs-memory" value={memory} onChange={(event) => setMemory(event.target.value)} placeholder="4g" />
+            </Field>
           </div>
-        </div>
+        ) : null}
 
-        {jobId ? (
+
+        {tab === "network" ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Published ports" htmlFor="cs-publish" hint="One per line, e.g. 8080:80 or 127.0.0.1:3000:3000/tcp.">
+              <TextArea
+                id="cs-publish"
+                rows={4}
+                value={publish}
+                onChange={(event) => setPublish(event.target.value)}
+                placeholder={"8080:80"}
+              />
+            </Field>
+            <Field label="Denied network" htmlFor="cs-deny" hint="Egress host patterns denied at creation.">
+              <TextArea
+                id="cs-deny"
+                rows={4}
+                value={denyNetwork}
+                onChange={(event) => setDenyNetwork(event.target.value)}
+                placeholder={"telemetry.example.com"}
+              />
+            </Field>
+          </div>
+        ) : null}
+
+        {tab === "options" ? (
+          <div className="flex flex-col gap-4">
+            <Field label="Environment" htmlFor="cs-env" hint="One KEY=VALUE per line.">
+              <TextArea
+                id="cs-env"
+                rows={4}
+                value={env}
+                onChange={(event) => setEnv(event.target.value)}
+                placeholder={"NODE_ENV=development"}
+              />
+            </Field>
+            <div className="flex flex-col gap-3">
+              <CheckboxField
+                label="Clone the Git repository in-container"
+                hint="Commits come back through the sandbox-<name> git remote."
+                checked={clone}
+                onChange={setClone}
+              />
+              <CheckboxField
+                label="Attach shared caches"
+                hint="Mounts caches flagged auto-attach in Settings, plus the caches defaulted by the assigned profiles."
+                checked={attachCaches}
+                onChange={setAttachCaches}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {tab === "progress" && jobId ? (
           <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-muted">Progress</span>
-            <LogView text={job.output} empty="Waiting for output…" autoScrollRef={logRef} className="max-h-48" />
+            <span className="text-xs font-medium text-muted">
+              {job.status === "running" ? "Creating the sandbox…" : job.status === "error" ? "Creation failed." : "Done."}
+            </span>
+            <LogView text={job.output} empty="Waiting for output…" autoScrollRef={logRef} className="max-h-80" />
           </div>
         ) : null}
       </div>

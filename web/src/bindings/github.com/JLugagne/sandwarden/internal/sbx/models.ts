@@ -16,6 +16,121 @@ export interface CustomSecret {
 }
 
 /**
+ * KitArgument is one caller-supplied input a kit declares.
+ */
+export interface KitArgument {
+    "default"?: string | null;
+    "required"?: boolean;
+    "description"?: string;
+    "enum"?: string[] | null;
+    "pattern"?: string;
+}
+
+/**
+ * KitCommand is one setup hook. Command is normalized to a single string
+ * whether the spec declared it as a string or an argv array.
+ */
+export interface KitCommand {
+    "command"?: string;
+    "user"?: string;
+    "description"?: string;
+}
+
+/**
+ * KitCommandSet is the default and interactive argv of an agent kit.
+ */
+export interface KitCommandSet {
+    "default"?: string[] | null;
+    "interactive"?: string[] | null;
+}
+
+/**
+ * KitEnvironment holds the static environment variables a kit sets.
+ */
+export interface KitEnvironment {
+    "variables"?: { [_ in string]?: string } | null;
+}
+
+/**
+ * KitFile is one static file a kit injects; its content is never surfaced.
+ */
+export interface KitFile {
+    "path": string;
+    "mode"?: string;
+    "description"?: string;
+}
+
+/**
+ * KitNetworkPolicy lists the allowed and denied egress hosts.
+ */
+export interface KitNetworkPolicy {
+    "allow"?: string[] | null;
+    "deny"?: string[] | null;
+}
+
+/**
+ * KitPermissions is the egress policy a kit declares.
+ */
+export interface KitPermissions {
+    "network"?: KitNetworkPolicy;
+}
+
+/**
+ * KitPort is one container port a kit exposes.
+ */
+export interface KitPort {
+    "container": number;
+    "protocol"?: string;
+    "name"?: string;
+}
+
+/**
+ * KitRequires names the base agent a mixin composes onto.
+ */
+export interface KitRequires {
+    "agent"?: string;
+}
+
+/**
+ * KitSandbox is the sandbox image block of a kind=sandbox kit.
+ */
+export interface KitSandbox {
+    "image"?: string;
+    "entrypoint"?: string[] | null;
+    "command"?: KitCommandSet;
+}
+
+/**
+ * KitSetup is the install/startup hooks and injected files of a kit.
+ */
+export interface KitSetup {
+    "install"?: KitCommand[] | null;
+    "startup"?: KitCommand[] | null;
+    "files"?: KitFile[] | null;
+}
+
+/**
+ * KitSpec is the parsed `sbx kit inspect --json` payload the kit catalog and
+ * detail views render. Fields the UI does not show are ignored.
+ */
+export interface KitSpec {
+    "schemaVersion": string;
+    "kind": string;
+    "name": string;
+    "version"?: string;
+    "displayName"?: string;
+    "description"?: string;
+    "sourceURL"?: string;
+    "requires"?: KitRequires;
+    "sandbox"?: KitSandbox;
+    "environment"?: KitEnvironment;
+    "permissions"?: KitPermissions;
+    "ports"?: KitPort[] | null;
+    "setup"?: KitSetup;
+    "arguments"?: { [_ in string]?: KitArgument } | null;
+}
+
+/**
  * LogEntry is one allowed/blocked host record from the proxy.
  */
 export interface LogEntry {
@@ -133,6 +248,19 @@ export interface Secret {
 export interface SecretList {
     "stored": Secret[] | null;
     "custom": CustomSecret[] | null;
+}
+
+/**
+ * Template is one image in the sandbox runtime's template store
+ * (`sbx template ls --json`).
+ */
+export interface Template {
+    "id": string;
+    "repository": string;
+    "tag": string;
+    "flavor": string;
+    "created_at": string;
+    "size": number;
 }
 
 /**

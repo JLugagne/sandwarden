@@ -1,5 +1,6 @@
 import { forwardRef, useId } from "react";
 import { cn } from "@/lib/cn";
+import { IconChevronDown } from "./Icons";
 
 export function Field({
   label,
@@ -23,7 +24,7 @@ export function Field({
   );
 }
 
-const CONTROL_CLASS =
+export const CONTROL_CLASS =
   "w-full rounded-sm border border-border bg-canvas px-2.5 py-1.5 text-sm text-fg placeholder:text-faint transition-colors focus:border-accent disabled:cursor-not-allowed disabled:opacity-50";
 
 export const Input = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
@@ -41,9 +42,19 @@ export const TextArea = forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttrib
 export const Select = forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HTMLSelectElement>>(
   function Select({ className, children, ...props }, ref) {
     return (
-      <select ref={ref} className={cn(CONTROL_CLASS, "h-8 pr-7", className)} {...props}>
-        {children}
-      </select>
+      // The wrapper carries the sizing classes; the select keeps the shared
+      // control chrome and hides the OS arrow behind our own chevron so it
+      // matches the MenuSelect trigger across platforms.
+      <span className={cn("relative inline-flex min-w-0", className)}>
+        <select
+          ref={ref}
+          className={cn(CONTROL_CLASS, "peer h-8 cursor-pointer appearance-none pr-8")}
+          {...props}
+        >
+          {children}
+        </select>
+        <IconChevronDown className="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-faint peer-disabled:opacity-50" />
+      </span>
     );
   },
 );

@@ -17,11 +17,12 @@ import (
 )
 
 type fakeDaemon struct {
-	mu        sync.Mutex
-	actions   []sbx.PolicyAction
-	nextRule  int
-	sandboxes []string
-	scopes    map[string]string
+	mu            sync.Mutex
+	actions       []sbx.PolicyAction
+	nextRule      int
+	sandboxes     []string
+	scopes        map[string]string
+	existingRules map[string]string
 }
 
 func (f *fakeDaemon) handler() http.HandlerFunc {
@@ -62,7 +63,12 @@ func (f *fakeDaemon) handlePolicy(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		created := make([]map[string]string, 0, len(action.Resources))
+		existing := make([]map[string]string, 0)
 		for _, resource := range action.Resources {
+			if id, ok := f.existingRules[action.Action+"\x00"+resource]; ok {
+				existing = append(existing, map[string]string{"resource": resource, "rule_id": id})
+				continue
+			}
 			f.nextRule++
 			id := fmt.Sprintf("r%d", f.nextRule)
 			f.scopes[id] = action.SandboxID
@@ -73,6 +79,7 @@ func (f *fakeDaemon) handlePolicy(w http.ResponseWriter, r *http.Request) {
 			"resources":  action.Resources,
 			"sandbox_id": action.SandboxID,
 			"created":    created,
+			"existing":   existing,
 		})
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"results": results})
@@ -410,4 +417,44 @@ func TestUnapplyProfileNotifiesSandboxDetail(t *testing.T) {
 		t.Fatalf("unapply: %v", err)
 	}
 	waitForTopic(t, events, TopicSandbox("box"))
+}
+
+func (f *fakeDaemon) setExistingRules(rules map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.existingRules = rules
+}
+
+func TestApplyProfileDoesNotAdoptPreExistingRules(t *testing.T) {
+	ctx := context.Background()
+	a, fake := newTestApp(t, "box")
+	fake.setExistingRules(map[string]string{"allow\x00shared.example.com": "r-user"})
+
+	p, err := a.CreateProfile(ctx, "dev", "", false, false)
+	if err != nil {
+		t.Fatalf("create profile: %v", err)
+	}
+	if _, err := a.AddRuleToProfile(ctx, p.ID, "allow", "shared.example.com"); err != nil {
+		t.Fatalf("add rule: %v", err)
+	}
+	if err := a.ApplyProfile(ctx, "box", p.ID); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	ledger, err := a.Store.ListAppliedRules(ctx, p.ID, "box")
+	if err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	if len(ledger) != 0 {
+		t.Fatalf("pre-existing rules must not enter the ledger: %+v", ledger)
+	}
+
+	if err := a.UnapplyProfile(ctx, "box", p.ID); err != nil {
+		t.Fatalf("unapply: %v", err)
+	}
+	for _, act := range fake.appliedActions() {
+		if act.Action == "remove-id" && act.ID == "r-user" {
+			t.Fatal("unapply removed a rule the profile did not create")
+		}
+	}
 }

@@ -8,19 +8,27 @@ import type {
   Health,
   ImportSecretsRequest,
   JobView,
+  KitItemView,
+  KitStore,
+  KitStoreInput,
+  KitValidation,
   PolicyActionResult,
   PolicyLog,
   PolicyRule,
+  ProfileMount,
   ProfileView,
   RegistrySecretRequest,
   Rule,
   SandboxDetail,
   SandboxSummary,
+  SearchResult,
   SecretList,
   ServiceSecretRequest,
   SkillItem,
   SkillStore,
   SkillStoreInput,
+  Template,
+  Terminal,
   VersionInfo,
 } from "@/types";
 
@@ -39,6 +47,10 @@ export const api = {
   startDaemon: () => Desktop.StartDaemon(),
   notify: (title: string, body: string) => Notify(title, body),
 
+  terminals: () => Desktop.ListTerminals().then((rows) => asArray(rows) as unknown as Terminal[]),
+  openInTerminal: (terminalId: string, dir: string, command: string) =>
+    Desktop.OpenInTerminal(terminalId, dir, command),
+
   listSandboxes: () =>
     Desktop.ListSandboxes().then((rows) => asArray(rows) as unknown as SandboxSummary[]),
   sandbox: (name: string) =>
@@ -55,6 +67,7 @@ export const api = {
       memory: body.memory ?? "",
       profile: body.profile ?? "",
       template: body.template ?? "",
+      kits: asArray(body.kits),
       publish: asArray(body.publish),
       env: asArray(body.env),
       deny_network: asArray(body.deny_network),
@@ -95,6 +108,15 @@ export const api = {
     body: { name: string; description: string; is_default: boolean; is_global: boolean },
   ) => Desktop.UpdateProfile(id, body).then((profile) => profile as unknown as ProfileView),
   deleteProfile: (id: number) => Desktop.DeleteProfile(id),
+  addProfileMount: (profileId: number, body: { host_path: string; target_path: string; read_only: boolean }) =>
+    Desktop.AddProfileMount(profileId, body).then((mount) => mount as unknown as ProfileMount),
+  removeProfileMount: (profileId: number, mountId: number) => Desktop.RemoveProfileMount(profileId, mountId),
+  addProfileCache: (profileId: number, cacheId: number) => Desktop.AddProfileCache(profileId, cacheId),
+  removeProfileCache: (profileId: number, cacheId: number) => Desktop.RemoveProfileCache(profileId, cacheId),
+  detachProfileMount: (name: string, mountId: number) => Desktop.DetachProfileMount(name, mountId),
+  applyProfileMount: (name: string, mountId: number) => Desktop.ApplyProfileMount(name, mountId),
+  detachProfileCache: (name: string, cacheId: number) => Desktop.DetachProfileCache(name, cacheId),
+  applyProfileCache: (name: string, cacheId: number) => Desktop.ApplyProfileCache(name, cacheId),
   addRule: (profileId: number, body: { decision: string; pattern: string }) =>
     Desktop.AddRule(profileId, body).then((rule) => rule as unknown as Rule),
   removeRule: (profileId: number, ruleId: number) => Desktop.RemoveRule(profileId, ruleId),
@@ -208,4 +230,34 @@ export const api = {
       removed: result.removed,
       errors: asArray(result.errors),
     })),
+
+  kitStores: () => Desktop.ListKitStores().then((rows) => asArray(rows) as unknown as KitStore[]),
+  kitItems: (storeId = 0) =>
+    Desktop.ListKitItems(storeId).then((rows) => asArray(rows) as unknown as KitItemView[]),
+  createKitStore: (body: KitStoreInput) =>
+    Desktop.CreateKitStore({
+      name: body.name,
+      description: body.description,
+      url: body.url,
+      ref: body.ref,
+      auth: body.auth,
+    }).then((store) => store as unknown as KitStore),
+  updateKitStore: (id: number, body: KitStoreInput) =>
+    Desktop.UpdateKitStore(id, {
+      name: body.name,
+      description: body.description,
+      url: body.url,
+      ref: body.ref,
+      auth: body.auth,
+    }).then((store) => store as unknown as KitStore),
+  deleteKitStore: (id: number) => Desktop.DeleteKitStore(id),
+  refreshKitStore: (id: number) => Desktop.RefreshKitStore(id).then((store) => store as unknown as KitStore),
+  validateKit: (itemId: number) =>
+    Desktop.KitValidate(itemId).then((result) => result as unknown as KitValidation),
+
+  search: (query: string) =>
+    Desktop.Search(query).then((rows) => asArray(rows) as unknown as SearchResult[]),
+
+  templates: () => Desktop.ListTemplates().then((rows) => asArray(rows) as unknown as Template[]),
+  removeTemplate: (ref: string) => Desktop.RemoveTemplate(ref),
 };

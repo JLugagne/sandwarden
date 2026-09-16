@@ -13,6 +13,9 @@ function sandbox(name: string): SandboxSummary {
     mount_policy_denied: false,
     profiles: [],
     connect: { run: `sbx run --name ${name}`, shell: `sbx exec -it ${name} bash` },
+    cpu_percent: 0,
+    memory_used_bytes: 0,
+    memory_total_bytes: 0,
   };
 }
 
@@ -41,6 +44,14 @@ describe("applyEvent", () => {
     applyEvent(qc, { topic: "sandboxes", data: [sandbox("b")], ts: "t" });
     expect(qc.getQueryData(queryKeys.sandbox("a"))).toBeUndefined();
     expect(qc.getQueryData(queryKeys.sandbox("b"))).toBeDefined();
+  });
+
+  it("ignores a malformed sandboxes payload instead of pruning detail caches", () => {
+    const qc = client();
+    qc.setQueryData(queryKeys.sandbox("a"), { sandbox: sandbox("a") });
+    applyEvent(qc, { topic: "sandboxes", data: null, ts: "t" });
+    expect(qc.getQueryData(queryKeys.sandboxes)).toBeUndefined();
+    expect(qc.getQueryData(queryKeys.sandbox("a"))).toBeDefined();
   });
 
   it("stores profiles, secrets and traffic snapshots", () => {

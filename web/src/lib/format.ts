@@ -32,3 +32,12 @@ export function splitList(value: string): string[] {
 export function joinList(values?: string[] | null, separator = ", "): string {
   return (values ?? []).join(separator);
 }
+
+/** Format a byte count with binary units and a single decimal below 10. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  const exponent = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / 1024 ** exponent;
+  return `${value.toFixed(exponent === 0 || value >= 10 ? 0 : 1)} ${units[exponent]}`;
+}
