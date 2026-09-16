@@ -6,6 +6,7 @@ import { queryKeys } from "@/store/realtime";
 import {
   Badge,
   Button,
+  CheckboxField,
   ConfirmDialog,
   EmptyState,
   Field,
@@ -22,7 +23,7 @@ import {
 } from "@/components/ui";
 import type { SkillItem, SkillStore, SkillStoreInput } from "@/types";
 
-const EMPTY_STORE: SkillStoreInput = { name: "", description: "", url: "", ref: "" };
+const EMPTY_STORE: SkillStoreInput = { name: "", description: "", url: "", ref: "", auth: "" };
 
 export function SkillsPage() {
   const stores = useQuery({ queryKey: queryKeys.skillStores, queryFn: api.skillStores });
@@ -154,6 +155,7 @@ function StorePanel({
         <span className="flex flex-wrap items-center gap-2">
           {store.name}
           {store.error ? <Badge tone="danger">sync failed</Badge> : null}
+          {store.auth === "ssh" ? <Badge tone="success">ssh</Badge> : null}
           {store.ref ? <Badge tone="accent">{store.ref}</Badge> : null}
         </span>
       }
@@ -239,7 +241,13 @@ function StoreDialog({
     setLoadedId(target);
     setInput(
       store
-        ? { name: store.name, description: store.description, url: store.url, ref: store.ref }
+        ? {
+            name: store.name,
+            description: store.description,
+            url: store.url,
+            ref: store.ref,
+            auth: store.auth,
+          }
         : EMPTY_STORE,
     );
   }
@@ -255,7 +263,7 @@ function StoreDialog({
       open={open}
       onClose={onClose}
       title={store ? `Edit store ${store.name}` : "Add a skill store"}
-      description="A git repository using the Anthropic plugin format: either a marketplace with plugins, or plain skills/ and commands/ directories. Private repositories need credentials embedded in the URL."
+      description="A git repository using the Anthropic plugin format: either a marketplace with plugins, or plain skills/ and commands/ directories. HTTPS URLs may embed credentials; SSH URLs need the ~/.ssh option below."
       size="md"
       footer={
         <>
@@ -301,6 +309,12 @@ function StoreDialog({
             className="font-mono text-xs"
           />
         </Field>
+        <CheckboxField
+          label="authenticate with ~/.ssh keys"
+          hint="Uses your ssh-agent or the default private keys of ~/.ssh, with host keys verified against known_hosts. Needed for private marketplaces over SSH."
+          checked={input.auth === "ssh"}
+          onChange={(value) => update("auth", value ? "ssh" : "")}
+        />
       </div>
     </Modal>
   );

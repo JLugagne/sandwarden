@@ -20,9 +20,11 @@ backend over in-process bindings and events. The app is never served to a browse
 - **Skill stores** — register git repositories in the Anthropic plugin format (marketplace manifests, a
   single plugin, or plain `skills/` and `commands/` directories). sandwarden clones them locally,
   discovers every skill and command, and mounts the selected items read-only inside sandboxes at
-  `/home/agent/.agents/skills/<name>` and `/home/agent/.agents/commands/<name>.md`. Mounts are
-  reconciled both ways (mounted and unmounted) on profile changes, sandbox start and periodic
-  reconcile, with per-item conflict and missing-source detection.
+  `/home/agent/.agents/skills/<name>` and `/home/agent/.agents/commands/<name>.md`. Public
+  repositories clone anonymously, HTTPS URLs may embed credentials, and private marketplaces can
+  authenticate with your `~/.ssh` keys or ssh-agent through a per-store option. Mounts are reconciled
+  both ways (mounted and unmounted) on profile changes, sandbox start and periodic reconcile, with
+  per-item conflict and missing-source detection.
 - **Shared caches** — bind-mount host directories (Go module and build caches, npm, pnpm, yarn presets)
   into sandboxes, shareable across them, auto-attached on creation and re-applied after a restart.
 - **Secrets** — manage service, registry and custom secrets through the `sbx` CLI, including import.
@@ -50,7 +52,7 @@ web/                 React 19 + Vite + TanStack Query UI (web/src/bindings is ge
 
 **Runtime**
 
-- A Linux desktop with GTK3 / WebKitGTK.
+- A Linux desktop with GTK3 / WebKitGTK (Debian/Ubuntu: `libgtk-3-0 libwebkit2gtk-4.1-0`).
 - Docker Sandboxes installed on the host: the `sandboxd` daemon (unix socket) and the `sbx` CLI on
   `PATH` (or `SBX_BINARY` pointing at it).
 
@@ -71,6 +73,26 @@ web/                 React 19 + Vite + TanStack Query UI (web/src/bindings is ge
   ```
 
 - Optional: Docker with buildx for the container builds.
+
+## Install
+
+Prebuilt binaries are published for Linux (amd64) and macOS (Intel and Apple silicon):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/JLugagne/sandwarden/main/install.sh | bash
+```
+
+The script verifies the release checksum and installs to `~/.local/bin/sandwarden`
+(`SANDWARDEN_INSTALL_DIR` overrides the location). Pin a version with `SANDWARDEN_VERSION=v0.1.0`.
+
+Every push to `main` also publishes a rolling **unstable** pre-release:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/JLugagne/sandwarden/main/install.sh | SANDWARDEN_VERSION=unstable sh
+```
+
+Stable releases are cut from `v*` tags. The Settings page checks the latest stable release and reports
+when an update is available, with the install command to run.
 
 ## Build and run with make
 

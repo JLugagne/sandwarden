@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const skillStoreCols = `id, name, description, url, ref, path, synced_at, error, created_at, updated_at`
+const skillStoreCols = `id, name, description, url, ref, auth, path, synced_at, error, created_at, updated_at`
 
 const skillItemCols = `i.id, i.store_id, s.name, i.kind, i.name, i.description, i.plugin, i.rel_path`
 
@@ -18,6 +18,7 @@ type SkillStore struct {
 	Description string `json:"description"`
 	URL         string `json:"url"`
 	Ref         string `json:"ref"`
+	Auth        string `json:"auth"`
 	Path        string `json:"path"`
 	SyncedAt    string `json:"synced_at"`
 	Error       string `json:"error"`
@@ -39,7 +40,7 @@ type SkillItem struct {
 
 func scanSkillStore(row interface{ Scan(...any) error }) (SkillStore, error) {
 	var s SkillStore
-	if err := row.Scan(&s.ID, &s.Name, &s.Description, &s.URL, &s.Ref, &s.Path, &s.SyncedAt, &s.Error, &s.CreatedAt, &s.UpdatedAt); err != nil {
+	if err := row.Scan(&s.ID, &s.Name, &s.Description, &s.URL, &s.Ref, &s.Auth, &s.Path, &s.SyncedAt, &s.Error, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return SkillStore{}, ErrNotFound
 		}
@@ -111,9 +112,9 @@ func (s *Store) CreateSkillStore(ctx context.Context, store SkillStore) (SkillSt
 	}
 	ts := now()
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO skill_stores (name, description, url, ref, path, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		store.Name, store.Description, store.URL, store.Ref, store.Path, ts, ts)
+		`INSERT INTO skill_stores (name, description, url, ref, auth, path, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		store.Name, store.Description, store.URL, store.Ref, store.Auth, store.Path, ts, ts)
 	if err != nil {
 		return SkillStore{}, err
 	}
@@ -136,8 +137,8 @@ func (s *Store) UpdateSkillStore(ctx context.Context, store SkillStore) error {
 		return errors.New("git url is required")
 	}
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE skill_stores SET name = ?, description = ?, url = ?, ref = ?, updated_at = ? WHERE id = ?`,
-		store.Name, store.Description, store.URL, store.Ref, now(), store.ID)
+		`UPDATE skill_stores SET name = ?, description = ?, url = ?, ref = ?, auth = ?, updated_at = ? WHERE id = ?`,
+		store.Name, store.Description, store.URL, store.Ref, store.Auth, now(), store.ID)
 	if err != nil {
 		return err
 	}

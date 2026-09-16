@@ -65,6 +65,7 @@ export interface SkillStore {
     "description": string;
     "url": string;
     "ref": string;
+    "auth": string;
     "path": string;
     "synced_at": string;
     "error": string;

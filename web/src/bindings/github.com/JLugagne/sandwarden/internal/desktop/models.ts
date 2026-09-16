@@ -63,6 +63,8 @@ export interface Health {
     "ok": boolean;
     "socket": string;
     "sbx_binary": string;
+    "daemon_running": boolean;
+    "daemon_status": string;
 }
 
 /**
@@ -153,6 +155,17 @@ export interface SkillStoreRequest {
     "description": string;
     "url": string;
     "ref": string;
+    "auth": string;
+}
+
+/**
+ * VersionInfo reports the running build and the latest release state.
+ */
+export interface VersionInfo {
+    "version": string;
+    "latest_version": string;
+    "update_available": boolean;
+    "release_url": string;
 }
 
 /**

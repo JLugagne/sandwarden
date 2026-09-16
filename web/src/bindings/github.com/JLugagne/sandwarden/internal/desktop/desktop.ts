@@ -75,6 +75,14 @@ export function CancelJob(id: string): $CancellablePromise<void> {
 }
 
 /**
+ * CheckUpdates queries the latest stable release. A cached result is returned
+ * when the last check is fresh unless force is set.
+ */
+export function CheckUpdates(force: boolean): $CancellablePromise<$models.VersionInfo> {
+    return $Call.ByID(3456224186, force);
+}
+
+/**
  * CreateCache stores a shared cache mount.
  */
 export function CreateCache(input: $models.CacheInput): $CancellablePromise<store$0.CacheMount> {
@@ -97,6 +105,7 @@ export function CreateSandbox(req: $models.CreateSandboxRequest): $CancellablePr
 }
 
 /**
+ * CreateSkillStore registers a skill store and performs its first checkout.
  * CreateSkillStore registers a skill store and performs its first checkout.
  */
 export function CreateSkillStore(req: $models.SkillStoreRequest): $CancellablePromise<store$0.SkillStore> {
@@ -155,6 +164,8 @@ export function Exec(name: string, req: $models.ExecRequest): $CancellablePromis
 
 /**
  * Health reports the daemon socket and CLI in use.
+ * Health reports the sandboxd daemon state along with the socket and CLI in
+ * use.
  */
 export function Health(): $CancellablePromise<$models.Health> {
     return $Call.ByID(3798447474);
@@ -353,6 +364,13 @@ export function SetServiceSecret(req: $models.ServiceSecretRequest): $Cancellabl
 }
 
 /**
+ * StartDaemon starts the sandboxd daemon.
+ */
+export function StartDaemon(): $CancellablePromise<void> {
+    return $Call.ByID(960737188);
+}
+
+/**
  * StartSandbox boots a stopped sandbox.
  */
 export function StartSandbox(name: string): $CancellablePromise<void> {
@@ -397,7 +415,16 @@ export function UpdateProfile(id: number, req: $models.ProfileRequest): $Cancell
 /**
  * UpdateSkillStore rewrites a skill store and refreshes it when its source
  * changed.
+ * UpdateSkillStore rewrites a skill store and refreshes it when its source
+ * changed.
  */
 export function UpdateSkillStore(id: number, req: $models.SkillStoreRequest): $CancellablePromise<store$0.SkillStore> {
     return $Call.ByID(3957676007, id, req);
+}
+
+/**
+ * VersionInfo reports the running build version.
+ */
+export function VersionInfo(): $CancellablePromise<$models.VersionInfo> {
+    return $Call.ByID(2246080484);
 }

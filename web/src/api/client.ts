@@ -21,6 +21,7 @@ import type {
   SkillItem,
   SkillStore,
   SkillStoreInput,
+  VersionInfo,
 } from "@/types";
 
 /**
@@ -33,6 +34,9 @@ const asArray = <T>(value: T[] | null | undefined): T[] => value ?? [];
 
 export const api = {
   health: () => Desktop.Health() as Promise<Health>,
+  versionInfo: () => Desktop.VersionInfo() as Promise<VersionInfo>,
+  checkUpdates: (force = false) => Desktop.CheckUpdates(force) as Promise<VersionInfo>,
+  startDaemon: () => Desktop.StartDaemon(),
   notify: (title: string, body: string) => Notify(title, body),
 
   listSandboxes: () =>
@@ -179,6 +183,7 @@ export const api = {
       description: body.description,
       url: body.url,
       ref: body.ref,
+      auth: body.auth,
     }).then((store) => store as unknown as SkillStore),
   updateSkillStore: (id: number, body: SkillStoreInput) =>
     Desktop.UpdateSkillStore(id, {
@@ -186,6 +191,7 @@ export const api = {
       description: body.description,
       url: body.url,
       ref: body.ref,
+      auth: body.auth,
     }).then((store) => store as unknown as SkillStore),
   deleteSkillStore: (id: number) => Desktop.DeleteSkillStore(id),
   refreshSkillStore: (id: number) =>

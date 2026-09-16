@@ -5,6 +5,7 @@ NPM         ?= npm
 WAILS       ?= wails3
 DOCKER      ?= docker
 TAGS        := gtk3
+VERSION     ?= dev
 
 .DEFAULT_GOAL := help
 
@@ -31,7 +32,7 @@ web-test: web-deps ## Run frontend unit tests
 
 .PHONY: build
 build: web ## Compile the desktop binary into bin/sandwarden (frontend embedded)
-	$(GO) build -tags "$(TAGS),production" -trimpath -ldflags "-s -w" -o $(BINARY) .
+	$(GO) build -tags "$(TAGS),production" -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BINARY) .
 
 .PHONY: image
 image: ## Build the Docker image (runtime stage)
@@ -87,7 +88,7 @@ check: fmt vet test ## Format, vet and test
 
 .PHONY: install
 install: ## Install the binary into GOBIN/GOPATH/bin
-	$(GO) install -tags "$(TAGS),production" .
+	$(GO) install -tags "$(TAGS),production" -ldflags "-X main.version=$(VERSION)" .
 
 .PHONY: clean
 clean: ## Remove build artifacts

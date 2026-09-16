@@ -33,14 +33,14 @@ func TestSkillStoreLifecycle(t *testing.T) {
 		t.Fatal("expected error for empty path")
 	}
 
-	if err := st.UpdateSkillStore(ctx, SkillStore{ID: registered.ID, Name: "plugins", URL: "https://github.com/anthropics/plugins", Ref: "v2"}); err != nil {
+	if err := st.UpdateSkillStore(ctx, SkillStore{ID: registered.ID, Name: "plugins", URL: "https://github.com/anthropics/plugins", Ref: "v2", Auth: "ssh"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	got, err := st.GetSkillStore(ctx, registered.ID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Name != "plugins" || got.Ref != "v2" || got.URL != "https://github.com/anthropics/plugins" {
+	if got.Name != "plugins" || got.Ref != "v2" || got.URL != "https://github.com/anthropics/plugins" || got.Auth != "ssh" {
 		t.Fatalf("update not applied: %+v", got)
 	}
 	if got.Path != "/data/stores/anthropics" {

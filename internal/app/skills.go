@@ -68,28 +68,17 @@ func (a *App) ListSkillItems(ctx context.Context, storeID int64) ([]store.SkillI
 
 // CreateSkillStore registers a store, performs its first checkout and applies
 // it to already running sandboxes.
-func (a *App) CreateSkillStore(ctx context.Context, name, description, url, ref string) (store.SkillStore, error) {
-	name = strings.TrimSpace(name)
-	description = strings.TrimSpace(description)
-	url = strings.TrimSpace(url)
-	ref = strings.TrimSpace(ref)
-	if name == "" {
-		return store.SkillStore{}, errors.New("skill store name is required")
-	}
-	if url == "" {
-		return store.SkillStore{}, errors.New("git url is required")
-	}
-	path, err := skillStoreCheckoutPath(name)
+func (a *App) CreateSkillStore(ctx context.Context, input store.SkillStore) (store.SkillStore, error) {
+	normalized, err := normalizeSkillStore(input)
 	if err != nil {
 		return store.SkillStore{}, err
 	}
-	created, err := a.Store.CreateSkillStore(ctx, store.SkillStore{
-		Name:        name,
-		Description: description,
-		URL:         url,
-		Ref:         ref,
-		Path:        path,
-	})
+	path, err := skillStoreCheckoutPath(normalized.Name)
+	if err != nil {
+		return store.SkillStore{}, err
+	}
+	normalized.Path = path
+	created, err := a.Store.CreateSkillStore(ctx, normalized)
 	if err != nil {
 		return store.SkillStore{}, err
 	}
@@ -103,23 +92,17 @@ func (a *App) CreateSkillStore(ctx context.Context, name, description, url, ref 
 
 // UpdateSkillStore rewrites a store registration and re-checks out its source
 // when the url or ref changed.
-func (a *App) UpdateSkillStore(ctx context.Context, id int64, name, description, url, ref string) (store.SkillStore, error) {
+func (a *App) UpdateSkillStore(ctx context.Context, id int64, input store.SkillStore) (store.SkillStore, error) {
 	current, err := a.Store.GetSkillStore(ctx, id)
 	if err != nil {
 		return store.SkillStore{}, err
 	}
-	name = strings.TrimSpace(name)
-	description = strings.TrimSpace(description)
-	url = strings.TrimSpace(url)
-	ref = strings.TrimSpace(ref)
-	if name == "" {
-		return store.SkillStore{}, errors.New("skill store name is required")
+	normalized, err := normalizeSkillStore(input)
+	if err != nil {
+		return store.SkillStore{}, err
 	}
-	if url == "" {
-		return store.SkillStore{}, errors.New("git url is required")
-	}
-	updated := store.SkillStore{ID: id, Name: name, Description: description, URL: url, Ref: ref}
-	if err := a.Store.UpdateSkillStore(ctx, updated); err != nil {
+	normalized.ID = id
+	if err := a.Store.UpdateSkillStore(ctx, normalized); err != nil {
 		return store.SkillStore{}, err
 	}
 	saved, err := a.Store.GetSkillStore(ctx, id)
@@ -128,7 +111,7 @@ func (a *App) UpdateSkillStore(ctx context.Context, id int64, name, description,
 	}
 	a.Notify(TopicSkills)
 	a.Notify(TopicProfiles)
-	if url != current.URL || ref != current.Ref {
+	if saved.URL != current.URL || saved.Ref != current.Ref || saved.Auth != current.Auth {
 		synced, err := a.syncSkillStore(ctx, saved)
 		if err != nil {
 			return store.SkillStore{}, err
@@ -177,7 +160,7 @@ func (a *App) RefreshSkillStore(ctx context.Context, id int64) (store.SkillStore
 // failure is recorded on the store instead of returned, so the registration
 // stays editable and visible with its error.
 func (a *App) syncSkillStore(ctx context.Context, current store.SkillStore) (store.SkillStore, error) {
-	if err := skills.Checkout(ctx, current.Path, current.URL, current.Ref); err != nil {
+	if err := skills.Checkout(ctx, current.Path, current.URL, current.Ref, skills.Auth(current.Auth)); err != nil {
 		if markErr := a.Store.MarkSkillStoreSynced(ctx, current.ID, current.SyncedAt, err.Error()); markErr != nil {
 			return store.SkillStore{}, markErr
 		}
@@ -594,4 +577,28 @@ func skillSlug(name string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-")
+}
+
+// normalizeSkillStore trims the editable fields and validates the fetch auth.
+func normalizeSkillStore(input store.SkillStore) (store.SkillStore, error) {
+	normalized := store.SkillStore{
+		ID:          input.ID,
+		Name:        strings.TrimSpace(input.Name),
+		Description: strings.TrimSpace(input.Description),
+		URL:         strings.TrimSpace(input.URL),
+		Ref:         strings.TrimSpace(input.Ref),
+		Auth:        strings.TrimSpace(input.Auth),
+	}
+	if normalized.Name == "" {
+		return store.SkillStore{}, errors.New("skill store name is required")
+	}
+	if normalized.URL == "" {
+		return store.SkillStore{}, errors.New("git url is required")
+	}
+	switch skills.Auth(normalized.Auth) {
+	case skills.AuthPublic, skills.AuthSSH:
+	default:
+		return store.SkillStore{}, fmt.Errorf("unsupported auth %q", normalized.Auth)
+	}
+	return normalized, nil
 }

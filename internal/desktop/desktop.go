@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/JLugagne/sandwarden/internal/app"
 	"github.com/JLugagne/sandwarden/internal/sbx"
@@ -12,15 +13,24 @@ import (
 // Desktop is the Wails binding surface. Every exported method becomes a
 // typed frontend binding; nothing is reachable from outside the process.
 type Desktop struct {
-	app   *app.App
-	root  context.Context
-	wails *application.App
+	app     *app.App
+	root    context.Context
+	wails   *application.App
+	version string
 }
 
 // New builds the binding service around the application core. root bounds
-// every call that talks to the daemon.
-func New(a *app.App, root context.Context) *Desktop {
-	return &Desktop{app: a, root: root}
+// every call that talks to the daemon; version is the build tag shown in the
+// About panel.
+// New builds the binding service around the application core. root bounds
+// every call that talks to the daemon; version is the build tag shown in the
+// About panel.
+func New(a *app.App, root context.Context, version string) *Desktop {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		version = "dev"
+	}
+	return &Desktop{app: a, root: root, version: version}
 }
 
 // Attach wires the running Wails application so the service can open native
@@ -31,8 +41,26 @@ func Attach(d *Desktop, w *application.App) {
 }
 
 // Health reports the daemon socket and CLI in use.
+// Health reports the sandboxd daemon state along with the socket and CLI in
+// use.
 func (d *Desktop) Health() Health {
-	return Health{OK: true, Socket: sbx.SocketPath(), SbxBinary: sbx.BinaryPath()}
+	health := Health{OK: true, Socket: sbx.SocketPath(), SbxBinary: sbx.BinaryPath()}
+	status, err := d.app.Sbx.DaemonStatus(d.root)
+	if err != nil {
+		health.OK = false
+		health.DaemonStatus = err.Error()
+		return health
+	}
+	health.DaemonRunning = status.Running
+	if status.Running {
+		health.DaemonStatus = "running"
+	} else {
+		health.DaemonStatus = "stopped"
+	}
+	if status.Socket != "" {
+		health.Socket = status.Socket
+	}
+	return health
 }
 
 // PickFolder opens the host's native folder chooser rooted at start.
@@ -55,3 +83,8 @@ func (d *Desktop) PickFolder(start string) (string, error) {
 }
 
 var errCancelled = errors.New("folder selection cancelled")
+
+// StartDaemon starts the sandboxd daemon.
+func (d *Desktop) StartDaemon() error {
+	return d.app.StartDaemon(d.root)
+}

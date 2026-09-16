@@ -105,6 +105,7 @@ var migrations = []string{
 		PRIMARY KEY (sandbox_name, item_id)
 	);`,
 	`CREATE INDEX idx_sandbox_skill_items_item ON sandbox_skill_items (item_id);`,
+	`ALTER TABLE skill_stores ADD COLUMN auth TEXT NOT NULL DEFAULT '';`,
 }
 
 // Store is the SQLite-backed profile store.

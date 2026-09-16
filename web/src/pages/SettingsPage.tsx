@@ -9,6 +9,7 @@ import {
   Badge,
   Button,
   CheckboxField,
+  CommandLine,
   ConfirmDialog,
   Description,
   DescriptionList,
@@ -109,6 +110,26 @@ export function SettingsPage() {
   const [editing, setEditing] = useState<{ mode: "create" } | { mode: "edit"; cache: CacheMount } | null>(null);
   const [deleting, setDeleting] = useState<CacheMount | null>(null);
 
+  const startDaemon = useApiMutation({
+    mutationFn: () => api.startDaemon(),
+    success: "sandboxd started",
+    invalidate: [queryKeys.health, queryKeys.sandboxes],
+  });
+
+  const version = useQuery({ queryKey: queryKeys.version, queryFn: api.versionInfo, retry: 0, staleTime: Infinity });
+  const updates = useQuery({
+    queryKey: queryKeys.updates,
+    queryFn: () => api.checkUpdates(false),
+    retry: 0,
+    staleTime: 300_000,
+  });
+  const checkUpdates = useApiMutation({
+    mutationFn: () => api.checkUpdates(true),
+    success: (info) =>
+      info.update_available ? `Version ${info.latest_version} is available` : "sandwarden is up to date",
+    invalidate: [queryKeys.updates],
+  });
+
   const create = useApiMutation({
     mutationFn: (input: CacheInput) => api.createCache(input),
     success: (cache) => `Cache ${cache.name} created`,
@@ -143,19 +164,38 @@ export function SettingsPage() {
               {health.error instanceof Error ? health.error.message : String(health.error)}
             </p>
           ) : health.data ? (
-            <DescriptionList>
-              <Description label="Realtime">
-                <Badge tone={status === "online" ? "success" : status === "connecting" ? "warning" : "danger"} dot>
-                  {status}
-                </Badge>
-              </Description>
-              <Description label="sandboxd socket">
-                <span className="font-mono text-xs">{health.data.socket}</span>
-              </Description>
-              <Description label="sbx CLI">
-                <span className="font-mono text-xs">{health.data.sbx_binary}</span>
-              </Description>
-            </DescriptionList>
+            <div className="flex flex-col gap-3">
+              <DescriptionList>
+                <Description label="Realtime">
+                  <Badge tone={status === "online" ? "success" : status === "connecting" ? "warning" : "danger"} dot>
+                    {status}
+                  </Badge>
+                </Description>
+                <Description label="sandboxd">
+                  <Badge tone={health.data.daemon_running ? "success" : "danger"} dot>
+                    {health.data.daemon_running ? "running" : "stopped"}
+                  </Badge>
+                </Description>
+                <Description label="sandboxd socket">
+                  <span className="font-mono text-xs">{health.data.socket}</span>
+                </Description>
+                <Description label="sbx CLI">
+                  <span className="font-mono text-xs">{health.data.sbx_binary}</span>
+                </Description>
+              </DescriptionList>
+              {!health.data.daemon_running ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button variant="primary" loading={startDaemon.isPending} onClick={() => startDaemon.mutate()}>
+                    Start sandboxd
+                  </Button>
+                  <span className="text-xs text-muted">
+                    {health.data.daemon_status && health.data.daemon_status !== "stopped"
+                      ? health.data.daemon_status
+                      : "sandboxd is not running; start it to manage sandboxes."}
+                  </span>
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </Panel>
 
@@ -240,6 +280,53 @@ export function SettingsPage() {
               {notificationsOn ? "Sent by the desktop app." : "Not enabled."}
             </span>
           </div>
+        </Panel>
+
+        <Panel
+          title="About"
+          description="Version and update channel. Stable releases are published for Linux (amd64) and macOS (Intel and Apple silicon); the unstable pre-release follows the main branch."
+        >
+          {version.isLoading ? (
+            <Spinner />
+          ) : version.data ? (
+            <div className="flex flex-col gap-3">
+              <DescriptionList>
+                <Description label="Version">
+                  <span className="font-mono text-xs">{version.data.version}</span>
+                </Description>
+                <Description label="Latest stable">
+                  {updates.isLoading ? (
+                    <span className="text-xs text-muted">checking…</span>
+                  ) : updates.data?.latest_version ? (
+                    <span className="font-mono text-xs">{updates.data.latest_version}</span>
+                  ) : (
+                    <span className="text-xs text-muted">unknown</span>
+                  )}
+                </Description>
+              </DescriptionList>
+              {updates.data?.update_available ? (
+                <div className="flex flex-col gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-2 text-sm">
+                  <span>sandwarden {updates.data.latest_version} is available.</span>
+                  <CommandLine command="curl -fsSL https://raw.githubusercontent.com/JLugagne/sandwarden/main/install.sh | bash" />
+                  {updates.data.release_url ? (
+                    <a href={updates.data.release_url} className="text-xs text-accent hover:underline">
+                      Release notes
+                    </a>
+                  ) : null}
+                </div>
+              ) : null}
+              {updates.error ? (
+                <p className="text-xs text-muted">
+                  Update check failed: {updates.error instanceof Error ? updates.error.message : String(updates.error)}
+                </p>
+              ) : null}
+              <div>
+                <Button loading={checkUpdates.isPending} onClick={() => checkUpdates.mutate()}>
+                  Check for updates
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </Panel>
       </div>
 

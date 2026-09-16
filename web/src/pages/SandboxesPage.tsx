@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "@/api/client";
+import { useApiMutation } from "@/hooks/useApiMutation";
 import { queryKeys } from "@/store/realtime";
 import { CreateSandboxDialog } from "@/components/sandboxes/CreateSandboxDialog";
 import { SandboxCard } from "@/components/sandboxes/SandboxCard";
@@ -10,6 +11,12 @@ export function SandboxesPage() {
   const [creating, setCreating] = useState(false);
   const sandboxes = useQuery({ queryKey: queryKeys.sandboxes, queryFn: api.listSandboxes });
   const health = useQuery({ queryKey: queryKeys.health, queryFn: api.health, retry: 0, staleTime: 30_000 });
+
+  const startDaemon = useApiMutation({
+    mutationFn: () => api.startDaemon(),
+    success: "sandboxd started",
+    invalidate: [queryKeys.health, queryKeys.sandboxes],
+  });
 
   const rows = sandboxes.data ?? [];
 
@@ -30,6 +37,19 @@ export function SandboxesPage() {
           </Button>
         }
       />
+
+      {health.data && !health.data.daemon_running ? (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-sm">
+          <span className="flex-1 text-warning">
+            {health.data.daemon_status && health.data.daemon_status !== "stopped"
+              ? health.data.daemon_status
+              : "sandboxd is not running."}
+          </span>
+          <Button variant="primary" size="sm" loading={startDaemon.isPending} onClick={() => startDaemon.mutate()}>
+            Start sandboxd
+          </Button>
+        </div>
+      ) : null}
 
       <ErrorNote error={sandboxes.error} className="mb-4" />
 

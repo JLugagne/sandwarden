@@ -237,6 +237,15 @@ export interface Health {
   ok: boolean;
   socket: string;
   sbx_binary: string;
+  daemon_running: boolean;
+  daemon_status: string;
+}
+
+export interface VersionInfo {
+  version: string;
+  latest_version: string;
+  update_available: boolean;
+  release_url: string;
 }
 
 export interface CacheMount {
@@ -272,6 +281,7 @@ export interface SkillStore {
   description: string;
   url: string;
   ref: string;
+  auth: string;
   path: string;
   synced_at: string;
   error: string;
@@ -284,6 +294,7 @@ export interface SkillStoreInput {
   description: string;
   url: string;
   ref: string;
+  auth: string;
 }
 
 export interface SkillItem {

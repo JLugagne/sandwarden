@@ -20,6 +20,9 @@ import (
 //go:embed all:web/dist
 var assets embed.FS
 
+// version is the release tag injected at build time (dev for local builds).
+var version = "dev"
+
 func main() {
 	socket := flag.String("socket", "", "sandboxd unix socket path (default: $DOCKER_SANDBOXES_API or XDG)")
 	dbPath := flag.String("db", "", "path to the SQLite database (default: XDG state dir)")
@@ -52,7 +55,7 @@ func main() {
 	}
 	core.Start(ctx)
 
-	service := desktop.New(core, ctx)
+	service := desktop.New(core, ctx, version)
 	notifier := desktop.NewNotifier()
 
 	wailsApp := application.New(application.Options{

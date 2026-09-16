@@ -23,5 +23,6 @@ export type {
     RuleRequest,
     ServiceSecretRequest,
     SkillStoreRequest,
+    VersionInfo,
     WorkspaceSpec
 } from "./models.js";

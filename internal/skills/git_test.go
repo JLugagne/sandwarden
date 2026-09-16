@@ -2,8 +2,13 @@ package skills
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,28 +21,28 @@ func TestCheckoutClonesAndSwitchesRefs(t *testing.T) {
 	src, _ := newSourceRepo(t)
 
 	checkout := filepath.Join(t.TempDir(), "store", "checkout")
-	if err := Checkout(context.Background(), checkout, "file://"+src, ""); err != nil {
+	if err := Checkout(context.Background(), checkout, "file://"+src, "", AuthPublic); err != nil {
 		t.Fatalf("checkout: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(checkout, "skills", "demo", "SKILL.md")); err != nil {
 		t.Fatalf("expected default branch content: %v", err)
 	}
 
-	if err := Checkout(context.Background(), checkout, "file://"+src, "feature"); err != nil {
+	if err := Checkout(context.Background(), checkout, "file://"+src, "feature", AuthPublic); err != nil {
 		t.Fatalf("checkout feature: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(checkout, "feature.txt")); err != nil {
 		t.Fatalf("expected feature branch content: %v", err)
 	}
 
-	if err := Checkout(context.Background(), checkout, "file://"+src, "v1"); err != nil {
+	if err := Checkout(context.Background(), checkout, "file://"+src, "v1", AuthPublic); err != nil {
 		t.Fatalf("checkout tag: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(checkout, "feature.txt")); !os.IsNotExist(err) {
 		t.Fatalf("tag checkout should not carry the feature file, got %v", err)
 	}
 
-	if err := Checkout(context.Background(), checkout, "file://"+src, "missing"); err == nil {
+	if err := Checkout(context.Background(), checkout, "file://"+src, "missing", AuthPublic); err == nil {
 		t.Fatal("expected an error for an unknown ref")
 	}
 	if _, err := os.Stat(filepath.Join(checkout, "feature.txt")); !os.IsNotExist(err) {
@@ -49,7 +54,7 @@ func TestCheckoutKeepsPreviousOnFailure(t *testing.T) {
 	checkout := filepath.Join(t.TempDir(), "store")
 	writeTestFile(t, filepath.Join(checkout, "marker.txt"), "keep me")
 
-	if err := Checkout(context.Background(), checkout, "file:///nonexistent/repo", ""); err == nil {
+	if err := Checkout(context.Background(), checkout, "file:///nonexistent/repo", "", AuthPublic); err == nil {
 		t.Fatal("expected clone failure")
 	}
 	raw, err := os.ReadFile(filepath.Join(checkout, "marker.txt"))
@@ -62,7 +67,7 @@ func TestCheckoutKeepsPreviousOnFailure(t *testing.T) {
 }
 
 func TestCheckoutRequiresURL(t *testing.T) {
-	if err := Checkout(context.Background(), t.TempDir(), "  ", ""); err == nil {
+	if err := Checkout(context.Background(), t.TempDir(), "  ", "", AuthPublic); err == nil {
 		t.Fatal("expected an error for an empty url")
 	}
 }
@@ -115,4 +120,45 @@ func commitOptions() *git.CommitOptions {
 	return &git.CommitOptions{
 		Author: &object.Signature{Name: "Test", Email: "test@example.com", When: time.Now()},
 	}
+}
+
+func TestCheckoutRejectsUnknownAuth(t *testing.T) {
+	err := Checkout(context.Background(), t.TempDir(), "file:///nonexistent/repo", "", Auth("token"))
+	if err == nil || !strings.Contains(err.Error(), "unsupported auth") {
+		t.Fatalf("expected an unsupported auth error, got %v", err)
+	}
+}
+
+func TestSSHAuthUsesDefaultKey(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeTestRSAKey(t, filepath.Join(home, ".ssh", "id_rsa"))
+
+	method, err := sshAuth()
+	if err != nil {
+		t.Fatalf("ssh auth: %v", err)
+	}
+	if method == nil {
+		t.Fatal("expected an auth method")
+	}
+}
+
+func TestSSHAuthWithoutKeysFails(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	t.Setenv("HOME", t.TempDir())
+
+	if _, err := sshAuth(); err == nil {
+		t.Fatal("expected an error when no key is available")
+	}
+}
+
+func writeTestRSAKey(t *testing.T, path string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	block := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}
+	writeTestFile(t, path, string(pem.EncodeToMemory(block)))
 }

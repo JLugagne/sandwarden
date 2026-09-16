@@ -10,12 +10,25 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
+)
+
+// Auth selects how a skill store is fetched.
+type Auth string
+
+const (
+	// AuthPublic clones without credentials; the URL may still embed a token.
+	AuthPublic Auth = ""
+	// AuthSSH authenticates with the user's ssh-agent or the default private
+	// keys of ~/.ssh; host keys are verified against ~/.ssh/known_hosts.
+	AuthSSH Auth = "ssh"
 )
 
 // Checkout replaces dir with a fresh clone of url, optionally checked out at a
 // branch or tag ref. The clone lands in a sibling temporary directory first, so
 // a failed fetch never destroys the previous checkout.
-func Checkout(ctx context.Context, dir, url, ref string) error {
+func Checkout(ctx context.Context, dir, url, ref string, auth Auth) error {
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return errors.New("git url is required")
@@ -23,6 +36,18 @@ func Checkout(ctx context.Context, dir, url, ref string) error {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
 		return errors.New("checkout directory is required")
+	}
+	options := &git.CloneOptions{URL: url}
+	switch auth {
+	case AuthPublic:
+	case AuthSSH:
+		method, err := sshAuth()
+		if err != nil {
+			return err
+		}
+		options.Auth = method
+	default:
+		return fmt.Errorf("unsupported auth %q", auth)
 	}
 	parent := filepath.Dir(dir)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
@@ -36,7 +61,7 @@ func Checkout(ctx context.Context, dir, url, ref string) error {
 	if err := os.RemoveAll(tmp); err != nil {
 		return err
 	}
-	repo, err := git.PlainCloneContext(ctx, tmp, false, &git.CloneOptions{URL: url})
+	repo, err := git.PlainCloneContext(ctx, tmp, false, options)
 	if err != nil {
 		return fmt.Errorf("clone %s: %w", url, err)
 	}
@@ -61,7 +86,6 @@ func Checkout(ctx context.Context, dir, url, ref string) error {
 }
 
 // checkoutRef switches a fresh clone to a branch or, failing that, a tag.
-// checkoutRef switches a fresh clone to a branch or, failing that, a tag.
 func checkoutRef(repo *git.Repository, ref string) error {
 	worktree, err := repo.Worktree()
 	if err != nil {
@@ -78,4 +102,36 @@ func checkoutRef(repo *git.Repository, ref string) error {
 		return worktree.Checkout(&git.CheckoutOptions{Hash: tag.Hash(), Force: true})
 	}
 	return fmt.Errorf("ref %q is neither a branch nor a tag", ref)
+}
+
+// sshAuth resolves an SSH auth method from the user's environment: the agent
+// when SSH_AUTH_SOCK is set, otherwise the first default private key of
+// ~/.ssh. Host keys are verified against ~/.ssh/known_hosts by go-git.
+func sshAuth() (transport.AuthMethod, error) {
+	if os.Getenv("SSH_AUTH_SOCK") != "" {
+		if method, err := ssh.NewSSHAgentAuth("git"); err == nil {
+			return method, nil
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for _, name := range []string{"id_ed25519", "id_ecdsa", "id_rsa"} {
+		path := filepath.Join(home, ".ssh", name)
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		method, err := ssh.NewPublicKeysFromFile("git", path, "")
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return method, nil
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("load ssh key: %w", lastErr)
+	}
+	return nil, errors.New("no ssh key found in ~/.ssh (looked for id_ed25519, id_ecdsa, id_rsa)")
 }

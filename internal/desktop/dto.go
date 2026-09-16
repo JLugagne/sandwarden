@@ -113,9 +113,11 @@ type PolicyActionRequest struct {
 
 // Health reports the daemon socket and CLI in use.
 type Health struct {
-	OK        bool   `json:"ok"`
-	Socket    string `json:"socket"`
-	SbxBinary string `json:"sbx_binary"`
+	OK            bool   `json:"ok"`
+	Socket        string `json:"socket"`
+	SbxBinary     string `json:"sbx_binary"`
+	DaemonRunning bool   `json:"daemon_running"`
+	DaemonStatus  string `json:"daemon_status"`
 }
 
 // ReapplyResult reports the outcome of re-applying a sandbox's caches.
@@ -130,4 +132,5 @@ type SkillStoreRequest struct {
 	Description string `json:"description"`
 	URL         string `json:"url"`
 	Ref         string `json:"ref"`
+	Auth        string `json:"auth"`
 }

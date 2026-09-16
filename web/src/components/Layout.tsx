@@ -29,7 +29,7 @@ export function Layout() {
     <div className="flex min-h-dvh">
       <aside className="sticky top-0 flex h-dvh w-56 shrink-0 flex-col border-r border-border bg-surface/60">
         <div className="flex h-14 items-center px-4 text-[15px] font-semibold tracking-tight">
-          sbx<span className="text-accent">-ui</span>
+          sand<span className="text-accent">warden</span>
         </div>
 
         <nav className="flex flex-1 flex-col gap-0.5 px-2" aria-label="Main">

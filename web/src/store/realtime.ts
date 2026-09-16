@@ -13,6 +13,8 @@ export const queryKeys = {
   caches: ["caches"] as const,
   skillStores: ["skill-stores"] as const,
   skillItems: ["skill-items"] as const,
+  version: ["version"] as const,
+  updates: ["updates"] as const,
 };
 
 /**

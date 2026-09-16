@@ -19,17 +19,20 @@ func (d *Desktop) ListSkillItems(storeID int64) ([]store.SkillItem, error) {
 }
 
 // CreateSkillStore registers a skill store and performs its first checkout.
+// CreateSkillStore registers a skill store and performs its first checkout.
 func (d *Desktop) CreateSkillStore(req SkillStoreRequest) (store.SkillStore, error) {
-	return d.app.CreateSkillStore(d.root, req.Name, req.Description, req.URL, req.Ref)
+	return d.app.CreateSkillStore(d.root, skillStoreFromInput(req, 0))
 }
 
+// UpdateSkillStore rewrites a skill store and refreshes it when its source
+// changed.
 // UpdateSkillStore rewrites a skill store and refreshes it when its source
 // changed.
 func (d *Desktop) UpdateSkillStore(id int64, req SkillStoreRequest) (store.SkillStore, error) {
 	if id == 0 {
 		return store.SkillStore{}, errors.New("store id is required")
 	}
-	return d.app.UpdateSkillStore(d.root, id, req.Name, req.Description, req.URL, req.Ref)
+	return d.app.UpdateSkillStore(d.root, id, skillStoreFromInput(req, id))
 }
 
 // DeleteSkillStore removes a skill store and its selections.

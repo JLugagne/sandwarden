@@ -111,7 +111,7 @@ func newTestDesktop(t *testing.T, sandboxes ...string) (*Desktop, *app.App, *fak
 	t.Cleanup(func() { _ = st.Close() })
 
 	core := app.New(sbx.New(socket), st)
-	return New(core, context.Background()), core, fake
+	return New(core, context.Background(), "test"), core, fake
 }
 
 func TestListSandboxes(t *testing.T) {

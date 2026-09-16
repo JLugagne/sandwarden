@@ -42,3 +42,15 @@ func cacheFromInput(input CacheInput, id int64) store.CacheMount {
 		Enabled:     input.Enabled,
 	}
 }
+
+// skillStoreFromInput builds a store record from the binding payload.
+func skillStoreFromInput(input SkillStoreRequest, id int64) store.SkillStore {
+	return store.SkillStore{
+		ID:          id,
+		Name:        strings.TrimSpace(input.Name),
+		Description: strings.TrimSpace(input.Description),
+		URL:         strings.TrimSpace(input.URL),
+		Ref:         strings.TrimSpace(input.Ref),
+		Auth:        strings.TrimSpace(input.Auth),
+	}
+}
