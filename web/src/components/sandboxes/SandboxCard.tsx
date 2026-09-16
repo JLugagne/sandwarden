@@ -39,6 +39,21 @@ export function SandboxCard({ sandbox }: { sandbox: SandboxSummary }) {
 
   const busy = start.isPending || stop.isPending || remove.isPending;
 
+  // Resource indicators stay visible whatever the state so a stopped sandbox
+  // is recognisable at a glance; they grey out until live samples exist.
+  const hasSample = sandbox.memory_total_bytes > 0;
+  const statsDisabled = !sandbox.running || !hasSample;
+  const cpuTitle = !sandbox.running
+    ? "Sandbox is stopped"
+    : hasSample
+      ? `${sandbox.cpu_percent.toFixed(1)}% of the sandbox CPUs`
+      : "Waiting for the first sample";
+  const memoryTitle = !sandbox.running
+    ? "Sandbox is stopped"
+    : hasSample
+      ? "Memory used by the sandbox"
+      : "Waiting for the first sample";
+
   function openSettings() {
     navigate(`/sandboxes/${encodeURIComponent(sandbox.name)}`);
   }
@@ -90,33 +105,29 @@ export function SandboxCard({ sandbox }: { sandbox: SandboxSummary }) {
           </div>
         </div>
 
-        {sandbox.running && sandbox.memory_total_bytes > 0 ? (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-            <ResourceMeter
-              label="CPU"
-              value={sandbox.cpu_percent}
-              max={100}
-              display={`${Math.round(sandbox.cpu_percent)}%`}
-              title={`${sandbox.cpu_percent.toFixed(1)}% of the sandbox CPUs`}
-            />
-            <ResourceMeter
-              label="MEM"
-              value={sandbox.memory_used_bytes}
-              max={sandbox.memory_total_bytes}
-              display={`${formatBytes(sandbox.memory_used_bytes)} / ${formatBytes(sandbox.memory_total_bytes)}`}
-              title="Memory used by the sandbox"
-              warnFrom={85}
-            />
-          </div>
-        ) : null}
-
-        {sandbox.ports && sandbox.ports.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {sandbox.ports.map((port, index) => (
-              <Chip key={index}>{formatPort(port.host_ip, port.host_port, port.sandbox_port, port.protocol)}</Chip>
-            ))}
-          </div>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          <ResourceMeter
+            label="CPU"
+            value={sandbox.cpu_percent}
+            max={100}
+            disabled={statsDisabled}
+            display={hasSample ? `${Math.round(sandbox.cpu_percent)}%` : "—"}
+            title={cpuTitle}
+          />
+          <ResourceMeter
+            label="MEM"
+            value={sandbox.memory_used_bytes}
+            max={sandbox.memory_total_bytes}
+            disabled={statsDisabled}
+            display={
+              hasSample
+                ? `${formatBytes(sandbox.memory_used_bytes)} / ${formatBytes(sandbox.memory_total_bytes)}`
+                : "—"
+            }
+            title={memoryTitle}
+            warnFrom={85}
+          />
+        </div>
 
         {sandbox.profiles && sandbox.profiles.length > 0 ? (
           <div className="flex flex-wrap items-center gap-1.5">
@@ -134,8 +145,15 @@ export function SandboxCard({ sandbox }: { sandbox: SandboxSummary }) {
           <CommandLine command={sandbox.connect.shell} openDir={sandbox.workspace} />
         </div>
 
-        <div className="flex items-center justify-between border-t border-border pt-3">
-          <span className="text-2xs text-faint">mounts · caches · profiles · secrets · traffic · terminal</span>
+        {sandbox.ports && sandbox.ports.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {sandbox.ports.map((port, index) => (
+              <Chip key={index}>{formatPort(port.host_ip, port.host_port, port.sandbox_port, port.protocol)}</Chip>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="mt-auto flex items-center justify-end border-t border-border pt-3">
           <Button variant="outline" size="sm" onClick={openSettings}>
             Settings
             <IconChevronRight className="size-3" />
@@ -163,7 +181,7 @@ export function SandboxCard({ sandbox }: { sandbox: SandboxSummary }) {
   );
 }
 
-/** Compact usage bar used for the CPU and memory indicators of a running sandbox. */
+/** Compact usage bar used for the CPU and memory indicators of a sandbox. */
 function ResourceMeter({
   label,
   value,
@@ -171,6 +189,7 @@ function ResourceMeter({
   display,
   title,
   warnFrom,
+  disabled = false,
 }: {
   label: string;
   value: number;
@@ -178,19 +197,25 @@ function ResourceMeter({
   display: string;
   title: string;
   warnFrom?: number;
+  disabled?: boolean;
 }) {
   const percent = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
-  const tone = warnFrom !== undefined && percent >= warnFrom ? "bg-warning" : "bg-accent";
+  const tone = disabled
+    ? "bg-border-strong"
+    : warnFrom !== undefined && percent >= warnFrom
+      ? "bg-warning"
+      : "bg-accent";
   return (
-    <span className="inline-flex items-center gap-1.5" title={title}>
+    <span className={cn("inline-flex items-center gap-1.5", disabled && "opacity-60")} title={title}>
       <span className="text-2xs font-medium text-faint">{label}</span>
       <span className="h-1.5 w-20 overflow-hidden rounded-full bg-hover">
         <span
+          data-meter-fill
           className={cn("block h-full rounded-full transition-[width] duration-500", tone)}
-          style={{ width: `${percent}%` }}
+          style={{ width: `${disabled ? 0 : percent}%` }}
         />
       </span>
-      <span className="text-2xs text-muted tabular-nums">{display}</span>
+      <span className={cn("text-2xs tabular-nums", disabled ? "text-faint" : "text-muted")}>{display}</span>
     </span>
   );
 }

@@ -41,7 +41,11 @@ export function CommandLine({
 }: {
   command: string;
   className?: string;
-  /** When set, an Open button launches the command in a terminal, cd'd here. */
+  /**
+   * When provided, an Open button launches the command in a terminal. The
+   * value is the directory to cd into first; pass an empty string (sandboxes
+   * without a workspace) to open the terminal as-is.
+   */
   openDir?: string;
 }) {
   return (
@@ -52,7 +56,7 @@ export function CommandLine({
       )}
     >
       <code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs whitespace-nowrap text-muted">{command}</code>
-      {openDir ? <OpenInTerminalButton dir={openDir} command={command} /> : null}
+      {openDir !== undefined ? <OpenInTerminalButton dir={openDir} command={command} /> : null}
       <CopyButton value={command} />
     </div>
   );

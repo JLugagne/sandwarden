@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/api/client";
 import { ToastProvider } from "@/components/Toaster";
+import { jobHub } from "@/store/jobs";
 import type { KitItemView } from "@/types";
 import { CreateSandboxDialog } from "./CreateSandboxDialog";
 
@@ -46,13 +47,13 @@ vi.mock("@/api/client", () => ({
   },
 }));
 
-function renderDialog() {
+function renderDialog(onClose: () => void = () => {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
         <ToastProvider>
-          <CreateSandboxDialog open onClose={() => {}} />
+          <CreateSandboxDialog open onClose={onClose} />
         </ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -157,6 +158,25 @@ describe("new sandbox dialog", () => {
     const progress = await screen.findByRole("tab", { name: /Progress/ });
     expect(progress.getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Waiting for output…")).toBeDefined();
+  });
+
+  it("replaces Create with Close after a successful creation so no duplicate can be started", async () => {
+    const onClose = vi.fn();
+    renderDialog(onClose);
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(api.createSandbox).toHaveBeenCalled());
+    const jobId = vi.mocked(api.createSandbox).mock.calls.at(-1)?.[0].job_id ?? "";
+    act(() => jobHub.dispatch(jobId, { kind: "done" }));
+
+    const footerClose = (await screen.findAllByRole("button", { name: "Close" })).find(
+      (button) => button.textContent === "Close",
+    );
+    expect(footerClose).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Create" })).toBeNull();
+
+    fireEvent.click(footerClose!);
+    expect(onClose).toHaveBeenCalled();
   });
 
   it("adds and removes workspace rows from General", () => {

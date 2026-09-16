@@ -49,7 +49,7 @@ function renderCard(summary: SandboxSummary) {
 
 describe("sandbox card resource indicators", () => {
   it("shows the CPU and memory meters once the sandbox has a sample", () => {
-    renderCard(
+    const { container } = renderCard(
       sandbox({
         cpu_percent: 42.4,
         memory_used_bytes: 1536 * 1024 * 1024,
@@ -61,10 +61,14 @@ describe("sandbox card resource indicators", () => {
     expect(screen.getByText("42%")).toBeDefined();
     expect(screen.getByText("MEM")).toBeDefined();
     expect(screen.getByText("1.5 GiB / 4.0 GiB")).toBeDefined();
+
+    const fills = container.querySelectorAll<HTMLElement>("[data-meter-fill]");
+    expect(fills).toHaveLength(2);
+    expect(parseFloat(fills[0].style.width)).toBeCloseTo(42.4);
   });
 
-  it("hides the meters for a stopped sandbox even with stale numbers", () => {
-    renderCard(
+  it("shows the meters disabled for a stopped sandbox", () => {
+    const { container } = renderCard(
       sandbox({
         running: false,
         status: "stopped",
@@ -74,14 +78,28 @@ describe("sandbox card resource indicators", () => {
       }),
     );
 
-    expect(screen.queryByText("CPU")).toBeNull();
-    expect(screen.queryByText("MEM")).toBeNull();
+    expect(screen.getByText("CPU")).toBeDefined();
+    expect(screen.getByText("12%")).toBeDefined();
+    expect(screen.getByText("MEM")).toBeDefined();
+    expect(screen.getByText("1.0 KiB / 4.0 KiB")).toBeDefined();
+
+    const fills = container.querySelectorAll<HTMLElement>("[data-meter-fill]");
+    expect(fills).toHaveLength(2);
+    for (const fill of fills) {
+      expect(fill.style.width).toBe("0%");
+      expect(fill.className).toContain("bg-border-strong");
+    }
   });
 
-  it("hides the meters until the first sample lands", () => {
-    renderCard(sandbox());
+  it("shows disabled placeholder meters until the first sample lands", () => {
+    const { container } = renderCard(sandbox());
 
-    expect(screen.queryByText("CPU")).toBeNull();
-    expect(screen.queryByText("MEM")).toBeNull();
+    expect(screen.getAllByText("—")).toHaveLength(2);
+
+    const fills = container.querySelectorAll<HTMLElement>("[data-meter-fill]");
+    expect(fills).toHaveLength(2);
+    for (const fill of fills) {
+      expect(fill.style.width).toBe("0%");
+    }
   });
 });

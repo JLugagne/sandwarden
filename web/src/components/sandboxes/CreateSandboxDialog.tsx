@@ -84,6 +84,7 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
   const [busy, setBusy] = useState(false);
   const reported = useRef<string | null>(null);
   const job = useJob(jobId);
+  const created = jobId !== null && job.status === "done";
   const logRef = useStickToBottom<HTMLPreElement>(job.output);
 
   useEffect(() => {
@@ -144,6 +145,7 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
   }
 
   async function submit() {
+    if (busy || created) return;
     setBusy(true);
     const id = newJobId();
     jobHub.reset(id);
@@ -182,14 +184,20 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
       description="Every `sbx create` option is one tab away; the output streams in the Progress tab."
       size="lg"
       footer={
-        <>
-          <Button variant="ghost" onClick={close} disabled={busy}>
-            Cancel
+        created ? (
+          <Button variant="primary" onClick={close}>
+            Close
           </Button>
-          <Button variant="primary" onClick={submit} loading={busy} disabled={!agent}>
-            Create
-          </Button>
-        </>
+        ) : (
+          <>
+            <Button variant="ghost" onClick={close} disabled={busy}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={submit} loading={busy} disabled={!agent}>
+              Create
+            </Button>
+          </>
+        )
       }
     >
       <div className="flex flex-col gap-5">

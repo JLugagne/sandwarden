@@ -22,12 +22,12 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function renderCommandLine() {
+function renderCommandLine(openDir?: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <CommandLine command="sbx run --name box" openDir="/srv/work" />
+        <CommandLine command="sbx run --name box" openDir={openDir} />
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -35,7 +35,7 @@ function renderCommandLine() {
 
 describe("open in terminal", () => {
   it("launches the default terminal in the workspace", async () => {
-    renderCommandLine();
+    renderCommandLine("/srv/work");
 
     const open = (await screen.findByRole("button", { name: "Open" })) as HTMLButtonElement;
     await waitFor(() => expect(open.disabled).toBe(false));
@@ -47,7 +47,7 @@ describe("open in terminal", () => {
   });
 
   it("offers the other enabled terminals in a dropdown", async () => {
-    renderCommandLine();
+    renderCommandLine("/srv/work");
 
     fireEvent.click(await screen.findByRole("button", { name: "Choose a terminal" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: /kitty/ }));
@@ -57,15 +57,21 @@ describe("open in terminal", () => {
     );
   });
 
-  it("renders no open button without a directory", () => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ToastProvider>
-          <CommandLine command="sbx run --name box" />
-        </ToastProvider>
-      </QueryClientProvider>,
+  it("still opens a terminal for sandboxes without a workspace", async () => {
+    renderCommandLine("");
+
+    const open = (await screen.findByRole("button", { name: "Open" })) as HTMLButtonElement;
+    await waitFor(() => expect(open.disabled).toBe(false));
+    fireEvent.click(open);
+
+    await waitFor(() =>
+      expect(vi.mocked(api.openInTerminal)).toHaveBeenCalledWith("terminal", "", "sbx run --name box"),
     );
+  });
+
+  it("renders no open button when the directory prop is omitted", () => {
+    renderCommandLine();
+
     expect(screen.queryByRole("button", { name: "Open" })).toBeNull();
     expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
   });
