@@ -1,4 +1,4 @@
-import { Desktop } from "@/bindings/github.com/JLugagne/sbx-ui/internal/desktop";
+import { Desktop } from "@/bindings/github.com/JLugagne/sandwarden/internal/desktop";
 import type {
   CacheInput,
   CacheMount,

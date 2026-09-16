@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/JLugagne/sbx-ui/internal/sbx"
+	"github.com/JLugagne/sandwarden/internal/sbx"
 )
 
 // Traffic returns the cross-sandbox proxy log.

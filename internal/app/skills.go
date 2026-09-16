@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JLugagne/sbx-ui/internal/sbx"
-	"github.com/JLugagne/sbx-ui/internal/skills"
-	"github.com/JLugagne/sbx-ui/internal/store"
+	"github.com/JLugagne/sandwarden/internal/sbx"
+	"github.com/JLugagne/sandwarden/internal/skills"
+	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 const (
@@ -574,7 +574,7 @@ func skillStoreCheckoutPath(name string) (string, error) {
 		}
 		root = filepath.Join(home, ".local", "share")
 	}
-	return filepath.Join(root, "sbx-ui", "skill-stores", fmt.Sprintf("%s-%x", slug, suffix)), nil
+	return filepath.Join(root, "sandwarden", "skill-stores", fmt.Sprintf("%s-%x", slug, suffix)), nil
 }
 
 // skillSlug reduces a store name to a filesystem-safe slug.

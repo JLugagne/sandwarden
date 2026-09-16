@@ -22,7 +22,7 @@ export default defineConfig({
     tailwindcss(),
     wails("./src/bindings"),
     {
-      name: "sbx-ui-csp",
+      name: "sandwarden-csp",
       apply: "build",
       transformIndexHtml: {
         order: "post",

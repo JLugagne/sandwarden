@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/JLugagne/sbx-ui/internal/sbx"
-	"github.com/JLugagne/sbx-ui/internal/store"
+	"github.com/JLugagne/sandwarden/internal/sbx"
+	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 // ProfileView is a profile with its rules and the sandboxes it is assigned to.

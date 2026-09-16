@@ -1,4 +1,4 @@
-module github.com/JLugagne/sbx-ui
+module github.com/JLugagne/sandwarden
 
 go 1.26.8
 

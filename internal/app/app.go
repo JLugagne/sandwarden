@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/JLugagne/sbx-ui/internal/sbx"
-	"github.com/JLugagne/sbx-ui/internal/store"
+	"github.com/JLugagne/sandwarden/internal/sbx"
+	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 // App coordinates the sandboxd client, the profile store, the event hub and

@@ -3,8 +3,8 @@ package desktop
 import (
 	"strings"
 
-	"github.com/JLugagne/sbx-ui/internal/sbx"
-	"github.com/JLugagne/sbx-ui/internal/store"
+	"github.com/JLugagne/sandwarden/internal/sbx"
+	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 // cleanStrings trims entries and drops the empty ones.

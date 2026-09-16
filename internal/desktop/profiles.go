@@ -4,8 +4,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/JLugagne/sbx-ui/internal/app"
-	"github.com/JLugagne/sbx-ui/internal/store"
+	"github.com/JLugagne/sandwarden/internal/app"
+	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 // ListProfiles returns every profile with its rules and sandbox assignments.

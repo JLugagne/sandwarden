@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/JLugagne/sbx-ui/internal/store"
+	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 // newSkillsStub installs a fake sbx CLI that keeps a runtime mount table in a

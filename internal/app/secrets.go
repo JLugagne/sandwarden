@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/JLugagne/sbx-ui/internal/sbx"
+	"github.com/JLugagne/sandwarden/internal/sbx"
 )
 
 // ListSecrets returns the stored secret inventory. scope "" lists every scope,

@@ -1,6 +1,6 @@
 package desktop
 
-import "github.com/JLugagne/sbx-ui/internal/sbx"
+import "github.com/JLugagne/sandwarden/internal/sbx"
 
 // ListSecrets returns stored and custom secrets for one scope.
 func (d *Desktop) ListSecrets(scope string) (sbx.SecretList, error) {

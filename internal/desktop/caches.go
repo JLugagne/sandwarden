@@ -3,8 +3,8 @@ package desktop
 import (
 	"errors"
 
-	"github.com/JLugagne/sbx-ui/internal/app"
-	"github.com/JLugagne/sbx-ui/internal/store"
+	"github.com/JLugagne/sandwarden/internal/app"
+	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 // ListCaches returns every shared cache mount.

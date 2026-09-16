@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/JLugagne/sbx-ui/internal/sbx"
+	"github.com/JLugagne/sandwarden/internal/sbx"
 )
 
 func TestSetSandboxSecretNotifiesSandboxDetail(t *testing.T) {

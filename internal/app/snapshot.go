@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/JLugagne/sbx-ui/internal/sbx"
-	"github.com/JLugagne/sbx-ui/internal/store"
+	"github.com/JLugagne/sandwarden/internal/sbx"
+	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 // ConnectInfo carries the CLI commands that attach to a sandbox's agent.

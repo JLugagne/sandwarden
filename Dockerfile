@@ -23,7 +23,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist ./web/dist
-RUN CGO_ENABLED=1 go build -tags "gtk3,production" -trimpath -ldflags "-s -w" -o /sbx-ui .
+RUN CGO_ENABLED=1 go build -tags "gtk3,production" -trimpath -ldflags "-s -w" -o /sandwarden .
 
 # Extract just the binary:
 #   docker buildx build --target binary --output type=local,dest=bin .
@@ -31,7 +31,7 @@ RUN CGO_ENABLED=1 go build -tags "gtk3,production" -trimpath -ldflags "-s -w" -o
 # --- binary ------------------------------------------------------------------
 # Export-only stage: produces a directory containing only the binary.
 FROM scratch AS binary
-COPY --from=build /sbx-ui /sbx-ui
+COPY --from=build /sandwarden /sandwarden
 
 # --- runtime -----------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
@@ -39,7 +39,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates libgtk-3-0 libwebkit2gtk-4.1-0 \
  && rm -rf /var/lib/apt/lists/*
-COPY --from=build /sbx-ui /usr/local/bin/sbx-ui
+COPY --from=build /sandwarden /usr/local/bin/sandwarden
 
 # A desktop app needs the host display, the sandboxd socket and the sbx CLI.
 # Example:
@@ -47,5 +47,5 @@ COPY --from=build /sbx-ui /usr/local/bin/sbx-ui
 #     -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
 #     -v "$HOME/.local/state/sandboxes:$HOME/.local/state/sandboxes" \
 #     -v /usr/bin/sbx:/usr/local/bin/sbx:ro \
-#     sbx-ui
-ENTRYPOINT ["sbx-ui"]
+#     sandwarden
+ENTRYPOINT ["sandwarden"]

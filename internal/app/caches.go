@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JLugagne/sbx-ui/internal/store"
+	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 // ListCaches returns every configured shared cache.

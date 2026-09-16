@@ -1,4 +1,4 @@
-BINARY      := bin/sbx-ui
+BINARY      := bin/sandwarden
 PKG         := ./...
 GO          ?= go
 NPM         ?= npm
@@ -30,12 +30,12 @@ web-test: web-deps ## Run frontend unit tests
 	cd web && $(NPM) test
 
 .PHONY: build
-build: web ## Compile the desktop binary into bin/sbx-ui (frontend embedded)
+build: web ## Compile the desktop binary into bin/sandwarden (frontend embedded)
 	$(GO) build -tags "$(TAGS),production" -trimpath -ldflags "-s -w" -o $(BINARY) .
 
 .PHONY: image
 image: ## Build the Docker image (runtime stage)
-	$(DOCKER) build -t sbx-ui:local .
+	$(DOCKER) build -t sandwarden:local .
 
 .PHONY: image-binary
 image-binary: ## Export the Linux binary from the Docker build into bin/

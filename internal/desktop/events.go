@@ -3,7 +3,7 @@ package desktop
 import (
 	"context"
 
-	"github.com/JLugagne/sbx-ui/internal/app"
+	"github.com/JLugagne/sandwarden/internal/app"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 

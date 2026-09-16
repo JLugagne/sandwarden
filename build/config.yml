@@ -26,7 +26,7 @@ dev_mode:
   executes:
     - cmd: npm --prefix web run dev
       type: background
-    - cmd: go build -tags gtk3 -o bin/sbx-ui-dev .
+    - cmd: go build -tags gtk3 -o bin/sandwarden-dev .
       type: blocking
-    - cmd: ./bin/sbx-ui-dev
+    - cmd: ./bin/sandwarden-dev
       type: primary

@@ -29,63 +29,63 @@ import * as $models from "./models.js";
  * AddMount bind-mounts a host folder into the sandbox at runtime.
  */
 export function AddMount(name: string, req: $models.MountRequest): $CancellablePromise<void> {
-    return $Call.ByID(1490914339, name, req);
+    return $Call.ByID(3191530632, name, req);
 }
 
 /**
  * AddProfileSkillItem selects a catalog item for a profile.
  */
 export function AddProfileSkillItem(profileID: number, itemID: number): $CancellablePromise<void> {
-    return $Call.ByID(376331419, profileID, itemID);
+    return $Call.ByID(159872622, profileID, itemID);
 }
 
 /**
  * AddRule appends an allow/deny pattern to a profile.
  */
 export function AddRule(profileID: number, req: $models.RuleRequest): $CancellablePromise<store$0.Rule> {
-    return $Call.ByID(4104744756, profileID, req);
+    return $Call.ByID(1446732289, profileID, req);
 }
 
 /**
  * AssignProfile applies a profile to a sandbox.
  */
 export function AssignProfile(name: string, profileID: number): $CancellablePromise<void> {
-    return $Call.ByID(2272907299, name, profileID);
+    return $Call.ByID(1221982478, name, profileID);
 }
 
 /**
  * AttachCache binds a shared cache to a sandbox.
  */
 export function AttachCache(name: string, cacheID: number): $CancellablePromise<void> {
-    return $Call.ByID(2387889824, name, cacheID);
+    return $Call.ByID(2232078297, name, cacheID);
 }
 
 /**
  * AttachSkillItem adds a catalog item directly to one sandbox.
  */
 export function AttachSkillItem(name: string, itemID: number): $CancellablePromise<void> {
-    return $Call.ByID(2160236452, name, itemID);
+    return $Call.ByID(29893609, name, itemID);
 }
 
 /**
  * CancelJob stops a running job.
  */
 export function CancelJob(id: string): $CancellablePromise<void> {
-    return $Call.ByID(1807484936, id);
+    return $Call.ByID(1409963593, id);
 }
 
 /**
  * CreateCache stores a shared cache mount.
  */
 export function CreateCache(input: $models.CacheInput): $CancellablePromise<store$0.CacheMount> {
-    return $Call.ByID(3151622627, input);
+    return $Call.ByID(3252116970, input);
 }
 
 /**
  * CreateProfile stores a new profile and returns its view.
  */
 export function CreateProfile(req: $models.ProfileRequest): $CancellablePromise<app$0.ProfileView> {
-    return $Call.ByID(2157744640, req);
+    return $Call.ByID(1812190421, req);
 }
 
 /**
@@ -93,56 +93,56 @@ export function CreateProfile(req: $models.ProfileRequest): $CancellablePromise<
  * returning the job id whose output streams over hub events.
  */
 export function CreateSandbox(req: $models.CreateSandboxRequest): $CancellablePromise<string> {
-    return $Call.ByID(2424259458, req);
+    return $Call.ByID(1064106591, req);
 }
 
 /**
  * CreateSkillStore registers a skill store and performs its first checkout.
  */
 export function CreateSkillStore(req: $models.SkillStoreRequest): $CancellablePromise<store$0.SkillStore> {
-    return $Call.ByID(3051981717, req);
+    return $Call.ByID(284057750, req);
 }
 
 /**
  * DeleteCache removes a shared cache mount.
  */
 export function DeleteCache(id: number): $CancellablePromise<void> {
-    return $Call.ByID(1479997870, id);
+    return $Call.ByID(3374406371, id);
 }
 
 /**
  * DeleteProfile removes a profile and its rules.
  */
 export function DeleteProfile(id: number): $CancellablePromise<void> {
-    return $Call.ByID(3284967233, id);
+    return $Call.ByID(3438322432, id);
 }
 
 /**
  * DeleteSandbox removes a sandbox, optionally forcing past the daemon's checks.
  */
 export function DeleteSandbox(name: string, force: boolean): $CancellablePromise<void> {
-    return $Call.ByID(1532973811, name, force);
+    return $Call.ByID(3704837250, name, force);
 }
 
 /**
  * DeleteSkillStore removes a skill store and its selections.
  */
 export function DeleteSkillStore(id: number): $CancellablePromise<void> {
-    return $Call.ByID(375128690, id);
+    return $Call.ByID(544048789, id);
 }
 
 /**
  * DetachCache unbinds a shared cache from a sandbox.
  */
 export function DetachCache(name: string, cacheID: number): $CancellablePromise<void> {
-    return $Call.ByID(1633025794, name, cacheID);
+    return $Call.ByID(819031591, name, cacheID);
 }
 
 /**
  * DetachSkillItem removes a directly attached catalog item from one sandbox.
  */
 export function DetachSkillItem(name: string, itemID: number): $CancellablePromise<void> {
-    return $Call.ByID(653038326, name, itemID);
+    return $Call.ByID(2772222383, name, itemID);
 }
 
 /**
@@ -150,14 +150,14 @@ export function DetachSkillItem(name: string, itemID: number): $CancellablePromi
  * output streams over hub events.
  */
 export function Exec(name: string, req: $models.ExecRequest): $CancellablePromise<string> {
-    return $Call.ByID(4236085354, name, req);
+    return $Call.ByID(2003739213, name, req);
 }
 
 /**
  * Health reports the daemon socket and CLI in use.
  */
 export function Health(): $CancellablePromise<$models.Health> {
-    return $Call.ByID(383312785);
+    return $Call.ByID(3798447474);
 }
 
 /**
@@ -165,42 +165,42 @@ export function Health(): $CancellablePromise<$models.Health> {
  * output streams over hub events.
  */
 export function ImportSecrets(req: $models.ImportSecretsRequest): $CancellablePromise<string> {
-    return $Call.ByID(1747656439, req);
+    return $Call.ByID(3098023610, req);
 }
 
 /**
  * Job returns the buffered view of a streamed job.
  */
 export function Job(id: string): $CancellablePromise<app$0.JobView> {
-    return $Call.ByID(3494486174, id);
+    return $Call.ByID(700660519, id);
 }
 
 /**
  * ListCaches returns every shared cache mount.
  */
 export function ListCaches(): $CancellablePromise<store$0.CacheMount[] | null> {
-    return $Call.ByID(1806602384);
+    return $Call.ByID(3090063311);
 }
 
 /**
  * ListProfiles returns every profile with its rules and sandbox assignments.
  */
 export function ListProfiles(): $CancellablePromise<app$0.ProfileView[] | null> {
-    return $Call.ByID(848588009);
+    return $Call.ByID(725903486);
 }
 
 /**
  * ListSandboxes returns live sandbox summaries with cached profile names.
  */
 export function ListSandboxes(): $CancellablePromise<app$0.SandboxSummary[] | null> {
-    return $Call.ByID(3216839746);
+    return $Call.ByID(1965913211);
 }
 
 /**
  * ListSecrets returns stored and custom secrets for one scope.
  */
 export function ListSecrets(scope: string): $CancellablePromise<sbx$0.SecretList> {
-    return $Call.ByID(4024769820, scope);
+    return $Call.ByID(3135961433, scope);
 }
 
 /**
@@ -208,35 +208,35 @@ export function ListSecrets(scope: string): $CancellablePromise<sbx$0.SecretList
  * when storeID is zero.
  */
 export function ListSkillItems(storeID: number): $CancellablePromise<store$0.SkillItem[] | null> {
-    return $Call.ByID(760660056, storeID);
+    return $Call.ByID(3147280427, storeID);
 }
 
 /**
  * ListSkillStores returns every registered skill store.
  */
 export function ListSkillStores(): $CancellablePromise<store$0.SkillStore[] | null> {
-    return $Call.ByID(4156313778);
+    return $Call.ByID(969324587);
 }
 
 /**
  * PickFolder opens the host's native folder chooser rooted at start.
  */
 export function PickFolder(start: string): $CancellablePromise<string> {
-    return $Call.ByID(768574690, start);
+    return $Call.ByID(2730484725, start);
 }
 
 /**
  * PolicyAction applies a global policy mutation.
  */
 export function PolicyAction(req: $models.PolicyActionRequest): $CancellablePromise<sbx$0.PolicyActionResult[] | null> {
-    return $Call.ByID(2569003643, req);
+    return $Call.ByID(3170893108, req);
 }
 
 /**
  * PolicyRules returns network policy rules, optionally filtered by sandbox.
  */
 export function PolicyRules(sandbox: string): $CancellablePromise<sbx$0.PolicyRule[] | null> {
-    return $Call.ByID(1183235812, sandbox);
+    return $Call.ByID(3653743041, sandbox);
 }
 
 /**
@@ -244,154 +244,154 @@ export function PolicyRules(sandbox: string): $CancellablePromise<sbx$0.PolicyRu
  * cache instead of aborting the batch.
  */
 export function ReapplyCaches(name: string): $CancellablePromise<$models.ReapplyResult> {
-    return $Call.ByID(1734915253, name);
+    return $Call.ByID(324324692, name);
 }
 
 /**
  * ReconcileSkills mounts and unmounts the .agents items of one sandbox.
  */
 export function ReconcileSkills(name: string): $CancellablePromise<app$0.SkillReconcileResult> {
-    return $Call.ByID(791660259, name);
+    return $Call.ByID(361613106, name);
 }
 
 /**
  * RefreshSkillStore re-checks out a store and rebuilds its catalog.
  */
 export function RefreshSkillStore(id: number): $CancellablePromise<store$0.SkillStore> {
-    return $Call.ByID(2680942004, id);
+    return $Call.ByID(1436103669, id);
 }
 
 /**
  * RemoveCustomSecret deletes a custom secret by placeholder.
  */
 export function RemoveCustomSecret(scope: string, placeholder: string): $CancellablePromise<void> {
-    return $Call.ByID(2079404932, scope, placeholder);
+    return $Call.ByID(2743726951, scope, placeholder);
 }
 
 /**
  * RemoveMount detaches a runtime mount.
  */
 export function RemoveMount(name: string, path: string, target: string): $CancellablePromise<void> {
-    return $Call.ByID(1515146868, name, path, target);
+    return $Call.ByID(4168058129, name, path, target);
 }
 
 /**
  * RemoveProfileSkillItem deselects a catalog item from a profile.
  */
 export function RemoveProfileSkillItem(profileID: number, itemID: number): $CancellablePromise<void> {
-    return $Call.ByID(1815332338, profileID, itemID);
+    return $Call.ByID(855797425, profileID, itemID);
 }
 
 /**
  * RemoveRegistrySecret deletes registry pull credentials for one host.
  */
 export function RemoveRegistrySecret(scope: string, host: string): $CancellablePromise<void> {
-    return $Call.ByID(3045852112, scope, host);
+    return $Call.ByID(3013588355, scope, host);
 }
 
 /**
  * RemoveRule deletes one rule from a profile.
  */
 export function RemoveRule(profileID: number, ruleID: number): $CancellablePromise<void> {
-    return $Call.ByID(1618873109, profileID, ruleID);
+    return $Call.ByID(4020660650, profileID, ruleID);
 }
 
 /**
  * RemoveSecret deletes a stored service secret.
  */
 export function RemoveSecret(scope: string, name: string): $CancellablePromise<void> {
-    return $Call.ByID(3356985643, scope, name);
+    return $Call.ByID(1612390584, scope, name);
 }
 
 /**
  * SandboxDetail returns the detail payload the sandbox page renders.
  */
 export function SandboxDetail(name: string): $CancellablePromise<app$0.SandboxDetail> {
-    return $Call.ByID(3506181035, name);
+    return $Call.ByID(2726826130, name);
 }
 
 /**
  * SandboxPolicy returns the rules that apply to one sandbox.
  */
 export function SandboxPolicy(name: string): $CancellablePromise<sbx$0.PolicyRule[] | null> {
-    return $Call.ByID(519812348, name);
+    return $Call.ByID(3252575237, name);
 }
 
 /**
  * SandboxPolicyAction applies an allow/deny mutation scoped to one sandbox.
  */
 export function SandboxPolicyAction(name: string, action: string, resources: string[] | null): $CancellablePromise<sbx$0.PolicyActionResult[] | null> {
-    return $Call.ByID(1329216910, name, action, resources);
+    return $Call.ByID(3277562207, name, action, resources);
 }
 
 /**
  * SandboxTraffic returns the proxy log filtered to one sandbox.
  */
 export function SandboxTraffic(name: string): $CancellablePromise<sbx$0.PolicyLog> {
-    return $Call.ByID(3952541031, name);
+    return $Call.ByID(1358447664, name);
 }
 
 /**
  * SetCustomSecret stores a placeholder secret bound to hosts.
  */
 export function SetCustomSecret(req: $models.CustomSecretRequest): $CancellablePromise<void> {
-    return $Call.ByID(1053051934, req);
+    return $Call.ByID(473241439, req);
 }
 
 /**
  * SetRegistrySecret stores a registry credential.
  */
 export function SetRegistrySecret(req: $models.RegistrySecretRequest): $CancellablePromise<void> {
-    return $Call.ByID(3457946014, req);
+    return $Call.ByID(1916033531, req);
 }
 
 /**
  * SetServiceSecret stores a service credential.
  */
 export function SetServiceSecret(req: $models.ServiceSecretRequest): $CancellablePromise<void> {
-    return $Call.ByID(4206622016, req);
+    return $Call.ByID(851959799, req);
 }
 
 /**
  * StartSandbox boots a stopped sandbox.
  */
 export function StartSandbox(name: string): $CancellablePromise<void> {
-    return $Call.ByID(3344898764, name);
+    return $Call.ByID(3564318391, name);
 }
 
 /**
  * StopSandbox halts a running sandbox.
  */
 export function StopSandbox(name: string): $CancellablePromise<void> {
-    return $Call.ByID(2500813010, name);
+    return $Call.ByID(4269291435, name);
 }
 
 /**
  * Traffic returns the cross-sandbox proxy log.
  */
 export function Traffic(): $CancellablePromise<sbx$0.PolicyLog> {
-    return $Call.ByID(1047078340);
+    return $Call.ByID(1314975677);
 }
 
 /**
  * UnassignProfile removes a profile from a sandbox.
  */
 export function UnassignProfile(name: string, profileID: number): $CancellablePromise<void> {
-    return $Call.ByID(993038378, name, profileID);
+    return $Call.ByID(2923123827, name, profileID);
 }
 
 /**
  * UpdateCache rewrites a shared cache mount.
  */
 export function UpdateCache(id: number, input: $models.CacheInput): $CancellablePromise<store$0.CacheMount> {
-    return $Call.ByID(1314380532, id, input);
+    return $Call.ByID(2257824741, id, input);
 }
 
 /**
  * UpdateProfile rewrites a profile and returns its view.
  */
 export function UpdateProfile(id: number, req: $models.ProfileRequest): $CancellablePromise<app$0.ProfileView> {
-    return $Call.ByID(1477710715, id, req);
+    return $Call.ByID(1857103598, id, req);
 }
 
 /**
@@ -399,5 +399,5 @@ export function UpdateProfile(id: number, req: $models.ProfileRequest): $Cancell
  * changed.
  */
 export function UpdateSkillStore(id: number, req: $models.SkillStoreRequest): $CancellablePromise<store$0.SkillStore> {
-    return $Call.ByID(1134725288, id, req);
+    return $Call.ByID(3957676007, id, req);
 }

@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/JLugagne/sbx-ui/internal/app"
-	"github.com/JLugagne/sbx-ui/internal/sbx"
+	"github.com/JLugagne/sandwarden/internal/app"
+	"github.com/JLugagne/sandwarden/internal/sbx"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 

@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/JLugagne/sbx-ui/internal/app"
-	"github.com/JLugagne/sbx-ui/internal/desktop"
-	"github.com/JLugagne/sbx-ui/internal/sbx"
-	"github.com/JLugagne/sbx-ui/internal/store"
+	"github.com/JLugagne/sandwarden/internal/app"
+	"github.com/JLugagne/sandwarden/internal/desktop"
+	"github.com/JLugagne/sandwarden/internal/sbx"
+	"github.com/JLugagne/sandwarden/internal/store"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -55,7 +55,7 @@ func main() {
 	service := desktop.New(core, ctx)
 
 	wailsApp := application.New(application.Options{
-		Name:        "sbx-ui",
+		Name:        "sandwarden",
 		Description: "Manage Docker Sandboxes",
 		Services: []application.Service{
 			application.NewService(service),
@@ -65,12 +65,12 @@ func main() {
 			Middleware: desktop.AssetMiddleware(assets),
 		},
 		OnShutdown: func() { _ = st.Close() },
-		Linux:      application.LinuxOptions{ProgramName: "sbx-ui"},
+		Linux:      application.LinuxOptions{ProgramName: "sandwarden"},
 	})
 	desktop.Attach(service, wailsApp)
 
 	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:                      "sbx-ui",
+		Title:                      "sandwarden",
 		Width:                      1280,
 		Height:                     820,
 		MinWidth:                   960,
@@ -99,11 +99,11 @@ func main() {
 
 func defaultDBPath() string {
 	if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
-		return filepath.Join(dir, "sbx-ui", "sbx-ui.db")
+		return filepath.Join(dir, "sandwarden", "sandwarden.db")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "sbx-ui.db"
+		return "sandwarden.db"
 	}
-	return filepath.Join(home, ".local", "state", "sbx-ui", "sbx-ui.db")
+	return filepath.Join(home, ".local", "state", "sandwarden", "sandwarden.db")
 }

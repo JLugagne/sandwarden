@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JLugagne/sbx-ui/internal/sbx"
+	"github.com/JLugagne/sandwarden/internal/sbx"
 )
 
 // Start launches the background watchers. It returns immediately; they run until

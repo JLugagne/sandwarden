@@ -14,9 +14,9 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/JLugagne/sbx-ui/internal/app"
-	"github.com/JLugagne/sbx-ui/internal/sbx"
-	"github.com/JLugagne/sbx-ui/internal/store"
+	"github.com/JLugagne/sandwarden/internal/app"
+	"github.com/JLugagne/sandwarden/internal/sbx"
+	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 type fakeDaemon struct {
