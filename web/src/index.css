@@ -1,0 +1,90 @@
+@import "tailwindcss";
+@import "./styles/tokens.css";
+
+/* Map the semantic token layer onto Tailwind's theme namespaces so utilities
+   carry intent (bg-surface, text-muted, border-border, …). */
+@theme inline {
+  --color-canvas: var(--sbx-bg);
+  --color-surface: var(--sbx-surface);
+  --color-raised: var(--sbx-surface-raised);
+  --color-hover: var(--sbx-surface-hover);
+  --color-active: var(--sbx-surface-active);
+  --color-border: var(--sbx-border);
+  --color-border-strong: var(--sbx-border-strong);
+  --color-fg: var(--sbx-text);
+  --color-muted: var(--sbx-text-muted);
+  --color-faint: var(--sbx-text-faint);
+  --color-accent: var(--sbx-accent);
+  --color-accent-hover: var(--sbx-accent-hover);
+  --color-accent-soft: var(--sbx-accent-soft);
+  --color-on-accent: var(--sbx-on-accent);
+  --color-success: var(--sbx-success);
+  --color-success-soft: var(--sbx-success-soft);
+  --color-warning: var(--sbx-warning);
+  --color-warning-soft: var(--sbx-warning-soft);
+  --color-danger: var(--sbx-danger);
+  --color-danger-hover: var(--sbx-danger-hover);
+  --color-danger-soft: var(--sbx-danger-soft);
+  --color-overlay: var(--sbx-overlay);
+
+  --font-sans: var(--sbx-font-sans);
+  --font-mono: var(--sbx-font-mono);
+
+  --text-2xs: var(--sbx-text-2xs);
+  --text-xs: var(--sbx-text-xs);
+  --text-sm: var(--sbx-text-sm);
+  --text-md: var(--sbx-text-md);
+  --text-lg: var(--sbx-text-lg);
+  --text-xl: var(--sbx-text-xl);
+  --text-2xl: var(--sbx-text-2xl);
+  --text-3xl: var(--sbx-text-3xl);
+
+  --radius-xs: var(--sbx-radius-xs);
+  --radius-sm: var(--sbx-radius-sm);
+  --radius-md: var(--sbx-radius-md);
+  --radius-lg: var(--sbx-radius-lg);
+
+  --shadow-xs: var(--sbx-shadow-xs);
+  --shadow-sm: var(--sbx-shadow-sm);
+  --shadow-md: var(--sbx-shadow-md);
+  --shadow-lg: var(--sbx-shadow-lg);
+
+  --ease-standard: var(--sbx-ease-standard);
+  --ease-emphasized: var(--sbx-ease-emphasized);
+}
+
+@layer base {
+  html {
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-canvas);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    font-size: var(--text-md);
+    line-height: var(--sbx-leading-normal);
+  }
+
+  ::selection {
+    background: var(--color-accent-soft);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--sbx-focus-ring);
+    outline-offset: 2px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-strong) transparent;
+  }
+
+  code,
+  pre,
+  kbd {
+    font-family: var(--font-mono);
+  }
+}
