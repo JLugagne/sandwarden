@@ -284,7 +284,7 @@ export function SettingsPage() {
 
         <Panel
           title="About"
-          description="Version and update channel. Stable releases are published for Linux (amd64) and macOS (Intel and Apple silicon); the unstable pre-release follows the main branch."
+          description="Version and update channel. Stable releases are published for Linux (amd64) and macOS (Apple silicon); the unstable pre-release follows the main branch."
         >
           {version.isLoading ? (
             <Spinner />

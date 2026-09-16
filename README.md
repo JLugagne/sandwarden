@@ -76,7 +76,7 @@ web/                 React 19 + Vite + TanStack Query UI (web/src/bindings is ge
 
 ## Install
 
-Prebuilt binaries are published for Linux (amd64) and macOS (Intel and Apple silicon):
+Prebuilt binaries are published for Linux (amd64) and macOS (Apple silicon):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/JLugagne/sandwarden/main/install.sh | bash

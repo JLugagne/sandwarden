@@ -33,6 +33,11 @@ if [ "$OS" = "linux" ] && [ "$ARCH" != "amd64" ]; then
   exit 1
 fi
 
+if [ "$OS" = "darwin" ] && [ "$ARCH" != "arm64" ]; then
+  echo "Prebuilt macOS binaries are Apple silicon (arm64) only; build from source with 'make build'." >&2
+  exit 1
+fi
+
 # Resolve version: latest stable release unless pinned. SANDWARDEN_VERSION=unstable
 # installs the rolling pre-release built from the main branch.
 if [ -z "$VERSION" ]; then
