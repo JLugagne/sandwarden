@@ -55,7 +55,9 @@ export function CommandLine({
         className,
       )}
     >
-      <code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs whitespace-nowrap text-muted">{command}</code>
+      <code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs whitespace-nowrap text-muted [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {command}
+      </code>
       {openDir !== undefined ? <OpenInTerminalButton dir={openDir} command={command} /> : null}
       <CopyButton value={command} />
     </div>

@@ -178,12 +178,12 @@ export interface SandboxSummary {
     "ports"?: sbx$0.PublishedPort[] | null;
     "mount_policy_denied": boolean;
     "profiles": string[] | null;
+    "connect": ConnectInfo;
 
     /**
      * RunArgs is appended after `--` to the connect run command, if set.
      */
     "run_args": string;
-    "connect": ConnectInfo;
 
     /**
      * CPUPercent is the sampled CPU usage, 0-100 across the sandbox CPUs.

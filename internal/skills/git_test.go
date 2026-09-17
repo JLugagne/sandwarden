@@ -2,10 +2,12 @@ package skills
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,9 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 func TestCheckoutClonesAndSwitchesRefs(t *testing.T) {
@@ -157,12 +162,95 @@ func TestSSHAuthUsesDefaultKey(t *testing.T) {
 	}
 }
 
+func TestAgentAuthFallsBackToXDGRuntimeSocket(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	runtimeDir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+
+	keyring := agent.NewKeyring()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	if err := keyring.Add(agent.AddedKey{PrivateKey: priv}); err != nil {
+		t.Fatalf("add key: %v", err)
+	}
+	serveAgent(t, keyring, filepath.Join(runtimeDir, "ssh-agent.socket"))
+
+	method, err := agentAuth()
+	if err != nil {
+		t.Fatalf("agent auth: %v", err)
+	}
+	cb, ok := method.(*ssh.PublicKeysCallback)
+	if !ok {
+		t.Fatalf("expected a PublicKeysCallback auth method, got %T", method)
+	}
+	signers, err := cb.Callback()
+	if err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	if len(signers) != 1 {
+		t.Fatalf("expected the agent's key to be offered, got %d signers", len(signers))
+	}
+}
+
+func TestAgentAuthNoneAvailable(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+
+	if _, err := agentAuth(); err == nil {
+		t.Fatal("expected an error when no agent socket is reachable")
+	}
+}
+
+func serveAgent(t *testing.T, keyring agent.Agent, sockPath string) {
+	t.Helper()
+	listener, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() { _ = agent.ServeAgent(keyring, conn) }()
+		}
+	}()
+}
+
 func TestSSHAuthWithoutKeysFails(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "")
 	t.Setenv("HOME", t.TempDir())
 
 	if _, err := sshAuth(); err == nil {
 		t.Fatal("expected an error when no key is available")
+	}
+}
+
+func TestSSHAuthOffersEveryDefaultKey(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeTestRSAKey(t, filepath.Join(home, ".ssh", "id_rsa"))
+	writeTestEd25519Key(t, filepath.Join(home, ".ssh", "id_ed25519"))
+
+	method, err := sshAuth()
+	if err != nil {
+		t.Fatalf("ssh auth: %v", err)
+	}
+	cb, ok := method.(*ssh.PublicKeysCallback)
+	if !ok {
+		t.Fatalf("expected every default key to be offered to the server in one attempt, got %T", method)
+	}
+	signers, err := cb.Callback()
+	if err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	if len(signers) != 2 {
+		t.Fatalf("expected both default keys to be offered, got %d", len(signers))
 	}
 }
 
@@ -173,5 +261,18 @@ func writeTestRSAKey(t *testing.T, path string) {
 		t.Fatalf("generate key: %v", err)
 	}
 	block := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}
+	writeTestFile(t, path, string(pem.EncodeToMemory(block)))
+}
+
+func writeTestEd25519Key(t *testing.T, path string) {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	block, err := gossh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
 	writeTestFile(t, path, string(pem.EncodeToMemory(block)))
 }

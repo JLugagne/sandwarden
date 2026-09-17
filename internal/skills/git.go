@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 // Auth selects how a skill store is fetched.
@@ -103,6 +106,37 @@ func ValidateAuthURL(url string, auth Auth) error {
 	}
 }
 
+// agentAuth connects to a running ssh-agent, trying SSH_AUTH_SOCK first and
+// falling back to the socket paths a desktop session commonly starts one at:
+// a process launched from a desktop entry (rather than a login shell) often
+// does not inherit SSH_AUTH_SOCK even though an agent is running.
+func agentAuth() (transport.AuthMethod, error) {
+	var candidates []string
+	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
+		candidates = append(candidates, sock)
+	}
+	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
+		candidates = append(candidates,
+			filepath.Join(runtimeDir, "ssh-agent.socket"),
+			filepath.Join(runtimeDir, "keyring", "ssh"),
+		)
+	}
+	var lastErr error
+	for _, sock := range candidates {
+		conn, err := net.Dial("unix", sock)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		client := agent.NewClient(conn)
+		return &ssh.PublicKeysCallback{User: "git", Callback: client.Signers}, nil
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("connect to ssh agent: %w", lastErr)
+	}
+	return nil, errors.New("no ssh agent socket found")
+}
+
 // checkoutRef switches a fresh clone to a branch or, failing that, a tag.
 func checkoutRef(repo *git.Repository, ref string) error {
 	worktree, err := repo.Worktree()
@@ -122,34 +156,42 @@ func checkoutRef(repo *git.Repository, ref string) error {
 	return fmt.Errorf("ref %q is neither a branch nor a tag", ref)
 }
 
-// sshAuth resolves an SSH auth method from the user's environment: the agent
-// when SSH_AUTH_SOCK is set, otherwise the first default private key of
-// ~/.ssh. Host keys are verified against ~/.ssh/known_hosts by go-git.
+// sshAuth resolves an SSH auth method from the user's environment: a running
+// ssh-agent first, otherwise every default private key found in ~/.ssh,
+// offered to the server in one attempt so it can pick whichever it
+// recognizes (a single wrong-but-present key would otherwise be tried alone
+// and rejected, even though a working key sits right next to it). Host keys
+// are verified against ~/.ssh/known_hosts by go-git.
 func sshAuth() (transport.AuthMethod, error) {
-	if os.Getenv("SSH_AUTH_SOCK") != "" {
-		if method, err := ssh.NewSSHAgentAuth("git"); err == nil {
-			return method, nil
-		}
+	if method, err := agentAuth(); err == nil {
+		return method, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
+	var signers []gossh.Signer
 	var lastErr error
 	for _, name := range []string{"id_ed25519", "id_ecdsa", "id_rsa"} {
 		path := filepath.Join(home, ".ssh", name)
 		if _, err := os.Stat(path); err != nil {
 			continue
 		}
-		method, err := ssh.NewPublicKeysFromFile("git", path, "")
+		key, err := ssh.NewPublicKeysFromFile("git", path, "")
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		return method, nil
+		signers = append(signers, key.Signer)
 	}
-	if lastErr != nil {
-		return nil, fmt.Errorf("load ssh key: %w", lastErr)
+	if len(signers) == 0 {
+		if lastErr != nil {
+			return nil, fmt.Errorf("load ssh key: %w", lastErr)
+		}
+		return nil, errors.New("no ssh key found in ~/.ssh (looked for id_ed25519, id_ecdsa, id_rsa)")
 	}
-	return nil, errors.New("no ssh key found in ~/.ssh (looked for id_ed25519, id_ecdsa, id_rsa)")
+	return &ssh.PublicKeysCallback{
+		User:     "git",
+		Callback: func() ([]gossh.Signer, error) { return signers, nil },
+	}, nil
 }
