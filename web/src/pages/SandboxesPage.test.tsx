@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "@/api/client";
 import { ToastProvider } from "@/components/Toaster";
 import type { SandboxSummary } from "@/types";
 import { SandboxesPage } from "./SandboxesPage";
@@ -17,6 +18,7 @@ function sandbox(name: string, running: boolean): SandboxSummary {
     running,
     workspace: `/w/${name}`,
     mount_policy_denied: false,
+    incomplete: false,
     profiles: [],
     run_args: "",
     connect: { run: `sbx run ${name}`, shell: `sbx exec ${name} bash` },
@@ -45,6 +47,8 @@ vi.mock("@/api/client", () => ({
     startSandbox: vi.fn(),
     stopSandbox: vi.fn(),
     deleteSandbox: vi.fn(),
+    importSandboxes: vi.fn(async () => ({ results: [], created: 0, configured: 0, failed: 0 })),
+    configStaleness: vi.fn(async () => ({ stale: false, changed: [] })),
   },
 }));
 
@@ -89,5 +93,27 @@ describe("sandboxes page", () => {
     expect(await screen.findByText("Started")).toBeDefined();
     expect(sectionNames(container)).toEqual([{ heading: "Started (1)", names: ["alpha"] }]);
     expect(screen.queryByText("Stopped")).toBeNull();
+  });
+
+  it("imports existing daemon sandboxes and reports the outcomes", async () => {
+    vi.mocked(api.importSandboxes).mockResolvedValueOnce({
+      created: 1,
+      configured: 1,
+      failed: 0,
+      results: [
+        { name: "alpha", status: "created", incomplete: true },
+        { name: "bravo", status: "already configured", incomplete: false },
+      ],
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Import existing" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Import" }));
+
+    expect(await within(dialog).findByText(/1 created/)).toBeDefined();
+    expect(within(dialog).getByText("incomplete")).toBeDefined();
+    expect(within(dialog).getByText("already configured")).toBeDefined();
+    expect(vi.mocked(api.importSandboxes)).toHaveBeenCalledWith([]);
   });
 });

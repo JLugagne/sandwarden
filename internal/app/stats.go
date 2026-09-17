@@ -12,6 +12,11 @@ import (
 // inside each sandbox, so keep it well above the daemon's own polling.
 const statsInterval = 5 * time.Second
 
+// statsSampleTimeout bounds one resource probe. A sandbox whose sbx exec
+// wedges (its SSH layer hangs, the agent is unresponsive) must not keep the
+// probe child alive forever or mark the sandbox in use indefinitely.
+var statsSampleTimeout = 8 * time.Second
+
 // SandboxStats is the last sampled resource usage of a running sandbox.
 type SandboxStats struct {
 	CPUPercent  float64   `json:"cpu_percent"`
@@ -110,7 +115,9 @@ func (a *App) sampleStats(ctx context.Context) {
 			continue
 		}
 		seen[sandbox.Name] = true
-		sample, err := a.Sbx.Stats(ctx, sandbox.Name)
+		probeCtx, cancel := context.WithTimeout(ctx, statsSampleTimeout)
+		sample, err := a.Sbx.Stats(probeCtx, sandbox.Name)
+		cancel()
 		if err != nil {
 			continue
 		}

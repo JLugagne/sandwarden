@@ -35,7 +35,7 @@ export function SkillsPage() {
   );
   const [deleting, setDeleting] = useState<SkillStore | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
-  const [highlightId, setHighlightId] = useState<number | null>(null);
+  const [highlight, setHighlight] = useState<{ store: string; name: string } | null>(null);
 
   const create = useApiMutation({
     mutationFn: (body: SkillStoreInput) => api.createSkillStore(body),
@@ -43,33 +43,34 @@ export function SkillsPage() {
     onSuccess: () => setEditing(null),
   });
   const update = useApiMutation({
-    mutationFn: ({ id, body }: { id: number; body: SkillStoreInput }) => api.updateSkillStore(id, body),
+    mutationFn: ({ slug, body }: { slug: string; body: SkillStoreInput }) => api.updateSkillStore(slug, body),
     success: (store) => (store.error ? undefined : `Store ${store.name} updated`),
     onSuccess: () => setEditing(null),
   });
   const remove = useApiMutation({
-    mutationFn: (id: number) => api.deleteSkillStore(id),
+    mutationFn: (slug: string) => api.deleteSkillStore(slug),
     success: "Store deleted",
     onSuccess: () => setDeleting(null),
   });
   const refresh = useApiMutation({
-    mutationFn: (id: number) => api.refreshSkillStore(id),
+    mutationFn: (slug: string) => api.refreshSkillStore(slug),
     success: (store) => (store.error ? undefined : `Store ${store.name} refreshed`),
   });
 
   const rows = stores.data ?? [];
   const catalog = items.data ?? [];
 
-  // Deep link from the global search overlay: `/skills?item=<id>` briefly
-  // highlights the item and scrolls its store panel into view.
+  // Deep link from the global search overlay: `/skills?store=<slug>&item=<name>`
+  // briefly highlights the item and scrolls its store panel into view.
   useEffect(() => {
+    const store = searchParams.get("store");
     const raw = searchParams.get("item");
     if (!raw) return;
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed)) setHighlightId(parsed);
+    setHighlight({ store: store ?? "", name: raw });
     setSearchParams(
       (current) => {
         const next = new URLSearchParams(current);
+        next.delete("store");
         next.delete("item");
         return next;
       },
@@ -78,13 +79,13 @@ export function SkillsPage() {
   }, [searchParams, setSearchParams]);
 
   useEffect(() => {
-    if (highlightId === null || catalog.length === 0) return;
-    const item = catalog.find((entry) => entry.id === highlightId);
+    if (highlight === null || catalog.length === 0) return;
+    const item = catalog.find((entry) => entry.name === highlight.name && entry.store === highlight.store);
     if (!item) return;
-    document.getElementById(`skill-store-${item.store_id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    const timer = window.setTimeout(() => setHighlightId(null), 2500);
+    document.getElementById(`skill-store-${item.store}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const timer = window.setTimeout(() => setHighlight(null), 2500);
     return () => window.clearTimeout(timer);
-  }, [highlightId, catalog]);
+  }, [highlight, catalog]);
 
   return (
     <>
@@ -125,13 +126,13 @@ export function SkillsPage() {
         </Panel>
 
         {rows.map((store) => (
-          <div key={store.id} id={`skill-store-${store.id}`}>
+          <div key={store.slug} id={`skill-store-${store.slug}`}>
             <StorePanel
               store={store}
-              items={catalog.filter((item) => item.store_id === store.id)}
-              highlightId={highlightId}
-              refreshing={refresh.isPending && refresh.variables === store.id}
-              onRefresh={() => refresh.mutate(store.id)}
+              items={catalog.filter((item) => item.store === store.slug)}
+              highlight={highlight}
+              refreshing={refresh.isPending && refresh.variables === store.slug}
+              onRefresh={() => refresh.mutate(store.slug)}
               onEdit={() => setEditing({ mode: "edit", store })}
               onDelete={() => setDeleting(store)}
             />
@@ -145,7 +146,7 @@ export function SkillsPage() {
         busy={create.isPending || update.isPending}
         onClose={() => setEditing(null)}
         onSubmit={(body) => {
-          if (editing?.mode === "edit") update.mutate({ id: editing.store.id, body });
+          if (editing?.mode === "edit") update.mutate({ slug: editing.store.slug, body });
           else create.mutate(body);
         }}
       />
@@ -156,7 +157,7 @@ export function SkillsPage() {
         body="Its catalog, the profile and sandbox selections pointing at it, and its checkout are removed. Running sandboxes unmount the items."
         confirmLabel="Delete"
         busy={remove.isPending}
-        onConfirm={() => deleting && remove.mutate(deleting.id)}
+        onConfirm={() => deleting && remove.mutate(deleting.slug)}
         onClose={() => setDeleting(null)}
       />
     </>
@@ -166,7 +167,7 @@ export function SkillsPage() {
 function StorePanel({
   store,
   items,
-  highlightId,
+  highlight,
   refreshing,
   onRefresh,
   onEdit,
@@ -174,7 +175,7 @@ function StorePanel({
 }: {
   store: SkillStore;
   items: SkillItem[];
-  highlightId: number | null;
+  highlight: { store: string; name: string } | null;
   refreshing: boolean;
   onRefresh: () => void;
   onEdit: () => void;
@@ -234,7 +235,12 @@ function StorePanel({
           </thead>
           <tbody>
             {items.map((item) => (
-              <TRow key={item.id} className={cn(item.id === highlightId && "bg-accent-soft")}>
+              <TRow
+                key={`${item.store}:${item.kind}:${item.name}`}
+                className={cn(
+                  highlight !== null && item.store === highlight.store && item.name === highlight.name && "bg-accent-soft",
+                )}
+              >
                 <TD>
                   <KindBadge kind={item.kind} />
                 </TD>
@@ -268,14 +274,14 @@ function StoreDialog({
   onClose: () => void;
 }) {
   const [input, setInput] = useState<SkillStoreInput>(EMPTY_STORE);
-  const [loadedId, setLoadedId] = useState<number | "new" | null>(null);
+  const [loadedSlug, setLoadedSlug] = useState<string | "new" | null>(null);
 
-  const target = store ? store.id : ("new" as const);
-  if (!open && loadedId !== null) {
-    setLoadedId(null);
+  const target = store ? store.slug : ("new" as const);
+  if (!open && loadedSlug !== null) {
+    setLoadedSlug(null);
   }
-  if (open && loadedId !== target) {
-    setLoadedId(target);
+  if (open && loadedSlug !== target) {
+    setLoadedSlug(target);
     setInput(
       store
         ? {

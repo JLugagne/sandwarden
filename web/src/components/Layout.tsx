@@ -1,9 +1,18 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
+import { api } from "@/api/client";
 import { cn } from "@/lib/cn";
 import { useConnectionStatus } from "@/app/RealtimeProvider";
-import { notificationsEnabled, setNotificationsEnabled } from "@/lib/notifications";
-import { Button, IconSearch } from "@/components/ui";
+import { useApiMutation } from "@/hooks/useApiMutation";
+import { useConfigStaleness } from "@/hooks/useConfigStaleness";
+import { stalenessKey } from "@/lib/config";
+import {
+  fetchNotificationsEnabled,
+  notificationsEnabled,
+  setNotificationsEnabled,
+} from "@/lib/notifications";
+import { queryKeys } from "@/store/realtime";
+import { Button, IconAlert, IconRefresh, IconSearch } from "@/components/ui";
 import { OPEN_SEARCH_EVENT, SearchOverlay } from "@/components/SearchOverlay";
 
 const NAV = [
@@ -26,6 +35,35 @@ export function Layout() {
   const status = useConnectionStatus();
   const meta = STATUS_META[status];
   const [notificationsOn, setNotificationsOn] = useState(notificationsEnabled());
+
+  const staleness = useConfigStaleness();
+  const changedFiles = staleness.data?.changed ?? [];
+  const reload = useApiMutation({
+    mutationFn: () => api.reloadFleet(),
+    success: (errors) => (errors.length === 0 ? "Configuration reloaded" : "Some files could not be reloaded"),
+    invalidate: [
+      stalenessKey,
+      queryKeys.sandboxes,
+      queryKeys.sandboxDetails,
+      queryKeys.profiles,
+      queryKeys.caches,
+      queryKeys.skillStores,
+      queryKeys.skillItems,
+      queryKeys.kitStores,
+      queryKeys.kitItems,
+      queryKeys.config,
+    ],
+  });
+
+  useEffect(() => {
+    let active = true;
+    void fetchNotificationsEnabled().then((enabled) => {
+      if (active) setNotificationsOn(enabled);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className="flex min-h-dvh">
@@ -75,7 +113,7 @@ export function Layout() {
             onClick={() => {
               const next = !notificationsOn;
               setNotificationsOn(next);
-              setNotificationsEnabled(next);
+              void setNotificationsEnabled(next);
             }}
           >
             Notifications {notificationsOn ? "on" : "off"}
@@ -85,6 +123,20 @@ export function Layout() {
 
       <main className="min-w-0 flex-1 px-6 py-6">
         <div className="mx-auto max-w-6xl">
+          {changedFiles.length > 0 ? (
+            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-sm">
+              <IconAlert className="size-4 shrink-0 text-warning" />
+              <span className="flex-1 text-warning" title={changedFiles.map((file) => file.path).join("\n")}>
+                {changedFiles.length === 1
+                  ? "1 configuration file changed"
+                  : `${changedFiles.length} configuration files changed`}{" "}
+                on disk since the last load.
+              </span>
+              <Button variant="primary" size="sm" loading={reload.isPending} onClick={() => reload.mutate()}>
+                <IconRefresh className="size-3.5" /> Reload from disk
+              </Button>
+            </div>
+          ) : null}
           <Outlet />
         </div>
       </main>

@@ -1,6 +1,5 @@
+import { cachedConfig, loadConfig, updateConfig } from "@/lib/config";
 import type { Terminal } from "@/types";
-
-const STORAGE_KEY = "sandwarden.terminals";
 
 export interface TerminalPrefs {
   /** Enabled terminal ids; null means every detected terminal is enabled. */
@@ -9,33 +8,19 @@ export interface TerminalPrefs {
   default: string;
 }
 
-const FALLBACK: TerminalPrefs = { enabled: null, default: "" };
-
+/** Synchronous view of the terminal preferences cached from the backend. */
 export function loadTerminalPrefs(): TerminalPrefs {
-  if (typeof window === "undefined") return FALLBACK;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return FALLBACK;
-    const parsed = JSON.parse(raw) as Partial<TerminalPrefs> | null;
-    if (!parsed || typeof parsed !== "object") return FALLBACK;
-    return {
-      enabled: Array.isArray(parsed.enabled)
-        ? parsed.enabled.filter((id): id is string => typeof id === "string")
-        : null,
-      default: typeof parsed.default === "string" ? parsed.default : "",
-    };
-  } catch {
-    return FALLBACK;
-  }
+  return cachedConfig().terminals;
 }
 
-export function saveTerminalPrefs(prefs: TerminalPrefs): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
-  } catch {
-    // Storage can be disabled or full; preferences are best-effort.
-  }
+/** Loads the backend configuration and returns the terminal preferences. */
+export async function fetchTerminalPrefs(): Promise<TerminalPrefs> {
+  return (await loadConfig()).terminals;
+}
+
+/** Persists the terminal preferences to the backend config file. */
+export async function saveTerminalPrefs(prefs: TerminalPrefs): Promise<void> {
+  await updateConfig({ terminals: prefs });
 }
 
 export function enabledTerminals(terminals: Terminal[], prefs: TerminalPrefs): Terminal[] {

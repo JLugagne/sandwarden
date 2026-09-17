@@ -1,18 +1,26 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter, useLocation } from "react-router-dom";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { api } from "@/api/client";
 import { ToastProvider } from "@/components/Toaster";
+import { resetConfigCacheForTests } from "@/lib/config";
 import { SettingsPage } from "./SettingsPage";
+
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn();
+});
 
 afterEach(() => {
   cleanup();
-  window.localStorage.clear();
+  resetConfigCacheForTests();
+  vi.clearAllMocks();
 });
 
 const cache = {
-  id: 1,
+  slug: "go-mod",
+  dir: "go-mod",
   name: "go-mod",
   description: "",
   host_path: "/home/user/go/pkg/mod",
@@ -20,9 +28,12 @@ const cache = {
   read_only: false,
   auto_attach: true,
   enabled: true,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
 };
+
+const terminalRows = [
+  { id: "terminal", name: "Terminal", binary: "/usr/bin/osascript" },
+  { id: "kitty", name: "kitty", binary: "/usr/bin/kitty" },
+];
 
 vi.mock("@/api/client", () => ({
   api: {
@@ -36,22 +47,30 @@ vi.mock("@/api/client", () => ({
     versionInfo: vi.fn(async () => ({ version: "dev", latest_version: "", update_available: false, release_url: "" })),
     checkUpdates: vi.fn(async () => ({ version: "dev", latest_version: "", update_available: false, release_url: "" })),
     caches: vi.fn(async () => [cache]),
-    terminals: vi.fn(async () => [
-      { id: "terminal", name: "Terminal", binary: "/usr/bin/osascript" },
-      { id: "kitty", name: "kitty", binary: "/usr/bin/kitty" },
-    ]),
+    terminals: vi.fn(async () => terminalRows),
+    getConfig: vi.fn(async () => ({ terminals: { enabled: null, default: "" }, notifications: false })),
+    setConfig: vi.fn(async () => undefined),
+    fleetDir: vi.fn(async () => "/home/user/.config/sandwarden"),
+    reloadFleet: vi.fn(async () => [] as string[]),
     startDaemon: vi.fn(),
     createCache: vi.fn(),
     updateCache: vi.fn(),
     deleteCache: vi.fn(),
+    configStaleness: vi.fn(async () => ({ stale: false, changed: [] })),
   },
 }));
 
-function renderPage() {
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="location-search">{location.search}</output>;
+}
+
+function renderPage(entry = "/settings") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/settings"]}>
+      <MemoryRouter initialEntries={[entry]}>
+        <LocationProbe />
         <ToastProvider>
           <SettingsPage />
         </ToastProvider>
@@ -78,8 +97,57 @@ describe("cache dialog", () => {
   });
 });
 
+describe("configuration files", () => {
+  it("shows the fleet directory and reloads every file from disk", async () => {
+    renderPage();
+
+    expect(await screen.findByText("/home/user/.config/sandwarden")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: /Reload from disk/ }));
+
+    await waitFor(() => {
+      expect(api.reloadFleet).toHaveBeenCalled();
+    });
+    expect(await screen.findByText("Configuration reloaded")).toBeDefined();
+  });
+
+  it("lists the per-file errors returned by the reload", async () => {
+    vi.mocked(api.reloadFleet).mockResolvedValueOnce(["profiles/broken.yaml: invalid YAML"]);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Reload from disk/ }));
+
+    expect(await screen.findByText("profiles/broken.yaml: invalid YAML")).toBeDefined();
+  });
+
+  it("badges a cache changed on disk and clears it after reload", async () => {
+    vi.mocked(api.configStaleness).mockResolvedValue({
+      stale: true,
+      changed: [
+        {
+          kind: "cache",
+          slug: "go-mod",
+          name: "go-mod",
+          file: "sandwarden.yaml",
+          path: "/home/user/.config/sandwarden/caches/go-mod/sandwarden.yaml",
+        },
+      ],
+    });
+    renderPage();
+
+    expect(await screen.findByText("changed on disk")).toBeDefined();
+
+    vi.mocked(api.configStaleness).mockResolvedValue({ stale: false, changed: [] });
+    fireEvent.click(screen.getByRole("button", { name: /Reload from disk/ }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("changed on disk")).toBeNull();
+    });
+  });
+});
+
 describe("terminal panel", () => {
-  it("promotes a terminal to default and persists the preference", async () => {
+  it("promotes a terminal to default and persists the preference through the config file", async () => {
     renderPage();
 
     const kittyRow = (await screen.findByText("kitty")).closest("tr") as HTMLTableRowElement;
@@ -90,6 +158,34 @@ describe("terminal panel", () => {
     await waitFor(() => {
       expect(within(kittyRow).queryByText("default")).not.toBeNull();
     });
-    expect(window.localStorage.getItem("sandwarden.terminals")).toContain('"default":"kitty"');
+    await waitFor(() => {
+      expect(api.setConfig).toHaveBeenCalledWith({
+        terminals: { enabled: ["terminal", "kitty"], default: "kitty" },
+        notifications: false,
+      });
+    });
+  });
+});
+
+describe("cache deep link", () => {
+  it("highlights the cache row linked from the search overlay and strips the parameter", async () => {
+    renderPage("/settings?cache=go-mod");
+
+    const row = (await screen.findByText("go-mod")).closest("tr") as HTMLTableRowElement;
+    await waitFor(() => {
+      expect(row.className).toContain("ring-accent");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("location-search").textContent).toBe("");
+    });
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("leaves every cache row unhighlighted without a deep link", async () => {
+    renderPage();
+
+    const row = (await screen.findByText("go-mod")).closest("tr") as HTMLTableRowElement;
+    expect(row.className).not.toContain("ring-accent");
+    expect(screen.getByTestId("location-search").textContent).toBe("");
   });
 });

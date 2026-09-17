@@ -12,13 +12,13 @@ vi.mock("@/api/client", () => ({
       { id: "terminal", name: "Terminal", binary: "/usr/bin/osascript" },
       { id: "kitty", name: "kitty", binary: "/usr/bin/kitty" },
     ]),
+    getConfig: vi.fn(async () => ({ terminals: { enabled: null, default: "" }, notifications: false })),
     openInTerminal: vi.fn(async () => undefined),
   },
 }));
 
 afterEach(() => {
   cleanup();
-  window.localStorage.clear();
   vi.clearAllMocks();
 });
 

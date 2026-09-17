@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
+	"strings"
 )
 
 // ListSandboxes returns every sandbox known to the daemon.
@@ -182,4 +185,32 @@ func (c *Client) InspectDetail(ctx context.Context, sandbox string) (InspectDeta
 		return InspectDetail{}, fmt.Errorf("decode inspect output: %w", err)
 	}
 	return detail, nil
+}
+
+// RunSandbox attaches to a sandbox with the sbx CLI, inheriting the current
+// terminal.
+func (c *Client) RunSandbox(ctx context.Context, name string, args []string) error {
+	argv := []string{"run"}
+	if strings.TrimSpace(name) != "" {
+		argv = append(argv, "--name", name)
+	}
+	if len(args) > 0 {
+		argv = append(argv, "--")
+		argv = append(argv, args...)
+	}
+	cmd := exec.CommandContext(ctx, BinaryPath(), argv...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// RunCLI executes the sbx binary with inherited stdio, for the CLI
+// passthrough.
+func (c *Client) RunCLI(ctx context.Context, args []string) error {
+	cmd := exec.CommandContext(ctx, BinaryPath(), args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }

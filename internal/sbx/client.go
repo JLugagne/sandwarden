@@ -13,11 +13,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
 	defaultSocketPath = ".local/state/sandboxes/sandboxes/sandboxd/sandboxd.sock"
 	envSocketPath     = "DOCKER_SANDBOXES_API"
+
+	// childWaitDelay bounds how long a cancelled or exited sbx child may keep
+	// its captured stdout/stderr pipes open (grandchildren inherit them).
+	childWaitDelay = 2 * time.Second
 )
 
 // Client talks to the local sandboxd daemon over its unix socket using the
@@ -127,6 +132,9 @@ func decodeError(resp *http.Response) error {
 // error carries the CLI's own message so callers can surface it directly.
 func (c *Client) runCLI(ctx context.Context, stdin io.Reader, stream io.Writer, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, BinaryPath(), args...)
+	// A cancelled context kills the sbx process; helpers it spawned can keep
+	// the captured pipes open, so bound how long Wait lingers on them.
+	cmd.WaitDelay = childWaitDelay
 	var buf bytes.Buffer
 	var out io.Writer = &buf
 	if stream != nil {

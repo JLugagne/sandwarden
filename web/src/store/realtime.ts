@@ -4,8 +4,11 @@ import type { EventEnvelope, SandboxSummary } from "@/types";
 export const queryKeys = {
   health: ["health"] as const,
   sandboxes: ["sandboxes"] as const,
+  sandboxDetails: ["sandbox"] as const,
   sandbox: (name: string) => ["sandbox", name] as const,
   sandboxPolicy: (name: string) => ["sandbox-policy", name] as const,
+  sandboxConfigDir: (slug: string) => ["sandbox-config-dir", slug] as const,
+  fleetDir: ["fleet-dir"] as const,
   profiles: ["profiles"] as const,
   secrets: ["secrets"] as const,
   traffic: ["traffic"] as const,
@@ -19,6 +22,7 @@ export const queryKeys = {
   version: ["version"] as const,
   updates: ["updates"] as const,
   terminals: ["terminals"] as const,
+  config: ["config"] as const,
 };
 
 /**

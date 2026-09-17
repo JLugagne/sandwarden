@@ -27,14 +27,14 @@ export function CachesTab({ name, detail }: { name: string; detail: SandboxDetai
   const toast = useToasts();
 
   const attach = useApiMutation({
-    mutationFn: (cacheId: number) => api.attachCache(name, cacheId),
+    mutationFn: (cacheSlug: string) => api.attachCache(name, cacheSlug),
     success: "Cache attached",
     onSuccess: () => setSelected(""),
   });
   const detach = useApiMutation({
     mutationFn: async (cache: SandboxCache) => {
-      if (cache.direct) await api.detachCache(name, cache.id);
-      if ((cache.profiles ?? []).length > 0) await api.detachProfileCache(name, cache.id);
+      if (cache.direct) await api.detachCache(name, cache.slug);
+      if ((cache.profiles ?? []).length > 0) await api.detachProfileCache(name, cache.slug);
     },
     success: "Cache detached",
     onSuccess: () => setDetaching(null),
@@ -50,14 +50,16 @@ export function CachesTab({ name, detail }: { name: string; detail: SandboxDetai
     },
   });
   const applyProfile = useApiMutation({
-    mutationFn: (cacheId: number) => api.applyProfileCache(name, cacheId),
+    mutationFn: (cacheSlug: string) => api.applyProfileCache(name, cacheSlug),
     success: "Profile cache re-enabled",
   });
 
   const assigned = detail.caches ?? [];
-  const assignedIds = new Set(assigned.map((cache) => cache.id));
-  const available = (caches.data ?? []).filter((cache) => !assignedIds.has(cache.id) && cache.enabled);
-  const drift = assigned.filter((cache) => cache.enabled && !cache.attached && !cache.opted_out);
+  const assignedSlugs = new Set(assigned.map((cache) => cache.slug));
+  const available = (caches.data ?? []).filter(
+    (cache) => !assignedSlugs.has(cache.slug) && cache.enabled !== false,
+  );
+  const drift = assigned.filter((cache) => cache.enabled !== false && !cache.attached && !cache.opted_out);
 
   return (
     <div className="flex flex-col gap-4">
@@ -110,10 +112,10 @@ export function CachesTab({ name, detail }: { name: string; detail: SandboxDetai
               {assigned.map((cache) => {
                 const profiles = cache.profiles ?? [];
                 return (
-                  <TRow key={cache.id}>
+                  <TRow key={cache.slug}>
                     <TD className="font-medium">
                       {cache.name}
-                      {cache.auto_attach ? <Badge className="ml-2">auto</Badge> : null}
+                      {cache.auto_attach !== false ? <Badge className="ml-2">auto</Badge> : null}
                     </TD>
                     <TD className="font-mono text-xs">
                       {cache.host_path}
@@ -132,7 +134,7 @@ export function CachesTab({ name, detail }: { name: string; detail: SandboxDetai
                       </span>
                     </TD>
                     <TD>
-                      {!cache.enabled ? (
+                      {cache.enabled === false ? (
                         <Badge tone="neutral">disabled</Badge>
                       ) : cache.attached ? (
                         <Badge tone="success" dot>
@@ -152,7 +154,7 @@ export function CachesTab({ name, detail }: { name: string; detail: SandboxDetai
                           size="sm"
                           variant="ghost"
                           loading={applyProfile.isPending}
-                          onClick={() => applyProfile.mutate(cache.id)}
+                          onClick={() => applyProfile.mutate(cache.slug)}
                         >
                           Apply
                         </Button>
@@ -183,7 +185,7 @@ export function CachesTab({ name, detail }: { name: string; detail: SandboxDetai
             <Select value={selected} onChange={(event) => setSelected(event.target.value)} className="max-w-xs">
               <option value="">Choose a cache…</option>
               {available.map((cache) => (
-                <option key={cache.id} value={cache.id}>
+                <option key={cache.slug} value={cache.slug}>
                   {cache.name} ({cache.host_path})
                 </option>
               ))}
@@ -192,7 +194,7 @@ export function CachesTab({ name, detail }: { name: string; detail: SandboxDetai
               variant="primary"
               disabled={!selected || !detail.sandbox.running}
               loading={attach.isPending}
-              onClick={() => attach.mutate(Number(selected))}
+              onClick={() => attach.mutate(selected)}
             >
               Attach
             </Button>

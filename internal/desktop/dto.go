@@ -1,21 +1,32 @@
 package desktop
 
+import (
+	"strings"
+
+	"github.com/JLugagne/sandwarden/internal/fleet"
+)
+
 // CreateSandboxRequest mirrors the create form payload.
 type CreateSandboxRequest struct {
-	Agent        string          `json:"agent"`
-	Workspaces   []WorkspaceSpec `json:"workspaces"`
-	Name         string          `json:"name"`
-	CPUs         int             `json:"cpus"`
-	Memory       string          `json:"memory"`
-	Profile      string          `json:"profile"`
-	Template     string          `json:"template"`
-	Kits         []string        `json:"kits"`
-	Publish      []string        `json:"publish"`
-	Env          []string        `json:"env"`
-	DenyNetwork  []string        `json:"deny_network"`
-	Clone        bool            `json:"clone"`
-	AttachCaches bool            `json:"attach_caches"`
-	JobID        string          `json:"job_id"`
+	Agent        string            `json:"agent"`
+	Workspaces   []WorkspaceSpec   `json:"workspaces"`
+	Name         string            `json:"name"`
+	CPUs         int               `json:"cpus"`
+	Memory       string            `json:"memory"`
+	Profile      string            `json:"profile"`
+	Template     string            `json:"template"`
+	Kits         []string          `json:"kits"`
+	Profiles     []string          `json:"profiles"`
+	Caches       []string          `json:"caches"`
+	Skills       []SkillRefRequest `json:"skills"`
+	RunArgs      string            `json:"run_args"`
+	Mounts       []MountRequest    `json:"mounts"`
+	Publish      []string          `json:"publish"`
+	Env          []string          `json:"env"`
+	DenyNetwork  []string          `json:"deny_network"`
+	Clone        bool              `json:"clone"`
+	AttachCaches bool              `json:"attach_caches"`
+	JobID        string            `json:"job_id"`
 }
 
 // WorkspaceSpec is one workspace entry of the create form.
@@ -150,4 +161,34 @@ type ProfileMountRequest struct {
 	HostPath   string `json:"host_path"`
 	TargetPath string `json:"target_path"`
 	ReadOnly   bool   `json:"read_only"`
+}
+
+// SkillRefRequest identifies one catalog item by store slug, kind and name.
+type SkillRefRequest struct {
+	Store string `json:"store"`
+	Kind  string `json:"kind"`
+	Name  string `json:"name"`
+}
+
+// SkillRefToFleet maps the binding payload onto the fleet reference.
+func (r SkillRefRequest) SkillRefToFleet() fleet.SkillRef {
+	return fleet.SkillRef{
+		Store: strings.TrimSpace(r.Store),
+		Kind:  strings.TrimSpace(r.Kind),
+		Name:  strings.TrimSpace(r.Name),
+	}
+}
+
+// ImportSandboxesRequest is the bulk import payload: an empty names list
+// imports every daemon sandbox.
+type ImportSandboxesRequest struct {
+	Names []string `json:"names"`
+}
+
+// CompleteSandboxRequest records the create parameters an imported sandbox
+// could not recover from the daemon.
+type CompleteSandboxRequest struct {
+	CPUs   int      `json:"cpus"`
+	Memory string   `json:"memory"`
+	Env    []string `json:"env"`
 }

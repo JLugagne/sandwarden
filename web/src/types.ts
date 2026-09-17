@@ -33,6 +33,8 @@ export interface SandboxSummary {
   stopped_at?: string;
   ports?: PublishedPort[] | null;
   mount_policy_denied: boolean;
+  /** Config directory adopted from the daemon without its original create parameters. */
+  incomplete?: boolean;
   profiles: string[] | null;
   run_args: string;
   connect: ConnectInfo;
@@ -41,38 +43,40 @@ export interface SandboxSummary {
   memory_total_bytes: number;
 }
 
-export interface Profile {
-  id: number;
-  name: string;
-  description: string;
-  is_default: boolean;
-  is_global: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Rule {
-  id: number;
-  profile_id: number;
-  decision: string;
-  pattern: string;
-  created_at: string;
-}
-
-export interface ProfileMount {
-  id: number;
-  profile_id: number;
+/** A host bind mount; an empty target_path keeps the host path. */
+export interface MountRef {
   host_path: string;
   target_path: string;
   read_only: boolean;
-  created_at: string;
 }
 
-export interface ProfileView extends Profile {
-  rules: Rule[] | null;
-  items: SkillItem[] | null;
-  mounts: ProfileMount[] | null;
-  caches: CacheMount[] | null;
+/** One catalog item: store slug, kind and name identify it everywhere. */
+export interface SkillRef {
+  store: string;
+  kind: string;
+  name: string;
+}
+
+/** A profile as referenced by one sandbox. */
+export interface ProfileRef {
+  slug: string;
+  name: string;
+  default: boolean;
+  global: boolean;
+}
+
+/** A profile file plus its derived links. */
+export interface ProfileView {
+  slug: string;
+  name: string;
+  description: string;
+  default: boolean;
+  global: boolean;
+  allow: string[] | null;
+  deny: string[] | null;
+  mounts: MountRef[] | null;
+  caches: string[] | null;
+  skills: SkillRef[] | null;
   sandboxes: string[] | null;
 }
 
@@ -151,9 +155,11 @@ export interface PolicyLog {
 
 export interface SandboxDetail {
   sandbox: SandboxSummary;
-  profiles: Profile[] | null;
+  profiles: ProfileRef[] | null;
   mounts: MountInfo[] | null;
   mounts_error?: string;
+  /** Config directory adopted from the daemon without its original create parameters. */
+  incomplete: boolean;
   image?: string;
   image_digest?: string;
   kits?: string[] | null;
@@ -162,6 +168,7 @@ export interface SandboxDetail {
   policy_rules: PolicyRule[] | null;
   caches: SandboxCache[] | null;
   profile_mounts: SandboxProfileMount[] | null;
+  direct_mounts?: SandboxDirectMount[] | null;
   skills?: SandboxSkill[] | null;
   additional_workspaces?: WorkspaceMount[] | null;
 }
@@ -199,6 +206,12 @@ export interface WorkspaceInput {
   read_only: boolean;
 }
 
+export interface MountInput {
+  path: string;
+  target: string;
+  read_only: boolean;
+}
+
 export interface CreateSandboxRequest {
   agent: string;
   workspaces: WorkspaceInput[];
@@ -208,6 +221,11 @@ export interface CreateSandboxRequest {
   profile?: string;
   template?: string;
   kits?: string[];
+  profiles?: string[];
+  caches?: string[];
+  skills?: SkillRef[];
+  run_args?: string;
+  mounts?: MountInput[];
   publish?: string[];
   env?: string[];
   deny_network?: string[];
@@ -254,6 +272,31 @@ export interface ImportSecretsRequest {
   job_id?: string;
 }
 
+/** One sandbox's outcome after a bulk import. */
+export type ImportStatus = "created" | "already configured" | "failed";
+
+export interface ImportResult {
+  name: string;
+  status: ImportStatus;
+  incomplete: boolean;
+  error?: string;
+}
+
+/** Result of importing daemon sandboxes into the config directory. */
+export interface ImportReport {
+  results: ImportResult[] | null;
+  created: number;
+  configured: number;
+  failed: number;
+}
+
+/** Create parameters recorded to complete an imported config. */
+export interface CompleteSandboxRequest {
+  cpus: number;
+  memory: string;
+  env: string[];
+}
+
 export interface Terminal {
   id: string;
   name: string;
@@ -275,24 +318,31 @@ export interface VersionInfo {
   release_url: string;
 }
 
-export interface CacheMount {
-  id: number;
+/** A shared cache definition flattened from fleet.Cache for the UI. */
+export interface CacheView {
+  slug: string;
+  dir: string;
   name: string;
   description: string;
   host_path: string;
   target_path: string;
   read_only: boolean;
-  auto_attach: boolean;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
+  auto_attach: boolean | null;
+  enabled: boolean | null;
 }
 
-export interface SandboxCache extends CacheMount {
+export interface SandboxCache extends CacheView {
   attached: boolean;
   direct: boolean;
   profiles: string[] | null;
   opted_out: boolean;
+}
+
+export interface SandboxDirectMount {
+  host_path: string;
+  target_path: string;
+  read_only: boolean;
+  attached: boolean;
 }
 
 export interface SandboxProfileMount {
@@ -300,7 +350,6 @@ export interface SandboxProfileMount {
   target_path: string;
   read_only: boolean;
   profile_names: string[] | null;
-  profile_mount_ids: number[] | null;
   opted_out: boolean;
   attached: boolean;
 }
@@ -316,7 +365,7 @@ export interface CacheInput {
 }
 
 export interface SkillStore {
-  id: number;
+  slug: string;
   name: string;
   description: string;
   url: string;
@@ -325,8 +374,6 @@ export interface SkillStore {
   path: string;
   synced_at: string;
   error: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface SkillStoreInput {
@@ -338,8 +385,7 @@ export interface SkillStoreInput {
 }
 
 export interface SkillItem {
-  id: number;
-  store_id: number;
+  store: string;
   store_name: string;
   kind: string;
   name: string;
@@ -348,7 +394,14 @@ export interface SkillItem {
   rel_path: string;
 }
 
-export interface SandboxSkill extends SkillItem {
+export interface SandboxSkill {
+  store: string;
+  store_name: string;
+  kind: string;
+  name: string;
+  description: string;
+  plugin: string;
+  rel_path: string;
   target: string;
   sources: string[] | null;
   mounted: boolean;
@@ -364,7 +417,7 @@ export interface SkillReconcileResult {
 }
 
 export interface KitStore {
-  id: number;
+  slug: string;
   name: string;
   description: string;
   url: string;
@@ -373,8 +426,6 @@ export interface KitStore {
   path: string;
   synced_at: string;
   error: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface KitStoreInput {
@@ -463,9 +514,7 @@ export interface KitSpec {
 }
 
 export interface KitItemView {
-  id: number;
-  store_id: number;
-  store_name: string;
+  store: string;
   kind: string;
   name: string;
   display_name: string;
@@ -474,6 +523,7 @@ export interface KitItemView {
   image: string;
   requires_agent: string;
   rel_path: string;
+  store_name: string;
   ref: string;
   spec: KitSpec;
 }
@@ -481,6 +531,25 @@ export interface KitItemView {
 export interface KitValidation {
   ok: boolean;
   output: string;
+}
+
+/** Outcome of one sidecar convergence pass. */
+export interface ApplyReport {
+  rules_applied: number;
+  mounts_applied: number;
+  caches_applied: number;
+  skills_applied: number;
+  skills_removed: number;
+  warnings: string[] | null;
+  errors: string[] | null;
+}
+
+/** Outcome of attaching a mixin kit to an existing sandbox. */
+export interface KitAddResult {
+  sandbox: string;
+  ref: string;
+  output?: string;
+  report: ApplyReport;
 }
 
 export interface Template {
@@ -492,16 +561,35 @@ export interface Template {
   size: number;
 }
 
+/** Kinds the global search can return: fleet config entities and catalog items. */
+export type SearchResultKind = "sandbox" | "profile" | "cache" | "skill" | "command" | "kit";
+
 export interface SearchResult {
-  kind: "skill" | "command" | "kit";
-  id: number;
-  store_id: number;
+  kind: SearchResultKind;
+  store: string;
   store_name: string;
   name: string;
   display_name?: string;
+  /** Config directory slug: the routing identifier of a profile or cache hit. */
+  slug?: string;
   description: string;
   plugin?: string;
   kit_kind?: string;
+  /** Base agent of a sandbox hit. */
+  agent?: string;
   score: number;
   snippet?: string;
+}
+
+export interface TerminalPrefs {
+  /** Enabled terminal ids; null means every detected terminal is enabled. */
+  enabled: string[] | null;
+  /** Preferred terminal id; empty falls back to the first enabled terminal. */
+  default: string;
+}
+
+/** Global sandwarden configuration file (terminals + notifications). */
+export interface AppConfig {
+  terminals: TerminalPrefs;
+  notifications: boolean;
 }

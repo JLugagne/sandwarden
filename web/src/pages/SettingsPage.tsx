@@ -1,10 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useApiMutation } from "@/hooks/useApiMutation";
+import { useConfigStaleness } from "@/hooks/useConfigStaleness";
 import { queryKeys } from "@/store/realtime";
 import { useConnectionStatus } from "@/app/RealtimeProvider";
-import { notificationsEnabled, setNotificationsEnabled } from "@/lib/notifications";
+import { primeConfig, stalenessKey, staleSlugs } from "@/lib/config";
+import { cn } from "@/lib/cn";
+import { StaleBadge } from "@/components/StaleBadge";
+import { fetchNotificationsEnabled, notificationsEnabled, setNotificationsEnabled } from "@/lib/notifications";
 import {
   defaultTerminal,
   enabledTerminals,
@@ -19,6 +24,7 @@ import {
   CheckboxField,
   CommandLine,
   ConfirmDialog,
+  CopyButton,
   Description,
   DescriptionList,
   EmptyState,
@@ -35,7 +41,7 @@ import {
   TH,
   TRow,
 } from "@/components/ui";
-import type { CacheInput, CacheMount } from "@/types";
+import type { CacheInput, CacheView } from "@/types";
 
 const PRESETS: Array<{ label: string; input: CacheInput }> = [
   {
@@ -116,18 +122,61 @@ export function SettingsPage() {
   const [notificationsOn, setNotificationsOn] = useState(notificationsEnabled());
 
   const caches = useQuery({ queryKey: queryKeys.caches, queryFn: api.caches });
-  const [editing, setEditing] = useState<{ mode: "create" } | { mode: "edit"; cache: CacheMount } | null>(null);
-  const [deleting, setDeleting] = useState<CacheMount | null>(null);
+  const staleness = useConfigStaleness();
+  const staleCaches = staleSlugs(staleness.data, "cache");
+  const [editing, setEditing] = useState<{ mode: "create" } | { mode: "edit"; cache: CacheView } | null>(null);
+  const [deleting, setDeleting] = useState<CacheView | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [highlight, setHighlight] = useState<string | null>(null);
+
+  const fleetDir = useQuery({ queryKey: queryKeys.fleetDir, queryFn: api.fleetDir, retry: 0 });
+  const [reloadErrors, setReloadErrors] = useState<string[]>([]);
+  const reload = useApiMutation({
+    mutationFn: () => api.reloadFleet(),
+    success: (errors) => (errors.length === 0 ? "Configuration reloaded" : undefined),
+    invalidate: [
+      stalenessKey,
+      queryKeys.sandboxes,
+      queryKeys.sandboxDetails,
+      queryKeys.profiles,
+      queryKeys.caches,
+      queryKeys.skillStores,
+      queryKeys.skillItems,
+      queryKeys.kitStores,
+      queryKeys.kitItems,
+      queryKeys.config,
+    ],
+    onSuccess: (errors) => setReloadErrors(errors),
+  });
 
   const terminals = useQuery({ queryKey: queryKeys.terminals, queryFn: api.terminals, staleTime: 60_000 });
   const [terminalPrefs, setTerminalPrefs] = useState<TerminalPrefs>(loadTerminalPrefs);
+  const config = useQuery({ queryKey: queryKeys.config, queryFn: api.getConfig, staleTime: Infinity });
+
+  // The backend config file is the source of truth for both preferences.
+  useEffect(() => {
+    if (!config.data) return;
+    primeConfig(config.data);
+    setTerminalPrefs(config.data.terminals);
+  }, [config.data]);
+
+  useEffect(() => {
+    let active = true;
+    void fetchNotificationsEnabled().then((enabled) => {
+      if (active) setNotificationsOn(enabled);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const terminalRows = terminals.data ?? [];
   const enabledIds = new Set(enabledTerminals(terminalRows, terminalPrefs).map((terminal) => terminal.id));
   const currentDefault = defaultTerminal(terminalRows, terminalPrefs);
 
   function updateTerminalPrefs(next: TerminalPrefs) {
     setTerminalPrefs(next);
-    saveTerminalPrefs(next);
+    void saveTerminalPrefs(next);
   }
 
   function toggleTerminal(id: string, enabled: boolean) {
@@ -171,17 +220,42 @@ export function SettingsPage() {
     onSuccess: () => setEditing(null),
   });
   const update = useApiMutation({
-    mutationFn: ({ id, input }: { id: number; input: CacheInput }) => api.updateCache(id, input),
+    mutationFn: ({ slug, input }: { slug: string; input: CacheInput }) => api.updateCache(slug, input),
     success: (cache) => `Cache ${cache.name} updated`,
     onSuccess: () => setEditing(null),
   });
   const remove = useApiMutation({
-    mutationFn: (id: number) => api.deleteCache(id),
+    mutationFn: (slug: string) => api.deleteCache(slug),
     success: "Cache deleted",
     onSuccess: () => setDeleting(null),
   });
 
   const rows = caches.data ?? [];
+
+  // Deep link from the global search overlay: `/settings?cache=<slug>`
+  // highlights the matching row, scrolls the caches panel into view and strips
+  // the parameter.
+  useEffect(() => {
+    const slug = searchParams.get("cache");
+    if (!slug) return;
+    setHighlight(slug);
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.delete("cache");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (highlight === null || rows.length === 0) return;
+    if (!rows.some((cache) => cache.slug === highlight)) return;
+    document.getElementById("shared-caches")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const timer = window.setTimeout(() => setHighlight(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [highlight, rows]);
 
   return (
     <>
@@ -235,71 +309,119 @@ export function SettingsPage() {
         </Panel>
 
         <Panel
-          title="Shared caches"
-          description="Host directories bind-mounted into sandboxes and shareable across them. Paths support ~ for your home directory. Auto-attach caches are mounted on every new sandbox and re-applied on start."
+          title="Configuration files"
+          description="Sandbox, profile, cache, skill and kit definitions live as files under this directory. Reloading re-reads every file from disk and reports the ones that failed."
           actions={
-            <Button variant="primary" onClick={() => setEditing({ mode: "create" })}>
-              <IconPlus /> Add cache
+            <Button loading={reload.isPending} onClick={() => reload.mutate()}>
+              <IconRefresh /> Reload from disk
             </Button>
           }
-          bodyClassName="p-0"
         >
-          {caches.isLoading ? (
-            <div className="flex justify-center p-6">
-              <Spinner />
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-faint">Directory</span>
+              {fleetDir.isLoading ? (
+                <Spinner />
+              ) : fleetDir.data ? (
+                <>
+                  <code className="font-mono text-xs">{fleetDir.data}</code>
+                  <CopyButton value={fleetDir.data} />
+                </>
+              ) : (
+                <span className="text-sm text-danger">
+                  {fleetDir.error instanceof Error ? fleetDir.error.message : "configuration directory unavailable"}
+                </span>
+              )}
             </div>
-          ) : rows.length === 0 ? (
-            <EmptyState
-              title="No shared cache configured."
-              description="Add the Go module cache, the Go build cache, or an npm/pnpm/yarn cache to reuse downloads across sandboxes."
-              action={
-                <Button variant="primary" onClick={() => setEditing({ mode: "create" })}>
-                  <IconPlus /> Add cache
-                </Button>
-              }
-              className="rounded-none border-0"
-            />
-          ) : (
-            <TableWrap className="border-0">
-              <thead>
-                <tr>
-                  <TH>Cache</TH>
-                  <TH>Host directory</TH>
-                  <TH>Sandbox directory</TH>
-                  <TH>Mode</TH>
-                  <TH>Flags</TH>
-                  <TH className="w-32" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((cache) => (
-                  <TRow key={cache.id}>
-                    <TD className="font-medium">{cache.name}</TD>
-                    <TD className="font-mono text-xs">{cache.host_path}</TD>
-                    <TD className="font-mono text-xs">{cache.target_path}</TD>
-                    <TD>{cache.read_only ? <Badge tone="warning">ro</Badge> : <Badge>rw</Badge>}</TD>
-                    <TD>
-                      <span className="flex flex-wrap gap-1.5">
-                        {cache.auto_attach ? <Badge tone="accent">auto-attach</Badge> : null}
-                        {cache.enabled ? null : <Badge tone="danger">disabled</Badge>}
-                      </span>
-                    </TD>
-                    <TD className="text-right">
-                      <span className="inline-flex gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => setEditing({ mode: "edit", cache })}>
-                          Edit
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => setDeleting(cache)}>
-                          <span className="text-danger">Delete</span>
-                        </Button>
-                      </span>
-                    </TD>
-                  </TRow>
-                ))}
-              </tbody>
-            </TableWrap>
-          )}
+            {reloadErrors.length > 0 ? (
+              <div className="flex flex-col gap-1 rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-sm text-danger">
+                <span>Some files could not be reloaded:</span>
+                <ul className="list-disc pl-5 font-mono text-xs">
+                  {reloadErrors.map((error) => (
+                    <li key={error}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
         </Panel>
+
+        <div id="shared-caches">
+          <Panel
+            title="Shared caches"
+            description="Host directories bind-mounted into sandboxes and shareable across them. Paths support ~ for your home directory. Auto-attach caches are mounted on every new sandbox and re-applied on start."
+            actions={
+              <Button variant="primary" onClick={() => setEditing({ mode: "create" })}>
+                <IconPlus /> Add cache
+              </Button>
+            }
+            bodyClassName="p-0"
+          >
+            {caches.isLoading ? (
+              <div className="flex justify-center p-6">
+                <Spinner />
+              </div>
+            ) : rows.length === 0 ? (
+              <EmptyState
+                title="No shared cache configured."
+                description="Add the Go module cache, the Go build cache, or an npm/pnpm/yarn cache to reuse downloads across sandboxes."
+                action={
+                  <Button variant="primary" onClick={() => setEditing({ mode: "create" })}>
+                    <IconPlus /> Add cache
+                  </Button>
+                }
+                className="rounded-none border-0"
+              />
+            ) : (
+              <TableWrap className="border-0">
+                <thead>
+                  <tr>
+                    <TH>Cache</TH>
+                    <TH>Host directory</TH>
+                    <TH>Sandbox directory</TH>
+                    <TH>Mode</TH>
+                    <TH>Flags</TH>
+                    <TH className="w-32" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((cache) => (
+                    <TRow
+                      key={cache.slug}
+                      className={cn(highlight === cache.slug && "bg-accent-soft ring-2 ring-accent")}
+                    >
+                      <TD className="font-medium">
+                        <span className="inline-flex items-center gap-2">
+                          {cache.name}
+                          {staleCaches.has(cache.slug) ? <StaleBadge /> : null}
+                        </span>
+                      </TD>
+                      <TD className="font-mono text-xs">{cache.host_path}</TD>
+                      <TD className="font-mono text-xs">{cache.target_path}</TD>
+                      <TD>{cache.read_only ? <Badge tone="warning">ro</Badge> : <Badge>rw</Badge>}</TD>
+                      <TD>
+                        <span className="flex flex-wrap gap-1.5">
+                          {cache.auto_attach !== false ? <Badge tone="accent">auto-attach</Badge> : null}
+                          {cache.enabled === false ? <Badge tone="danger">disabled</Badge> : null}
+                        </span>
+                      </TD>
+                      <TD className="text-right">
+                        <span className="inline-flex gap-1">
+                          <Button size="sm" variant="ghost" onClick={() => setEditing({ mode: "edit", cache })}>
+                            Edit
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setDeleting(cache)}>
+                            <span className="text-danger">Delete</span>
+                          </Button>
+                        </span>
+                      </TD>
+                    </TRow>
+                  ))}
+                </tbody>
+              </TableWrap>
+            )}
+          </Panel>
+        </div>
 
         <Panel
           title="Terminals"
@@ -380,7 +502,7 @@ export function SettingsPage() {
               checked={notificationsOn}
               onChange={(value) => {
                 setNotificationsOn(value);
-                setNotificationsEnabled(value);
+                void setNotificationsEnabled(value);
               }}
             />
             <span className="text-xs text-muted">
@@ -445,7 +567,7 @@ export function SettingsPage() {
         busy={create.isPending || update.isPending}
         onClose={() => setEditing(null)}
         onSubmit={(input) => {
-          if (editing?.mode === "edit") update.mutate({ id: editing.cache.id, input });
+          if (editing?.mode === "edit") update.mutate({ slug: editing.cache.slug, input });
           else create.mutate(input);
         }}
       />
@@ -456,7 +578,7 @@ export function SettingsPage() {
         body="The definition is removed. Existing bind mounts stay until the sandbox restarts or you detach them."
         confirmLabel="Delete"
         busy={remove.isPending}
-        onConfirm={() => deleting && remove.mutate(deleting.id)}
+        onConfirm={() => deleting && remove.mutate(deleting.slug)}
         onClose={() => setDeleting(null)}
       />
     </>
@@ -471,20 +593,20 @@ function CacheDialog({
   onClose,
 }: {
   open: boolean;
-  cache: CacheMount | null;
+  cache: CacheView | null;
   busy: boolean;
   onSubmit: (input: CacheInput) => void;
   onClose: () => void;
 }) {
   const [input, setInput] = useState<CacheInput>(EMPTY_CACHE);
-  const [loadedId, setLoadedId] = useState<number | "new" | null>(null);
+  const [loadedSlug, setLoadedSlug] = useState<string | "new" | null>(null);
 
-  const target = cache ? cache.id : ("new" as const);
-  if (!open && loadedId !== null) {
-    setLoadedId(null);
+  const target = cache ? cache.slug : ("new" as const);
+  if (!open && loadedSlug !== null) {
+    setLoadedSlug(null);
   }
-  if (open && loadedId !== target) {
-    setLoadedId(target);
+  if (open && loadedSlug !== target) {
+    setLoadedSlug(target);
     setInput(
       cache
         ? {
@@ -493,8 +615,8 @@ function CacheDialog({
             host_path: cache.host_path,
             target_path: cache.target_path,
             read_only: cache.read_only,
-            auto_attach: cache.auto_attach,
-            enabled: cache.enabled,
+            auto_attach: cache.auto_attach ?? true,
+            enabled: cache.enabled ?? true,
           }
         : EMPTY_CACHE,
     );

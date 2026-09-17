@@ -102,3 +102,6 @@ func (h *Hub) Publish(ev Event) {
 		}
 	}
 }
+
+// TopicKits is published when a kit repository or its catalog changes.
+const TopicKits Topic = "kits"

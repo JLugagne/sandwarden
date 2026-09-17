@@ -4,6 +4,7 @@ import { RealtimeClient, type ConnectionStatus } from "@/api/ws";
 import { applyEvent } from "@/store/realtime";
 import { routeJobEvent } from "@/store/jobs";
 import { useToasts } from "@/components/Toaster";
+import { loadConfig } from "@/lib/config";
 import { notifyDesktop } from "@/lib/notifications";
 import type { BlockedEvent } from "@/types";
 
@@ -13,6 +14,11 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
   const toast = useToasts();
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
+
+  // Warm the config cache so notifyDesktop can stay synchronous.
+  useEffect(() => {
+    void loadConfig();
+  }, []);
 
   useEffect(() => {
     const client = new RealtimeClient();

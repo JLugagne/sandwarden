@@ -15,6 +15,16 @@ export interface CacheInput {
 }
 
 /**
+ * CompleteSandboxRequest records the create parameters an imported sandbox
+ * could not recover from the daemon.
+ */
+export interface CompleteSandboxRequest {
+    "cpus": number;
+    "memory": string;
+    "env": string[] | null;
+}
+
+/**
  * CreateSandboxRequest mirrors the create form payload.
  */
 export interface CreateSandboxRequest {
@@ -26,6 +36,11 @@ export interface CreateSandboxRequest {
     "profile": string;
     "template": string;
     "kits": string[] | null;
+    "profiles": string[] | null;
+    "caches": string[] | null;
+    "skills": SkillRefRequest[] | null;
+    "run_args": string;
+    "mounts": MountRequest[] | null;
     "publish": string[] | null;
     "env": string[] | null;
     "deny_network": string[] | null;
@@ -66,6 +81,14 @@ export interface Health {
     "sbx_binary": string;
     "daemon_running": boolean;
     "daemon_status": string;
+}
+
+/**
+ * ImportSandboxesRequest is the bulk import payload: an empty names list
+ * imports every daemon sandbox.
+ */
+export interface ImportSandboxesRequest {
+    "names": string[] | null;
 }
 
 /**
@@ -166,6 +189,15 @@ export interface ServiceSecretRequest {
     "command": string;
     "refresh": string;
     "overwrite": boolean;
+}
+
+/**
+ * SkillRefRequest identifies one catalog item by store slug, kind and name.
+ */
+export interface SkillRefRequest {
+    "store": string;
+    "kind": string;
+    "name": string;
 }
 
 /**

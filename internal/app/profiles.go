@@ -4,287 +4,273 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
+	"strings"
 
+	"github.com/JLugagne/sandwarden/internal/fleet"
 	"github.com/JLugagne/sandwarden/internal/sbx"
 	"github.com/JLugagne/sandwarden/internal/store"
 )
 
-// ProfileView is a profile with its rules and the sandboxes it is assigned to.
+// ProfileView is a profile file plus its derived links.
 type ProfileView struct {
-	store.Profile
-	Rules     []store.Rule         `json:"rules"`
-	Items     []store.SkillItem    `json:"items"`
-	Mounts    []store.ProfileMount `json:"mounts"`
-	Caches    []store.CacheMount   `json:"caches"`
-	Sandboxes []string             `json:"sandboxes"`
+	Slug        string           `json:"slug"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	Default     bool             `json:"default"`
+	Global      bool             `json:"global"`
+	Allow       []string         `json:"allow"`
+	Deny        []string         `json:"deny"`
+	Mounts      []fleet.MountRef `json:"mounts"`
+	Caches      []string         `json:"caches"`
+	Skills      []fleet.SkillRef `json:"skills"`
+	Sandboxes   []string         `json:"sandboxes"`
 }
 
-// ListProfiles returns every profile with rules and assignments loaded.
+// ListProfiles returns every profile with its derived sandbox list.
 func (a *App) ListProfiles(ctx context.Context) ([]ProfileView, error) {
-	profiles, err := a.Store.ListProfiles(ctx)
-	if err != nil {
-		return nil, err
-	}
-	rulesByProfile, err := a.Store.ListAllRules(ctx)
-	if err != nil {
-		return nil, err
-	}
-	itemsByProfile, err := a.Store.AllProfileSkillItems(ctx)
-	if err != nil {
-		return nil, err
-	}
-	mountsByProfile, err := a.Store.AllProfileMounts(ctx)
-	if err != nil {
-		return nil, err
-	}
-	cachesByProfile, err := a.Store.AllProfileCaches(ctx)
-	if err != nil {
-		return nil, err
-	}
+	profiles := a.Fleet.Profiles()
 	out := make([]ProfileView, 0, len(profiles))
 	for _, p := range profiles {
-		view := ProfileView{
-			Profile: p,
-			Rules:   rulesByProfile[p.ID],
-			Items:   itemsByProfile[p.ID],
-			Mounts:  mountsByProfile[p.ID],
-			Caches:  cachesByProfile[p.ID],
-		}
-		sandboxes, err := a.Store.SandboxesForProfile(ctx, p.ID)
-		if err != nil {
-			return nil, err
-		}
-		view.Sandboxes = sandboxes
-		out = append(out, view)
+		out = append(out, a.profileView(p))
 	}
 	return out, nil
 }
 
-// GetProfileView returns one profile with rules and assignments loaded.
-func (a *App) GetProfileView(ctx context.Context, id int64) (ProfileView, error) {
-	p, err := a.Store.GetProfile(ctx, id)
-	if err != nil {
-		return ProfileView{}, err
+// GetProfileView returns one profile by slug.
+func (a *App) GetProfileView(ctx context.Context, slug string) (ProfileView, error) {
+	p, ok := a.Fleet.Profile(slug)
+	if !ok {
+		return ProfileView{}, store.ErrNotFound
 	}
-	rules, err := a.Store.ListRules(ctx, id)
-	if err != nil {
-		return ProfileView{}, err
-	}
-	items, err := a.Store.ListProfileSkillItems(ctx, id)
-	if err != nil {
-		return ProfileView{}, err
-	}
-	mounts, err := a.Store.ListProfileMounts(ctx, id)
-	if err != nil {
-		return ProfileView{}, err
-	}
-	caches, err := a.Store.ListProfileCaches(ctx, id)
-	if err != nil {
-		return ProfileView{}, err
-	}
-	sandboxes, err := a.Store.SandboxesForProfile(ctx, id)
-	if err != nil {
-		return ProfileView{}, err
-	}
-	return ProfileView{Profile: p, Rules: rules, Items: items, Mounts: mounts, Caches: caches, Sandboxes: sandboxes}, nil
+	return a.profileView(p), nil
 }
 
-// CreateProfile creates a profile and pushes it globally when flagged global.
-func (a *App) CreateProfile(ctx context.Context, name, description string, isDefault, isGlobal bool) (store.Profile, error) {
-	p, err := a.Store.CreateProfile(ctx, name, description, isDefault, isGlobal)
-	if err != nil {
-		return store.Profile{}, err
+func (a *App) profileView(p *fleet.Profile) ProfileView {
+	view := ProfileView{
+		Slug:        p.Slug,
+		Name:        p.Label(),
+		Description: p.Spec.Description,
+		Default:     p.App.Default,
+		Global:      p.App.Global,
+		Allow:       append([]string{}, p.Spec.NetworkAllow()...),
+		Deny:        append([]string{}, p.Spec.NetworkDeny()...),
+		Mounts:      append([]fleet.MountRef{}, p.App.Mounts...),
+		Caches:      append([]string{}, p.App.Caches...),
+		Skills:      append([]fleet.SkillRef{}, p.App.Skills...),
+		Sandboxes:   []string{},
 	}
-	if p.IsGlobal {
-		if err := a.applyProfileToTarget(ctx, p, ""); err != nil {
-			return store.Profile{}, err
-		}
+	for _, s := range a.sandboxesReferencingProfile(p.Slug) {
+		view.Sandboxes = append(view.Sandboxes, s.Name())
+	}
+	sort.Strings(view.Sandboxes)
+	return view
+}
+
+// CreateProfile writes a new profile directory.
+func (a *App) CreateProfile(ctx context.Context, name, description string, isDefault, isGlobal bool) (ProfileView, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ProfileView{}, errors.New("profile name is required")
+	}
+	lock, err := a.lockFleet()
+	if err != nil {
+		return ProfileView{}, err
+	}
+	defer func() { _ = lock.Release() }()
+	spec := fleet.NewMixin("")
+	spec.DisplayName = name
+	spec.Description = strings.TrimSpace(description)
+	created, err := a.Fleet.CreateProfile(name, spec, fleet.ProfileApp{Default: isDefault, Global: isGlobal})
+	if err != nil {
+		return ProfileView{}, err
+	}
+	if isDefault {
+		a.clearOtherDefaults(created.Slug)
 	}
 	a.Notify(TopicProfiles)
-	return p, nil
+	return a.profileView(created), nil
 }
 
-// UpdateProfile rewrites a profile, moving its compiled rules to match any
-// change in global/default scope.
-func (a *App) UpdateProfile(ctx context.Context, id int64, name, description string, isDefault, isGlobal bool) error {
-	old, err := a.Store.GetProfile(ctx, id)
-	if err != nil {
-		return err
-	}
-	targets, err := a.targetsForProfile(ctx, old)
-	if err != nil {
-		return err
-	}
-	for _, target := range targets {
-		if err := a.unapplyProfileFromTarget(ctx, old, target); err != nil {
+// UpdateProfile rewrites a profile's label, description and flags.
+func (a *App) UpdateProfile(ctx context.Context, slug, name, description string, isDefault, isGlobal bool) error {
+	return a.withFleetLock(func() error {
+		p, ok := a.Fleet.Profile(slug)
+		if !ok {
+			return store.ErrNotFound
+		}
+		label := strings.TrimSpace(name)
+		if label == "" {
+			return errors.New("profile name is required")
+		}
+		p.Spec.DisplayName = label
+		p.Spec.Description = strings.TrimSpace(description)
+		p.App.Default = isDefault
+		p.App.Global = isGlobal
+		if err := a.Fleet.SaveProfile(p); err != nil {
 			return err
 		}
-	}
-	if err := a.Store.UpdateProfile(ctx, id, name, description, isDefault, isGlobal); err != nil {
-		return err
-	}
-	updated, err := a.Store.GetProfile(ctx, id)
-	if err != nil {
-		return err
-	}
-	if err := a.reapplyProfile(ctx, updated); err != nil {
-		return err
-	}
-	a.reconcileAllSkills(ctx)
-	a.Notify(TopicProfiles)
-	a.Notify(TopicSandboxes)
-	return nil
+		if isDefault {
+			a.clearOtherDefaults(slug)
+		}
+		a.Notify(TopicProfiles)
+		return nil
+	})
 }
 
-// DeleteProfile unapplies a profile everywhere, then deletes it.
-func (a *App) DeleteProfile(ctx context.Context, id int64) error {
-	old, err := a.Store.GetProfile(ctx, id)
-	if err != nil {
-		return err
-	}
-	targets, err := a.targetsForProfile(ctx, old)
-	if err != nil {
-		return err
-	}
-	mounts, err := a.Store.ListProfileMounts(ctx, id)
-	if err != nil {
-		return err
-	}
-	caches, err := a.Store.ListProfileCaches(ctx, id)
-	if err != nil {
-		return err
-	}
-	if err := a.Store.PurgeProfileOptOuts(ctx, id); err != nil {
-		return err
-	}
-	for _, target := range targets {
-		if err := a.unapplyProfileFromTarget(ctx, old, target); err != nil {
+// DeleteProfile removes a profile and everything it applied.
+func (a *App) DeleteProfile(ctx context.Context, slug string) error {
+	return a.withFleetLock(func() error {
+		p, ok := a.Fleet.Profile(slug)
+		if !ok {
+			return store.ErrNotFound
+		}
+		for _, s := range a.sandboxesReferencingProfile(slug) {
+			if err := a.unapplyProfileFromTarget(ctx, p, s.Name()); err != nil {
+				return err
+			}
+			s.App.Profiles = removeString(s.App.Profiles, slug)
+			if s.App.OptOuts != nil {
+				_ = a.Fleet.SaveSandbox(s)
+			}
+			_, _ = a.syncProfileMounts(ctx, s.Name(), p.App.Mounts)
+			a.ReapplyCaches(ctx, s.Name())
+			_ = a.Fleet.SaveSandbox(s)
+		}
+		if err := a.Store.ClearAppliedForProfile(ctx, slug); err != nil {
 			return err
 		}
-	}
-	if err := a.Store.DeleteProfile(ctx, id); err != nil {
-		return err
-	}
-	for _, target := range targets {
-		if target == "" {
-			continue
-		}
-		a.reconcileSandboxSkills(ctx, target)
-		a.syncProfileMounts(ctx, target, mounts)
-		a.releaseStaleCaches(ctx, target, caches)
-	}
-	a.Notify(TopicProfiles)
-	a.Notify(TopicSkills)
-	a.Notify(TopicCaches)
-	a.Notify(TopicSandboxes)
-	return nil
-}
-
-// AddRuleToProfile adds a pattern to a profile and re-pushes it to every target.
-func (a *App) AddRuleToProfile(ctx context.Context, profileID int64, decision, pattern string) (store.Rule, error) {
-	rule, err := a.Store.AddRule(ctx, profileID, decision, pattern)
-	if err != nil {
-		return store.Rule{}, err
-	}
-	p, err := a.Store.GetProfile(ctx, profileID)
-	if err != nil {
-		return store.Rule{}, err
-	}
-	if err := a.reapplyProfile(ctx, p); err != nil {
-		return store.Rule{}, err
-	}
-	a.Notify(TopicProfiles)
-	return rule, nil
-}
-
-// RemoveRuleFromProfile removes a rule and reconciles every target.
-func (a *App) RemoveRuleFromProfile(ctx context.Context, profileID, ruleID int64) error {
-	if err := a.Store.RemoveRule(ctx, ruleID); err != nil {
-		return err
-	}
-	p, err := a.Store.GetProfile(ctx, profileID)
-	if err != nil {
-		return err
-	}
-	if err := a.reapplyProfile(ctx, p); err != nil {
-		return err
-	}
-	a.Notify(TopicProfiles)
-	return nil
-}
-
-// ApplyProfile assigns a profile to a sandbox and compiles its rules into
-// sandbox-scoped sbx rules.
-func (a *App) ApplyProfile(ctx context.Context, sandbox string, profileID int64) error {
-	if _, err := a.Sbx.InspectSandbox(ctx, sandbox); err != nil {
-		return err
-	}
-	p, err := a.Store.GetProfile(ctx, profileID)
-	if err != nil {
-		return err
-	}
-	if err := a.Store.AssignProfile(ctx, sandbox, profileID); err != nil {
-		return err
-	}
-	if p.IsDefault {
-		if err := a.Store.ClearOptOut(ctx, sandbox); err != nil {
+		if err := a.Fleet.DeleteProfile(slug); err != nil {
 			return err
 		}
-	}
-	if err := a.Store.ClearOptOutsForProfile(ctx, profileID); err != nil {
-		return err
-	}
-	if err := a.applyProfileToTarget(ctx, p, sandbox); err != nil {
-		return err
-	}
-	a.reconcileSandboxSkills(ctx, sandbox)
-	a.ReapplyCaches(ctx, sandbox)
-	a.syncProfileMounts(ctx, sandbox, nil)
-	a.Notify(TopicProfiles)
-	a.Notify(TopicSandboxes)
-	a.Notify(TopicSandbox(sandbox))
-	return nil
+		a.Notify(TopicProfiles)
+		a.Notify(TopicSandboxes)
+		return nil
+	})
 }
 
-// UnapplyProfile removes a profile's rules from a sandbox and drops the
-// assignment. Unassigning the default profile records an opt-out so reconcile
-// will not re-add it.
-func (a *App) UnapplyProfile(ctx context.Context, sandbox string, profileID int64) error {
-	p, err := a.Store.GetProfile(ctx, profileID)
-	if err != nil {
-		return err
-	}
-	mounts, err := a.Store.ListProfileMounts(ctx, profileID)
-	if err != nil {
-		return err
-	}
-	caches, err := a.Store.ListProfileCaches(ctx, profileID)
-	if err != nil {
-		return err
-	}
-	if err := a.unapplyProfileFromTarget(ctx, p, sandbox); err != nil {
-		return err
-	}
-	if err := a.Store.UnassignProfile(ctx, sandbox, profileID); err != nil {
-		return err
-	}
-	if p.IsDefault {
-		if err := a.Store.OptOutDefault(ctx, sandbox); err != nil {
+// AddRuleToProfile appends an allow or deny pattern to a profile and
+// converges every sandbox it covers.
+func (a *App) AddRuleToProfile(ctx context.Context, slug, decision, pattern string) error {
+	return a.withFleetLock(func() error {
+		p, ok := a.Fleet.Profile(slug)
+		if !ok {
+			return store.ErrNotFound
+		}
+		decision = strings.ToLower(strings.TrimSpace(decision))
+		pattern = strings.TrimSpace(pattern)
+		if decision != "allow" && decision != "deny" {
+			return fmt.Errorf("unknown rule decision %q", decision)
+		}
+		if pattern == "" {
+			return errors.New("rule pattern is required")
+		}
+		network := ensureNetwork(&p.Spec)
+		if decision == "allow" {
+			if !slices.Contains(network.Allow, pattern) {
+				network.Allow = append(network.Allow, pattern)
+			}
+		} else if !slices.Contains(network.Deny, pattern) {
+			network.Deny = append(network.Deny, pattern)
+		}
+		if err := a.Fleet.SaveProfile(p); err != nil {
 			return err
 		}
-	}
-	a.reconcileSandboxSkills(ctx, sandbox)
-	a.syncProfileMounts(ctx, sandbox, mounts)
-	a.releaseStaleCaches(ctx, sandbox, caches)
-	a.Notify(TopicProfiles)
-	a.Notify(TopicSandboxes)
-	a.Notify(TopicSandbox(sandbox))
-	return nil
+		a.convergeProfileRules(ctx, p)
+		a.Notify(TopicProfiles)
+		return nil
+	})
 }
 
-// Reconcile re-applies global and assigned profiles, prunes assignments for
-// sandboxes that no longer exist, applies the default profile to sandboxes that
-// never opted out, and converges the skill mounts of every running sandbox.
+// RemoveRuleFromProfile drops a pattern from a profile and from the daemon.
+func (a *App) RemoveRuleFromProfile(ctx context.Context, slug, decision, pattern string) error {
+	return a.withFleetLock(func() error {
+		p, ok := a.Fleet.Profile(slug)
+		if !ok {
+			return store.ErrNotFound
+		}
+		decision = strings.ToLower(strings.TrimSpace(decision))
+		pattern = strings.TrimSpace(pattern)
+		if network := ensureNetwork(&p.Spec); network != nil {
+			if decision == "deny" {
+				network.Deny = removeString(network.Deny, pattern)
+			} else {
+				network.Allow = removeString(network.Allow, pattern)
+			}
+		}
+		if err := a.Fleet.SaveProfile(p); err != nil {
+			return err
+		}
+		a.convergeProfileRules(ctx, p)
+		a.Notify(TopicProfiles)
+		return nil
+	})
+}
+
+// ApplyProfile assigns a profile to a sandbox and compiles its rules.
+func (a *App) ApplyProfile(ctx context.Context, name, slug string) error {
+	return a.withFleetLock(func() error {
+		s, err := a.ensureSandboxConfig(ctx, name)
+		if err != nil {
+			return err
+		}
+		if _, err := a.Sbx.InspectSandbox(ctx, name); err != nil {
+			return err
+		}
+		p, ok := a.Fleet.Profile(slug)
+		if !ok {
+			return fmt.Errorf("profile %q not found", slug)
+		}
+		if !slices.Contains(s.App.Profiles, slug) {
+			s.App.Profiles = append(s.App.Profiles, slug)
+		}
+		if err := a.Fleet.SaveSandbox(s); err != nil {
+			return err
+		}
+		if err := a.applyProfileToTarget(ctx, p, name); err != nil {
+			return err
+		}
+		a.reconcileSandboxSkills(ctx, name)
+		a.ReapplyCaches(ctx, name)
+		a.syncProfileMounts(ctx, name, nil)
+		a.Notify(TopicProfiles)
+		a.Notify(TopicSandboxes)
+		a.Notify(TopicSandbox(name))
+		return nil
+	})
+}
+
+// UnapplyProfile removes a profile from a sandbox and its daemon rules.
+func (a *App) UnapplyProfile(ctx context.Context, name, slug string) error {
+	return a.withFleetLock(func() error {
+		s, err := a.ensureSandboxConfig(ctx, name)
+		if err != nil {
+			return err
+		}
+		p, ok := a.Fleet.Profile(slug)
+		if !ok {
+			return fmt.Errorf("profile %q not found", slug)
+		}
+		s.App.Profiles = removeString(s.App.Profiles, slug)
+		if err := a.Fleet.SaveSandbox(s); err != nil {
+			return err
+		}
+		if err := a.unapplyProfileFromTarget(ctx, p, name); err != nil {
+			return err
+		}
+		a.reconcileSandboxSkills(ctx, name)
+		a.ReapplyCaches(ctx, name)
+		a.syncProfileMounts(ctx, name, p.App.Mounts)
+		a.Notify(TopicProfiles)
+		a.Notify(TopicSandboxes)
+		a.Notify(TopicSandbox(name))
+		return nil
+	})
+}
+
+// Reconcile converges every sandbox onto its files and the global profiles,
+// and prunes ledger rows whose sandbox or profile is gone.
 func (a *App) Reconcile(ctx context.Context) error {
 	sandboxes, err := a.Sbx.ListSandboxes(ctx)
 	if err != nil {
@@ -294,168 +280,84 @@ func (a *App) Reconcile(ctx context.Context) error {
 	for _, s := range sandboxes {
 		exists[s.Name] = true
 	}
-
-	globals, err := a.Store.GlobalProfiles(ctx)
-	if err != nil {
-		return err
-	}
-	for _, p := range globals {
-		if err := a.applyProfileToTarget(ctx, p, ""); err != nil {
-			return err
-		}
-	}
-
-	assignments, err := a.Store.AllAssignments(ctx)
-	if err != nil {
-		return err
-	}
-	for name, ids := range assignments {
-		if !exists[name] {
-			if err := a.Store.DropSandboxAssignments(ctx, name); err != nil {
-				return err
-			}
-			if err := a.Store.DropSandboxOptOuts(ctx, name); err != nil {
+	for _, s := range sandboxes {
+		cfg, hasConfig := a.Fleet.SandboxByName(s.Name)
+		if hasConfig && s.Running() {
+			if _, err := a.Apply(ctx, s.Name); err != nil {
 				return err
 			}
 			continue
 		}
-		for _, id := range ids {
-			p, err := a.Store.GetProfile(ctx, id)
-			if errors.Is(err, store.ErrNotFound) {
-				continue
+		var profiles []*fleet.Profile
+		if hasConfig {
+			profiles = a.profilesForSandbox(cfg)
+		} else {
+			for _, p := range a.Fleet.Profiles() {
+				if p.App.Global {
+					profiles = append(profiles, p)
+				}
 			}
-			if err != nil {
-				return err
-			}
-			if err := a.applyProfileToTarget(ctx, p, name); err != nil {
+		}
+		for _, p := range profiles {
+			if err := a.applyProfileRules(ctx, p, s.Name); err != nil {
 				return err
 			}
 		}
 	}
-
-	optedOut, err := a.Store.OptedOutSandboxes(ctx)
-	if err != nil {
-		return err
-	}
-	if def, err := a.Store.DefaultProfile(ctx); err == nil {
-		for _, s := range sandboxes {
-			if optedOut[s.Name] || containsID(assignments[s.Name], def.ID) {
-				continue
-			}
-			if err := a.Store.AssignProfile(ctx, s.Name, def.ID); err != nil {
-				return err
-			}
-			if err := a.applyProfileToTarget(ctx, def, s.Name); err != nil {
-				return err
-			}
-		}
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
-
-	attachments, err := a.Store.AllSandboxSkillItems(ctx)
-	if err != nil {
-		return err
-	}
-	for name := range attachments {
-		if !exists[name] {
-			if err := a.Store.DropSandboxSkillItems(ctx, name); err != nil {
-				return err
-			}
-		}
-	}
-	selections, err := a.Store.AllProfileSkillItems(ctx)
-	if err != nil {
-		return err
-	}
-	if len(attachments) > 0 || len(selections) > 0 {
-		for _, s := range sandboxes {
-			if s.Running() {
-				a.reconcileSandboxSkills(ctx, s.Name)
-			}
-		}
-	}
-
-	defaultMounts, err := a.Store.AllProfileMounts(ctx)
-	if err != nil {
-		return err
-	}
-	defaultCaches, err := a.Store.AllProfileCaches(ctx)
-	if err != nil {
-		return err
-	}
-	if len(defaultMounts) > 0 || len(defaultCaches) > 0 {
-		for _, s := range sandboxes {
-			if !s.Running() {
-				continue
-			}
-			profiles, err := a.Store.ListProfilesForSandbox(ctx, s.Name)
-			if err != nil {
-				return err
-			}
-			wantsMounts, wantsCaches := false, false
-			for _, p := range profiles {
-				wantsMounts = wantsMounts || len(defaultMounts[p.ID]) > 0
-				wantsCaches = wantsCaches || len(defaultCaches[p.ID]) > 0
-			}
-			if wantsCaches {
-				a.ReapplyCaches(ctx, s.Name)
-			}
-			if wantsMounts {
-				a.syncProfileMounts(ctx, s.Name, nil)
-			}
-		}
-	}
-	return nil
+	return a.pruneLedger(ctx, exists)
 }
 
-func (a *App) targetsForProfile(ctx context.Context, p store.Profile) ([]string, error) {
-	var targets []string
-	if p.IsGlobal {
-		targets = append(targets, "")
-	}
-	sandboxes, err := a.Store.SandboxesForProfile(ctx, p.ID)
-	if err != nil {
-		return nil, err
-	}
-	return append(targets, sandboxes...), nil
-}
-
-func (a *App) reapplyProfile(ctx context.Context, p store.Profile) error {
-	targets, err := a.targetsForProfile(ctx, p)
-	if err != nil {
-		return err
-	}
-	for _, target := range targets {
-		if err := a.applyProfileToTarget(ctx, p, target); err != nil {
+// pruneLedger removes daemon rules and rows whose sandbox disappeared or no
+// longer references the profile.
+func (a *App) pruneLedger(ctx context.Context, exists map[string]bool) error {
+	return a.withFleetLock(func() error {
+		rows, err := a.Store.ListAllAppliedRules(ctx)
+		if err != nil {
 			return err
 		}
-	}
-	return nil
+		desired := map[string]map[string]bool{}
+		for _, s := range a.Fleet.Sandboxes() {
+			set := map[string]bool{}
+			for _, p := range a.profilesForSandbox(s) {
+				set[p.Slug] = true
+			}
+			desired[s.Name()] = set
+		}
+		for _, row := range rows {
+			if exists[row.Sandbox] && desired[row.Sandbox][row.Profile] {
+				continue
+			}
+			if err := a.removeAppliedRule(ctx, row); err != nil {
+				return err
+			}
+			if err := a.Store.DeleteAppliedRule(ctx, row.ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
-// applyProfileToTarget converges sbx rules for one profile/target pair onto the
-// profile's current rules: it removes ledger rules that are no longer wanted and
-// creates any that are missing. target "" means global.
-func (a *App) applyProfileToTarget(ctx context.Context, p store.Profile, target string) error {
-	rules, err := a.Store.ListRules(ctx, p.ID)
+// applyProfileToTarget compiles a profile's allow/deny lists into
+// sandbox-scoped daemon rules, tracked by the ledger. The caller holds the
+// fleet lock so a competing process cannot interleave its own apply.
+func (a *App) applyProfileToTarget(ctx context.Context, p *fleet.Profile, target string) error {
+	desired := map[string]bool{}
+	for _, pattern := range p.Spec.NetworkAllow() {
+		desired[ruleKey("allow", pattern)] = true
+	}
+	for _, pattern := range p.Spec.NetworkDeny() {
+		desired[ruleKey("deny", pattern)] = true
+	}
+	applied, err := a.Store.ListAppliedRules(ctx, p.Slug, target)
 	if err != nil {
 		return err
 	}
-	applied, err := a.Store.ListAppliedRules(ctx, p.ID, target)
-	if err != nil {
-		return err
-	}
-
-	desired := make(map[string]store.Rule, len(rules))
-	for _, r := range rules {
-		desired[ruleKey(r.Decision, r.Pattern)] = r
-	}
-
-	have := make(map[string]bool, len(rules))
+	have := map[string]bool{}
 	for _, ar := range applied {
-		if _, ok := desired[ruleKey(ar.Decision, ar.Pattern)]; ok {
-			have[ruleKey(ar.Decision, ar.Pattern)] = true
+		key := ruleKey(ar.Decision, ar.Pattern)
+		if desired[key] {
+			have[key] = true
 			continue
 		}
 		if err := a.removeAppliedRule(ctx, ar); err != nil {
@@ -465,28 +367,23 @@ func (a *App) applyProfileToTarget(ctx context.Context, p store.Profile, target 
 			return err
 		}
 	}
-
-	var allowMissing, denyMissing []string
-	for _, r := range rules {
-		if have[ruleKey(r.Decision, r.Pattern)] {
-			continue
-		}
-		if r.Decision == "deny" {
-			denyMissing = append(denyMissing, r.Pattern)
-		} else {
-			allowMissing = append(allowMissing, r.Pattern)
+	missing := map[string][]string{}
+	for _, pattern := range p.Spec.NetworkAllow() {
+		if !have[ruleKey("allow", pattern)] {
+			missing["allow"] = append(missing["allow"], pattern)
 		}
 	}
-
-	groups := []struct {
-		action   string
-		patterns []string
-	}{{"allow", allowMissing}, {"deny", denyMissing}}
-	for _, g := range groups {
-		if len(g.patterns) == 0 {
+	for _, pattern := range p.Spec.NetworkDeny() {
+		if !have[ruleKey("deny", pattern)] {
+			missing["deny"] = append(missing["deny"], pattern)
+		}
+	}
+	for _, decision := range []string{"allow", "deny"} {
+		patterns := missing[decision]
+		if len(patterns) == 0 {
 			continue
 		}
-		action := sbx.PolicyAction{Action: g.action, Resources: g.patterns}
+		action := sbx.PolicyAction{Action: decision, Resources: patterns}
 		if target != "" {
 			action.SandboxID = target
 		}
@@ -499,7 +396,7 @@ func (a *App) applyProfileToTarget(ctx context.Context, p store.Profile, target 
 				return errors.New(res.Error)
 			}
 			for _, ref := range res.Created {
-				if err := a.Store.RecordAppliedRule(ctx, p.ID, target, ref.RuleID, ref.Resource, g.action); err != nil {
+				if err := a.Store.RecordAppliedRule(ctx, p.Slug, target, ref.RuleID, ref.Resource, decision); err != nil {
 					return err
 				}
 			}
@@ -508,9 +405,10 @@ func (a *App) applyProfileToTarget(ctx context.Context, p store.Profile, target 
 	return nil
 }
 
-// unapplyProfileFromTarget removes every ledger rule for a profile/target pair.
-func (a *App) unapplyProfileFromTarget(ctx context.Context, p store.Profile, target string) error {
-	applied, err := a.Store.ListAppliedRules(ctx, p.ID, target)
+// unapplyProfileFromTarget removes every ledger rule of a profile on a
+// sandbox. The caller holds the fleet lock.
+func (a *App) unapplyProfileFromTarget(ctx context.Context, p *fleet.Profile, target string) error {
+	applied, err := a.Store.ListAppliedRules(ctx, p.Slug, target)
 	if err != nil {
 		return err
 	}
@@ -522,25 +420,11 @@ func (a *App) unapplyProfileFromTarget(ctx context.Context, p store.Profile, tar
 			return err
 		}
 	}
-	return a.Store.ClearAppliedForTarget(ctx, p.ID, target)
+	return a.Store.ClearAppliedForTarget(ctx, p.Slug, target)
 }
 
-func ruleKey(decision, pattern string) string { return decision + "\x00" + pattern }
-
-func containsID(ids []int64, want int64) bool {
-	for _, id := range ids {
-		if id == want {
-			return true
-		}
-	}
-	return false
-}
-
-// removeAppliedRule deletes one ledger-recorded sbx rule, scoping the removal
-// to the sandbox the rule was created in. A rule that is already gone counts
-// as removed.
 func (a *App) removeAppliedRule(ctx context.Context, ar store.AppliedRule) error {
-	results, err := a.Sbx.ModifyPolicy(ctx, sbx.PolicyAction{Action: "remove-id", ID: ar.RuleID, SandboxID: ar.SandboxName})
+	results, err := a.Sbx.ModifyPolicy(ctx, sbx.PolicyAction{Action: "remove-id", ID: ar.RuleID, SandboxID: ar.Sandbox})
 	if err != nil {
 		if sbx.IsNotFound(err) {
 			return nil
@@ -553,4 +437,94 @@ func (a *App) removeAppliedRule(ctx context.Context, ar store.AppliedRule) error
 		}
 	}
 	return nil
+}
+
+// applyProfileRules converges one profile onto one target as a complete ledger
+// mutation, for callers that do not already hold the fleet lock. Apply holds
+// the lock for its whole pass and calls applyProfileToTarget directly.
+func (a *App) applyProfileRules(ctx context.Context, p *fleet.Profile, target string) error {
+	return a.withFleetLock(func() error { return a.applyProfileToTarget(ctx, p, target) })
+}
+
+// convergeProfileRules re-applies a profile everywhere it is active. The
+// caller holds the fleet lock.
+func (a *App) convergeProfileRules(ctx context.Context, p *fleet.Profile) {
+	if p.App.Global {
+		if sandboxes, err := a.Sbx.ListSandboxes(ctx); err == nil {
+			for _, s := range sandboxes {
+				_ = a.applyProfileToTarget(ctx, p, s.Name)
+			}
+		}
+		return
+	}
+	for _, s := range a.sandboxesReferencingProfile(p.Slug) {
+		_ = a.applyProfileToTarget(ctx, p, s.Name())
+	}
+}
+
+func (a *App) clearOtherDefaults(keepSlug string) {
+	for _, p := range a.Fleet.Profiles() {
+		if p.Slug == keepSlug || !p.App.Default {
+			continue
+		}
+		p.App.Default = false
+		_ = a.Fleet.SaveProfile(p)
+	}
+}
+
+func ensureNetwork(spec *fleet.Spec) *fleet.SpecNetwork {
+	if spec.Permissions == nil {
+		spec.Permissions = &fleet.SpecPermission{}
+	}
+	if spec.Permissions.Network == nil {
+		spec.Permissions.Network = &fleet.SpecNetwork{}
+	}
+	return spec.Permissions.Network
+}
+
+func ruleKey(decision, pattern string) string { return decision + "\x00" + pattern }
+
+// ProfileRef is a profile as referenced by one sandbox.
+type ProfileRef struct {
+	Slug    string `json:"slug"`
+	Name    string `json:"name"`
+	Default bool   `json:"default"`
+	Global  bool   `json:"global"`
+}
+
+// profileRefs resolves the profiles active on a sandbox.
+func (a *App) profileRefs(cfg *fleet.Sandbox) []ProfileRef {
+	var profiles []*fleet.Profile
+	if cfg != nil {
+		profiles = a.profilesForSandbox(cfg)
+	} else {
+		for _, p := range a.Fleet.Profiles() {
+			if p.App.Global {
+				profiles = append(profiles, p)
+			}
+		}
+	}
+	out := make([]ProfileRef, 0, len(profiles))
+	for _, p := range profiles {
+		out = append(out, ProfileRef{Slug: p.Slug, Name: p.Label(), Default: p.App.Default, Global: p.App.Global})
+	}
+	return out
+}
+
+// profileNames is the label list shown on sandbox summaries.
+func (a *App) profileNames(cfg *fleet.Sandbox) []string {
+	refs := a.profileRefs(cfg)
+	out := make([]string, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, r.Name)
+	}
+	return out
+}
+
+// runArgsOf returns the connect arguments declared by a sandbox config.
+func runArgsOf(cfg *fleet.Sandbox) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.App.RunArgs
 }

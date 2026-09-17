@@ -1,38 +1,40 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Terminal } from "@/types";
-import { defaultTerminal, enabledTerminals, loadTerminalPrefs, saveTerminalPrefs } from "./terminals";
+import { resetConfigCacheForTests } from "./config";
+import {
+  defaultTerminal,
+  enabledTerminals,
+  fetchTerminalPrefs,
+  loadTerminalPrefs,
+  saveTerminalPrefs,
+} from "./terminals";
+
+vi.mock("@/api/client", () => ({
+  api: {
+    getConfig: vi.fn(async () => ({
+      terminals: { enabled: ["kitty"], default: "kitty" },
+      notifications: true,
+    })),
+    setConfig: vi.fn(async () => undefined),
+  },
+}));
 
 const terminals: Terminal[] = [
   { id: "terminal", name: "Terminal", binary: "/usr/bin/osascript" },
   { id: "kitty", name: "kitty", binary: "/usr/bin/kitty" },
 ];
 
-afterEach(() => window.localStorage.clear());
+afterEach(() => {
+  resetConfigCacheForTests();
+  vi.clearAllMocks();
+});
 
-describe("terminal preferences", () => {
+describe("terminal helpers", () => {
   it("enables every detected terminal by default", () => {
-    const prefs = loadTerminalPrefs();
-    expect(prefs.enabled).toBeNull();
+    const prefs = { enabled: null, default: "" };
     expect(enabledTerminals(terminals, prefs)).toEqual(terminals);
     expect(defaultTerminal(terminals, prefs)?.id).toBe("terminal");
-  });
-
-  it("round-trips saved preferences", () => {
-    saveTerminalPrefs({ enabled: ["kitty"], default: "kitty" });
-    expect(loadTerminalPrefs()).toEqual({ enabled: ["kitty"], default: "kitty" });
-  });
-
-  it("falls back when the stored value is malformed", () => {
-    window.localStorage.setItem("sandwarden.terminals", "{not json");
-    expect(loadTerminalPrefs()).toEqual({ enabled: null, default: "" });
-  });
-
-  it("filters non-string entries", () => {
-    window.localStorage.setItem("sandwarden.terminals", JSON.stringify({ enabled: ["kitty", 42], default: 7 }));
-    const prefs = loadTerminalPrefs();
-    expect(prefs.enabled).toEqual(["kitty"]);
-    expect(prefs.default).toBe("");
   });
 
   it("keeps only enabled terminals and falls back when the default is disabled", () => {
@@ -42,7 +44,28 @@ describe("terminal preferences", () => {
   });
 
   it("returns no default when everything is disabled", () => {
-    const prefs = { enabled: [], default: "kitty" };
-    expect(defaultTerminal(terminals, prefs)).toBeNull();
+    expect(defaultTerminal(terminals, { enabled: [], default: "kitty" })).toBeNull();
+  });
+});
+
+describe("terminal preferences", () => {
+  it("falls back while the backend config has not been loaded", () => {
+    expect(loadTerminalPrefs()).toEqual({ enabled: null, default: "" });
+  });
+
+  it("loads the preferences from the backend config file", async () => {
+    const { api } = await import("@/api/client");
+    await expect(fetchTerminalPrefs()).resolves.toEqual({ enabled: ["kitty"], default: "kitty" });
+    expect(vi.mocked(api.getConfig)).toHaveBeenCalled();
+    expect(loadTerminalPrefs()).toEqual({ enabled: ["kitty"], default: "kitty" });
+  });
+
+  it("persists the preferences through SetConfig", async () => {
+    const { api } = await import("@/api/client");
+    await saveTerminalPrefs({ enabled: ["kitty"], default: "kitty" });
+    expect(vi.mocked(api.setConfig)).toHaveBeenCalledWith({
+      terminals: { enabled: ["kitty"], default: "kitty" },
+      notifications: true,
+    });
   });
 });

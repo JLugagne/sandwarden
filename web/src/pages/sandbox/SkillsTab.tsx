@@ -17,10 +17,10 @@ import {
   TH,
   TRow,
 } from "@/components/ui";
-import { skillMenuGroups } from "@/lib/catalog";
+import { skillMenuGroups, skillRefKey } from "@/lib/catalog";
 import { useToasts } from "@/components/Toaster";
 import { KindBadge } from "@/pages/SkillsPage";
-import type { SandboxDetail, SandboxSkill } from "@/types";
+import type { SandboxDetail, SandboxSkill, SkillRef } from "@/types";
 
 export function SkillsTab({ name, detail }: { name: string; detail: SandboxDetail }) {
   const items = useQuery({ queryKey: queryKeys.skillItems, queryFn: () => api.skillItems() });
@@ -28,11 +28,11 @@ export function SkillsTab({ name, detail }: { name: string; detail: SandboxDetai
   const toast = useToasts();
 
   const attach = useApiMutation({
-    mutationFn: (itemId: number) => api.attachSkillItem(name, itemId),
+    mutationFn: (ref: SkillRef) => api.attachSkillItem(name, ref),
     success: "Attached",
   });
   const detach = useApiMutation({
-    mutationFn: (itemId: number) => api.detachSkillItem(name, itemId),
+    mutationFn: (ref: SkillRef) => api.detachSkillItem(name, ref),
     success: "Detached",
     onSuccess: () => setDetaching(null),
   });
@@ -51,10 +51,14 @@ export function SkillsTab({ name, detail }: { name: string; detail: SandboxDetai
   });
 
   const skills = detail.skills ?? [];
-  const desiredIds = new Set(skills.filter((skill) => !skill.orphan).map((skill) => skill.id));
-  const available = (items.data ?? []).filter((item) => !desiredIds.has(item.id));
+  const desiredKeys = new Set(skills.filter((skill) => !skill.orphan).map(skillRefKey));
+  const available = (items.data ?? []).filter((item) => !desiredKeys.has(skillRefKey(item)));
   const groups = skillMenuGroups(available);
   const drift = skills.filter((skill) => !skill.orphan && !skill.missing && !skill.conflict && !skill.mounted);
+  const pick = (key: string) => {
+    const item = available.find((entry) => skillRefKey(entry) === key);
+    if (item) attach.mutate({ store: item.store, kind: item.kind, name: item.name });
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -109,7 +113,7 @@ export function SkillsTab({ name, detail }: { name: string; detail: SandboxDetai
             </thead>
             <tbody>
               {skills.map((skill) => (
-                <TRow key={skill.orphan ? `orphan:${skill.target}` : `item:${skill.id}`}>
+                <TRow key={skill.orphan ? `orphan:${skill.target}` : skillRefKey(skill)}>
                   <TD>{skill.orphan ? <Badge tone="warning">manual</Badge> : <KindBadge kind={skill.kind} />}</TD>
                   <TD className="font-medium">{skill.orphan ? "—" : skill.name}</TD>
                   <TD className="text-muted">{skill.orphan ? "—" : skill.store_name || "—"}</TD>
@@ -146,7 +150,7 @@ export function SkillsTab({ name, detail }: { name: string; detail: SandboxDetai
         ) : (
           <MenuSelect
             groups={groups}
-            onChange={(itemId) => attach.mutate(Number(itemId))}
+            onChange={pick}
             placeholder="Choose a skill or command…"
             searchPlaceholder="Search skills and commands…"
             disabled={!detail.sandbox.running || attach.isPending}
@@ -161,7 +165,10 @@ export function SkillsTab({ name, detail }: { name: string; detail: SandboxDetai
         body="The direct selection is removed and the mount released when the sandbox is running. If a profile still selects it, it stays mounted."
         confirmLabel="Detach"
         busy={detach.isPending}
-        onConfirm={() => detaching && detach.mutate(detaching.id)}
+        onConfirm={() =>
+          detaching &&
+          detach.mutate({ store: detaching.store, kind: detaching.kind, name: detaching.name })
+        }
         onClose={() => setDetaching(null)}
       />
     </div>

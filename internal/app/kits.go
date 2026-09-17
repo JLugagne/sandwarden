@@ -2,9 +2,7 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -12,18 +10,34 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JLugagne/sandwarden/internal/fleet"
 	"github.com/JLugagne/sandwarden/internal/kits"
 	"github.com/JLugagne/sandwarden/internal/sbx"
 	"github.com/JLugagne/sandwarden/internal/skills"
 	"github.com/JLugagne/sandwarden/internal/store"
 )
 
+// KitStoreView is a kit repository registration plus its checkout and sync
+// state.
+type KitStoreView struct {
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	URL         string `json:"url"`
+	Ref         string `json:"ref"`
+	Auth        string `json:"auth"`
+	Path        string `json:"path"`
+	SyncedAt    string `json:"synced_at"`
+	Error       string `json:"error"`
+}
+
 // KitItemView is one catalog kit with the reference usable at create time and
 // its parsed spec for the detail view.
 type KitItemView struct {
 	store.KitItem
-	Ref  string      `json:"ref"`
-	Spec sbx.KitSpec `json:"spec"`
+	StoreName string      `json:"store_name"`
+	Ref       string      `json:"ref"`
+	Spec      sbx.KitSpec `json:"spec"`
 }
 
 // KitValidation is the verdict of `sbx kit validate`.
@@ -33,38 +47,111 @@ type KitValidation struct {
 }
 
 // ListKitStores returns every registered kit repository.
-func (a *App) ListKitStores(ctx context.Context) ([]store.KitStore, error) {
-	return a.Store.ListKitStores(ctx)
+func (a *App) ListKitStores(ctx context.Context) ([]KitStoreView, error) {
+	states, err := a.Store.StoreStates(ctx, string(fleet.StoreKits))
+	if err != nil {
+		return nil, err
+	}
+	stores := a.Fleet.Stores(fleet.StoreKits)
+	out := make([]KitStoreView, 0, len(stores))
+	for _, reg := range stores {
+		out = append(out, kitStoreView(*reg, states[reg.Slug]))
+	}
+	return out, nil
 }
 
-// ListKitItems returns the discovered kits of one repository, or of every
-// repository when storeID is zero.
-func (a *App) ListKitItems(ctx context.Context, storeID int64) ([]KitItemView, error) {
-	var (
-		items []store.KitItem
-		err   error
-	)
-	if storeID == 0 {
-		items, err = a.Store.ListAllKitItems(ctx)
-	} else {
-		items, err = a.Store.ListKitItems(ctx, storeID)
+// CreateKitStore registers a kit repository, checks it out and discovers its
+// kits.
+func (a *App) CreateKitStore(ctx context.Context, input StoreInput) (KitStoreView, error) {
+	if err := validateStoreInput(input); err != nil {
+		return KitStoreView{}, err
 	}
+	reg, err := a.Fleet.CreateStore(fleet.StoreReg{
+		Kind:        fleet.StoreKits,
+		Name:        strings.TrimSpace(input.Name),
+		Description: strings.TrimSpace(input.Description),
+		URL:         strings.TrimSpace(input.URL),
+		Ref:         strings.TrimSpace(input.Ref),
+		Auth:        strings.TrimSpace(input.Auth),
+	})
+	if err != nil {
+		return KitStoreView{}, err
+	}
+	_, _ = a.syncKitStore(ctx, reg)
+	a.Notify(TopicKits)
+	return a.kitStoreView(ctx, *reg), nil
+}
+
+// UpdateKitStore rewrites a registration and re-syncs when the source
+// changed.
+func (a *App) UpdateKitStore(ctx context.Context, slug string, input StoreInput) (KitStoreView, error) {
+	if err := validateStoreInput(input); err != nil {
+		return KitStoreView{}, err
+	}
+	reg, ok := a.Fleet.Store(fleet.StoreKits, slug)
+	if !ok {
+		return KitStoreView{}, store.ErrNotFound
+	}
+	changed := reg.URL != strings.TrimSpace(input.URL) || reg.Ref != strings.TrimSpace(input.Ref) || reg.Auth != strings.TrimSpace(input.Auth)
+	reg.Name = strings.TrimSpace(input.Name)
+	reg.Description = strings.TrimSpace(input.Description)
+	reg.URL = strings.TrimSpace(input.URL)
+	reg.Ref = strings.TrimSpace(input.Ref)
+	reg.Auth = strings.TrimSpace(input.Auth)
+	if err := a.Fleet.SaveStore(reg); err != nil {
+		return KitStoreView{}, err
+	}
+	if changed {
+		_, _ = a.syncKitStore(ctx, reg)
+	}
+	a.Notify(TopicKits)
+	return a.kitStoreView(ctx, *reg), nil
+}
+
+// DeleteKitStore forgets a repository, its checkout and its catalog.
+func (a *App) DeleteKitStore(ctx context.Context, slug string) error {
+	reg, ok := a.Fleet.Store(fleet.StoreKits, slug)
+	if !ok {
+		return store.ErrNotFound
+	}
+	if err := a.Fleet.DeleteStore(fleet.StoreKits, slug); err != nil {
+		return err
+	}
+	if err := a.Store.DeleteStoreCatalog(ctx, string(fleet.StoreKits), slug); err != nil {
+		return err
+	}
+	if err := a.Store.DeleteStoreState(ctx, string(fleet.StoreKits), slug); err != nil {
+		return err
+	}
+	_ = os.RemoveAll(storeCheckoutPath(fleet.StoreKits, reg.Slug))
+	a.Notify(TopicKits)
+	return nil
+}
+
+// RefreshKitStore re-runs the checkout and discovery.
+func (a *App) RefreshKitStore(ctx context.Context, slug string) (KitStoreView, error) {
+	reg, ok := a.Fleet.Store(fleet.StoreKits, slug)
+	if !ok {
+		return KitStoreView{}, store.ErrNotFound
+	}
+	_, err := a.syncKitStore(ctx, reg)
+	a.Notify(TopicKits)
+	return a.kitStoreView(ctx, *reg), err
+}
+
+// ListKitItems returns the discovered kits of one store, or of every store
+// when storeSlug is empty.
+func (a *App) ListKitItems(ctx context.Context, storeSlug string) ([]KitItemView, error) {
+	items, err := a.Store.ListKitItems(ctx, storeSlug)
 	if err != nil {
 		return nil, err
-	}
-	stores, err := a.Store.ListKitStores(ctx)
-	if err != nil {
-		return nil, err
-	}
-	byID := make(map[int64]store.KitStore, len(stores))
-	for _, s := range stores {
-		byID[s.ID] = s
 	}
 	out := make([]KitItemView, 0, len(items))
 	for _, item := range items {
 		view := KitItemView{KitItem: item}
-		if s, ok := byID[item.StoreID]; ok {
-			view.Ref = kitReference(s, item.RelPath)
+		if reg, ok := a.Fleet.Store(fleet.StoreKits, item.Store); ok {
+			view.StoreName = reg.Name
+			view.Ref = kitReference(*reg, item.RelPath)
 		}
 		if strings.TrimSpace(item.Spec) != "" {
 			_ = json.Unmarshal([]byte(item.Spec), &view.Spec)
@@ -74,108 +161,40 @@ func (a *App) ListKitItems(ctx context.Context, storeID int64) ([]KitItemView, e
 	return out, nil
 }
 
-// CreateKitStore registers a repository and performs its first checkout.
-func (a *App) CreateKitStore(ctx context.Context, input store.KitStore) (store.KitStore, error) {
-	normalized, err := normalizeKitStore(input)
-	if err != nil {
-		return store.KitStore{}, err
-	}
-	path, err := kitStoreCheckoutPath(normalized.Name)
-	if err != nil {
-		return store.KitStore{}, err
-	}
-	normalized.Path = path
-	created, err := a.Store.CreateKitStore(ctx, normalized)
-	if err != nil {
-		return store.KitStore{}, err
-	}
-	return a.syncKitStore(ctx, created)
-}
-
-// UpdateKitStore rewrites a registration and re-checks out its source when the
-// url or ref changed.
-func (a *App) UpdateKitStore(ctx context.Context, id int64, input store.KitStore) (store.KitStore, error) {
-	current, err := a.Store.GetKitStore(ctx, id)
-	if err != nil {
-		return store.KitStore{}, err
-	}
-	normalized, err := normalizeKitStore(input)
-	if err != nil {
-		return store.KitStore{}, err
-	}
-	normalized.ID = id
-	if err := a.Store.UpdateKitStore(ctx, normalized); err != nil {
-		return store.KitStore{}, err
-	}
-	saved, err := a.Store.GetKitStore(ctx, id)
-	if err != nil {
-		return store.KitStore{}, err
-	}
-	if saved.URL != current.URL || saved.Ref != current.Ref || saved.Auth != current.Auth {
-		return a.syncKitStore(ctx, saved)
-	}
-	return saved, nil
-}
-
-// DeleteKitStore removes a repository, its checkout and its catalog.
-func (a *App) DeleteKitStore(ctx context.Context, id int64) error {
-	current, err := a.Store.GetKitStore(ctx, id)
-	if err != nil {
-		return err
-	}
-	if err := a.Store.DeleteKitStore(ctx, id); err != nil {
-		return err
-	}
-	if strings.TrimSpace(current.Path) != "" {
-		_ = os.RemoveAll(current.Path)
-	}
-	return nil
-}
-
-// RefreshKitStore re-checks out a repository and rebuilds its catalog.
-func (a *App) RefreshKitStore(ctx context.Context, id int64) (store.KitStore, error) {
-	current, err := a.Store.GetKitStore(ctx, id)
-	if err != nil {
-		return store.KitStore{}, err
-	}
-	return a.syncKitStore(ctx, current)
-}
-
-// KitValidate runs `sbx kit validate` on one catalog kit.
-func (a *App) KitValidate(ctx context.Context, itemID int64) (KitValidation, error) {
-	item, err := a.Store.GetKitItem(ctx, itemID)
+// KitValidate runs `sbx kit validate` over one catalog kit.
+func (a *App) KitValidate(ctx context.Context, storeSlug, name string) (KitValidation, error) {
+	item, err := a.Store.GetKitItem(ctx, storeSlug, name)
 	if err != nil {
 		return KitValidation{}, err
 	}
-	storeRow, err := a.Store.GetKitStore(ctx, item.StoreID)
+	reg, ok := a.Fleet.Store(fleet.StoreKits, storeSlug)
+	if !ok {
+		return KitValidation{}, fmt.Errorf("kit store %q not found", storeSlug)
+	}
+	dir := filepath.Join(storeCheckoutPath(fleet.StoreKits, reg.Slug), filepath.FromSlash(item.RelPath))
+	output, err := a.Sbx.KitValidate(ctx, dir)
 	if err != nil {
-		return KitValidation{}, err
+		return KitValidation{OK: false, Output: err.Error()}, nil
 	}
-	path := kitItemPath(storeRow, item)
-	output, runErr := a.Sbx.KitValidate(ctx, path)
-	if runErr != nil {
-		return KitValidation{OK: false, Output: strings.TrimSpace(output)}, nil
-	}
-	return KitValidation{OK: true, Output: strings.TrimSpace(output)}, nil
+	return KitValidation{OK: true, Output: output}, nil
 }
 
-// syncKitStore re-checks out a repository, discovers its kits through
-// `sbx kit inspect` and replaces the catalog. Checkout failures are recorded on
-// the store instead of returned so the registration stays editable.
-func (a *App) syncKitStore(ctx context.Context, current store.KitStore) (store.KitStore, error) {
-	if err := skills.Checkout(ctx, current.Path, current.URL, current.Ref, skills.Auth(current.Auth)); err != nil {
-		return a.markKitStoreSync(ctx, current, "", err)
+func (a *App) syncKitStore(ctx context.Context, reg *fleet.StoreReg) (*fleet.StoreReg, error) {
+	path := storeCheckoutPath(fleet.StoreKits, reg.Slug)
+	if err := skills.Checkout(ctx, path, reg.URL, reg.Ref, skills.Auth(reg.Auth)); err != nil {
+		_ = a.Store.SetStoreSync(ctx, string(fleet.StoreKits), reg.Slug, "", err.Error())
+		return reg, err
 	}
-	candidates, err := kits.Discover(current.Path)
+	candidates, err := kits.Discover(path)
 	if err != nil {
-		return a.markKitStoreSync(ctx, current, "", err)
+		_ = a.Store.SetStoreSync(ctx, string(fleet.StoreKits), reg.Slug, "", err.Error())
+		return reg, err
 	}
 	items := make([]store.KitItem, 0, len(candidates))
 	skipped := 0
 	var firstSkip error
 	for _, candidate := range candidates {
-		ref := filepath.Join(current.Path, filepath.FromSlash(candidate.RelPath))
-		spec, err := a.Sbx.KitInspect(ctx, ref)
+		spec, err := a.Sbx.KitInspect(ctx, filepath.Join(path, filepath.FromSlash(candidate.RelPath)))
 		if err != nil {
 			skipped++
 			if firstSkip == nil {
@@ -185,13 +204,15 @@ func (a *App) syncKitStore(ctx context.Context, current store.KitStore) (store.K
 		}
 		raw, err := json.Marshal(spec)
 		if err != nil {
-			return store.KitStore{}, err
+			_ = a.Store.SetStoreSync(ctx, string(fleet.StoreKits), reg.Slug, "", err.Error())
+			return reg, err
 		}
 		name := strings.TrimSpace(spec.Name)
 		if name == "" {
 			name = candidate.Name
 		}
 		items = append(items, store.KitItem{
+			Store:         reg.Slug,
 			Kind:          strings.TrimSpace(spec.Kind),
 			Name:          name,
 			DisplayName:   spec.DisplayName,
@@ -203,150 +224,54 @@ func (a *App) syncKitStore(ctx context.Context, current store.KitStore) (store.K
 			Spec:          string(raw),
 		})
 	}
-	if err := a.Store.ReplaceKitItems(ctx, current.ID, items); err != nil {
-		return store.KitStore{}, err
+	if err := a.Store.ReplaceKitItems(ctx, reg.Slug, items); err != nil {
+		_ = a.Store.SetStoreSync(ctx, string(fleet.StoreKits), reg.Slug, "", err.Error())
+		return reg, err
 	}
 	var syncErr error
 	if skipped > 0 {
 		syncErr = fmt.Errorf("%d kit(s) skipped: %s", skipped, firstSkip)
 	}
-	if err := a.allowKitSource(ctx, current.URL); err != nil {
+	if err := a.allowKitSource(ctx, reg.URL); err != nil {
 		if syncErr == nil {
 			syncErr = err
 		} else {
 			syncErr = fmt.Errorf("%w; %v", syncErr, err)
 		}
 	}
-	return a.markKitStoreSync(ctx, current, time.Now().UTC().Format(time.RFC3339), syncErr)
-}
-
-func (a *App) markKitStoreSync(ctx context.Context, current store.KitStore, syncedAt string, syncErr error) (store.KitStore, error) {
 	message := ""
 	if syncErr != nil {
 		message = syncErr.Error()
 	}
-	if err := a.Store.MarkKitStoreSynced(ctx, current.ID, syncedAt, message); err != nil {
-		return store.KitStore{}, err
+	if err := a.Store.SetStoreSync(ctx, string(fleet.StoreKits), reg.Slug, time.Now().UTC().Format(time.RFC3339), message); err != nil {
+		return reg, err
 	}
-	return a.Store.GetKitStore(ctx, current.ID)
+	return reg, nil
 }
 
-// kitItemPath resolves a catalog kit to its directory in the checkout.
-func kitItemPath(s store.KitStore, item store.KitItem) string {
-	return filepath.Join(s.Path, filepath.FromSlash(item.RelPath))
+func (a *App) kitStoreView(ctx context.Context, reg fleet.StoreReg) KitStoreView {
+	states, _ := a.Store.StoreStates(ctx, string(fleet.StoreKits))
+	return kitStoreView(reg, states[reg.Slug])
 }
 
-// kitReference builds the `git+…` reference `sbx create --kit` accepts for a
-// kit discovered in a repository checkout.
-func kitReference(s store.KitStore, relPath string) string {
-	url := strings.TrimSpace(s.URL)
-	if url == "" {
-		return ""
+func kitStoreView(reg fleet.StoreReg, state store.StoreState) KitStoreView {
+	return KitStoreView{
+		Slug:        reg.Slug,
+		Name:        reg.Name,
+		Description: reg.Description,
+		URL:         reg.URL,
+		Ref:         reg.Ref,
+		Auth:        reg.Auth,
+		Path:        storeCheckoutPath(fleet.StoreKits, reg.Slug),
+		SyncedAt:    state.SyncedAt,
+		Error:       state.Error,
 	}
-	ref := url
-	if !strings.HasPrefix(ref, "git+") {
-		ref = "git+" + ref
-	}
-	var params []string
-	if rel := strings.Trim(strings.TrimSpace(filepath.ToSlash(relPath)), "/"); rel != "" && rel != "." {
-		params = append(params, "dir="+rel)
-	}
-	if pinned := strings.TrimSpace(s.Ref); pinned != "" {
-		params = append(params, "ref="+pinned)
-	}
-	if len(params) > 0 {
-		ref += "#" + strings.Join(params, "&")
-	}
-	return ref
 }
 
-func normalizeKitStore(input store.KitStore) (store.KitStore, error) {
-	input.Name = strings.TrimSpace(input.Name)
-	input.URL = strings.TrimSpace(input.URL)
-	input.Ref = strings.TrimSpace(input.Ref)
-	input.Auth = strings.TrimSpace(input.Auth)
-	if input.Name == "" {
-		return store.KitStore{}, errors.New("kit repository name is required")
-	}
-	if input.URL == "" {
-		return store.KitStore{}, errors.New("git url is required")
-	}
-	if err := skills.ValidateAuthURL(input.URL, skills.Auth(input.Auth)); err != nil {
-		return store.KitStore{}, err
-	}
-	return input, nil
-}
-
-// kitStoreCheckoutPath allocates a stable, collision-free directory for a kit
-// repository checkout under the XDG data directory.
-func kitStoreCheckoutPath(name string) (string, error) {
-	slug := skillSlug(name)
-	if slug == "" {
-		return "", errors.New("kit repository name must contain letters or digits")
-	}
-	suffix := make([]byte, 3)
-	if _, err := rand.Read(suffix); err != nil {
-		return "", err
-	}
-	root := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		root = filepath.Join(home, ".local", "share")
-	}
-	return filepath.Join(root, "sandwarden", "kit-stores", fmt.Sprintf("%s-%x", slug, suffix)), nil
-}
-
-// kitAllowedSourcesKey is the sbx setting listing the kit source prefixes a
-// sandbox may install kits from.
 const kitAllowedSourcesKey = "kit.allowedSources"
 
-// kitSourcePrefix derives the `kit.allowedSources` entry that admits a kit
-// repository URL: host and path, without scheme, credentials, port or `.git`.
-// Local sources (file:// URLs or plain paths) have no remote prefix and
-// return "".
-func kitSourcePrefix(rawURL string) string {
-	raw := strings.TrimSpace(rawURL)
-	raw = strings.TrimPrefix(raw, "git+")
-	if raw == "" {
-		return ""
-	}
-	var host, path string
-	if strings.Contains(raw, "://") {
-		parsed, err := url.Parse(raw)
-		if err != nil {
-			return ""
-		}
-		host, path = parsed.Hostname(), parsed.Path
-	} else {
-		// scp-like syntax: [user@]host:path
-		rest := raw
-		if at := strings.Index(rest, "@"); at >= 0 {
-			rest = rest[at+1:]
-		}
-		colon := strings.Index(rest, ":")
-		if colon < 0 {
-			return ""
-		}
-		host, path = rest[:colon], rest[colon+1:]
-	}
-	if host == "" {
-		return ""
-	}
-	host = strings.ToLower(host)
-	path = strings.Trim(strings.TrimSuffix(path, ".git"), "/")
-	if path == "" {
-		return host
-	}
-	return host + "/" + path
-}
-
-// allowKitSource makes sure a kit repository URL is admitted by the
-// `kit.allowedSources` setting, merging the URL's host and path prefix into
-// the existing list. It is a no-op for local sources or when an entry already
-// admits the source.
+// allowKitSource merges a repository's host and path prefix into the sbx
+// kit.allowedSources setting.
 func (a *App) allowKitSource(ctx context.Context, rawURL string) error {
 	source := kitSourcePrefix(rawURL)
 	if source == "" {
@@ -378,8 +303,66 @@ func (a *App) allowKitSource(ctx context.Context, rawURL string) error {
 	return nil
 }
 
-// kitSourceAllowed reports whether an allowlist entry admits source, following
-// sbx's path-segment prefix rule. "*" admits every remote source.
+// kitReference builds the `git+…#dir=…&ref=…` reference of a catalog kit.
+func kitReference(reg fleet.StoreReg, relPath string) string {
+	url := strings.TrimSpace(reg.URL)
+	if url == "" {
+		return ""
+	}
+	ref := url
+	if !strings.HasPrefix(ref, "git+") {
+		ref = "git+" + ref
+	}
+	var params []string
+	if rel := strings.Trim(strings.TrimSpace(filepath.ToSlash(relPath)), "/"); rel != "" && rel != "." {
+		params = append(params, "dir="+rel)
+	}
+	if pinned := strings.TrimSpace(reg.Ref); pinned != "" {
+		params = append(params, "ref="+pinned)
+	}
+	if len(params) > 0 {
+		ref += "#" + strings.Join(params, "&")
+	}
+	return ref
+}
+
+// kitSourcePrefix reduces a repository URL to the host and path prefix
+// allowed in the sandboxd setting.
+func kitSourcePrefix(rawURL string) string {
+	raw := strings.TrimSpace(rawURL)
+	raw = strings.TrimPrefix(raw, "git+")
+	if raw == "" {
+		return ""
+	}
+	var host, path string
+	if strings.Contains(raw, "://") {
+		parsed, err := url.Parse(raw)
+		if err != nil {
+			return ""
+		}
+		host, path = parsed.Hostname(), parsed.Path
+	} else {
+		rest := raw
+		if at := strings.Index(rest, "@"); at >= 0 {
+			rest = rest[at+1:]
+		}
+		colon := strings.Index(rest, ":")
+		if colon < 0 {
+			return ""
+		}
+		host, path = rest[:colon], rest[colon+1:]
+	}
+	if host == "" {
+		return ""
+	}
+	host = strings.ToLower(host)
+	path = strings.Trim(strings.TrimSuffix(path, ".git"), "/")
+	if path == "" {
+		return host
+	}
+	return host + "/" + path
+}
+
 func kitSourceAllowed(entry, source string) bool {
 	entry = strings.ToLower(strings.Trim(strings.TrimSpace(entry), "/"))
 	if entry == "" {

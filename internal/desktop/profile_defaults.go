@@ -1,43 +1,43 @@
 package desktop
 
-import "github.com/JLugagne/sandwarden/internal/store"
+import "github.com/JLugagne/sandwarden/internal/fleet"
 
-// AddProfileMount declares a default bind mount on a profile.
-func (d *Desktop) AddProfileMount(profileID int64, req ProfileMountRequest) (store.ProfileMount, error) {
-	return d.app.AddProfileMount(d.root, profileID, req.HostPath, req.TargetPath, req.ReadOnly)
+// AddProfileMount declares a mount on a profile.
+func (d *Desktop) AddProfileMount(profileSlug string, req ProfileMountRequest) (fleet.MountRef, error) {
+	return d.app.AddProfileMount(d.root, profileSlug, req.HostPath, req.TargetPath, req.ReadOnly)
 }
 
-// RemoveProfileMount deletes a default bind mount from a profile.
-func (d *Desktop) RemoveProfileMount(profileID, mountID int64) error {
-	return d.app.RemoveProfileMount(d.root, profileID, mountID)
+// RemoveProfileMount drops a mount from a profile and detaches it.
+func (d *Desktop) RemoveProfileMount(profileSlug, hostPath, targetPath string) error {
+	return d.app.RemoveProfileMount(d.root, profileSlug, hostPath, targetPath)
 }
 
-// AddProfileCache defaults a shared cache on a profile.
-func (d *Desktop) AddProfileCache(profileID, cacheID int64) error {
-	return d.app.AddProfileCache(d.root, profileID, cacheID)
+// AddProfileCache adds a shared cache to a profile.
+func (d *Desktop) AddProfileCache(profileSlug, cacheSlug string) error {
+	return d.app.AddProfileCache(d.root, profileSlug, cacheSlug)
 }
 
-// RemoveProfileCache stops defaulting a shared cache from a profile.
-func (d *Desktop) RemoveProfileCache(profileID, cacheID int64) error {
-	return d.app.RemoveProfileCache(d.root, profileID, cacheID)
+// RemoveProfileCache drops a shared cache from a profile.
+func (d *Desktop) RemoveProfileCache(profileSlug, cacheSlug string) error {
+	return d.app.RemoveProfileCache(d.root, profileSlug, cacheSlug)
 }
 
-// DetachProfileMount opts a sandbox out of one profile default mount.
-func (d *Desktop) DetachProfileMount(name string, mountID int64) error {
-	return d.app.DetachProfileMount(d.root, name, mountID)
+// DetachProfileMount opts a sandbox out of one profile mount.
+func (d *Desktop) DetachProfileMount(name, hostPath, targetPath string) error {
+	return d.app.DetachProfileMount(d.root, name, hostPath, targetPath)
 }
 
-// ApplyProfileMount re-enables a profile default mount on a sandbox.
-func (d *Desktop) ApplyProfileMount(name string, mountID int64) error {
-	return d.app.ApplyProfileMount(d.root, name, mountID)
+// ApplyProfileMount clears the opt-out and attaches the mount.
+func (d *Desktop) ApplyProfileMount(name, hostPath, targetPath string) error {
+	return d.app.ApplyProfileMount(d.root, name, hostPath, targetPath)
 }
 
-// DetachProfileCache opts a sandbox out of one profile default cache.
-func (d *Desktop) DetachProfileCache(name string, cacheID int64) error {
-	return d.app.DetachProfileCache(d.root, name, cacheID)
+// DetachProfileCache opts a sandbox out of one profile cache.
+func (d *Desktop) DetachProfileCache(name, cacheSlug string) error {
+	return d.app.DetachProfileCache(d.root, name, cacheSlug)
 }
 
-// ApplyProfileCache re-enables a profile default cache on a sandbox.
-func (d *Desktop) ApplyProfileCache(name string, cacheID int64) error {
-	return d.app.ApplyProfileCache(d.root, name, cacheID)
+// ApplyProfileCache clears the opt-out and attaches the cache.
+func (d *Desktop) ApplyProfileCache(name, cacheSlug string) error {
+	return d.app.ApplyProfileCache(d.root, name, cacheSlug)
 }

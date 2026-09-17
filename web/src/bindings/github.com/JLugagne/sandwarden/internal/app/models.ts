@@ -3,10 +3,35 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as sbx$0 from "../sbx/models.js";
+import * as fleet$0 from "../fleet/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as store$0 from "../store/models.js";
+import * as sbx$0 from "../sbx/models.js";
+
+/**
+ * ApplyReport summarises one convergence pass over a sandbox's files.
+ */
+export interface ApplyReport {
+    "rules_applied": number;
+    "mounts_applied": number;
+    "caches_applied": number;
+    "skills_applied": number;
+    "skills_removed": number;
+    "warnings": string[] | null;
+    "errors": string[] | null;
+}
+
+/**
+ * ConfigFile is one configuration file of a sandbox or profile, as shown by
+ * the read-only viewer. Error is set when the file is missing, too large or
+ * invalid; Content still carries the raw text when it could be read.
+ */
+export interface ConfigFile {
+    "name": string;
+    "path": string;
+    "content": string;
+    "error"?: string;
+}
 
 /**
  * ConnectInfo carries the CLI commands that attach to a sandbox's agent.
@@ -26,6 +51,27 @@ export interface Event {
 }
 
 /**
+ * ImportReport is the result of one bulk import pass.
+ */
+export interface ImportReport {
+    "results": ImportResult[] | null;
+    "created": number;
+    "configured": number;
+    "failed": number;
+}
+
+/**
+ * ImportResult is the outcome of importing one daemon sandbox into the config
+ * directory.
+ */
+export interface ImportResult {
+    "name": string;
+    "status": string;
+    "incomplete": boolean;
+    "error"?: string;
+}
+
+/**
  * JobView is the queryable state of a job.
  */
 export interface JobView {
@@ -36,13 +82,22 @@ export interface JobView {
 }
 
 /**
+ * KitAddResult is the outcome of attaching a mixin kit to an existing
+ * sandbox: the sbx CLI output plus the sidecar convergence pass that follows.
+ */
+export interface KitAddResult {
+    "sandbox": string;
+    "ref": string;
+    "output"?: string;
+    "report": ApplyReport;
+}
+
+/**
  * KitItemView is one catalog kit with the reference usable at create time and
  * its parsed spec for the detail view.
  */
 export interface KitItemView {
-    "id": number;
-    "store_id": number;
-    "store_name": string;
+    "store": string;
     "kind": string;
     "name": string;
     "display_name": string;
@@ -51,8 +106,25 @@ export interface KitItemView {
     "image": string;
     "requires_agent": string;
     "rel_path": string;
+    "store_name": string;
     "ref": string;
     "spec": sbx$0.KitSpec;
+}
+
+/**
+ * KitStoreView is a kit repository registration plus its checkout and sync
+ * state.
+ */
+export interface KitStoreView {
+    "slug": string;
+    "name": string;
+    "description": string;
+    "url": string;
+    "ref": string;
+    "auth": string;
+    "path": string;
+    "synced_at": string;
+    "error": string;
 }
 
 /**
@@ -64,38 +136,47 @@ export interface KitValidation {
 }
 
 /**
- * ProfileView is a profile with its rules and the sandboxes it is assigned to.
+ * ProfileRef is a profile as referenced by one sandbox.
+ */
+export interface ProfileRef {
+    "slug": string;
+    "name": string;
+    "default": boolean;
+    "global": boolean;
+}
+
+/**
+ * ProfileView is a profile file plus its derived links.
  */
 export interface ProfileView {
-    "id": number;
+    "slug": string;
     "name": string;
     "description": string;
-    "is_default": boolean;
-    "is_global": boolean;
-    "created_at": string;
-    "updated_at": string;
-    "rules": store$0.Rule[] | null;
-    "items": store$0.SkillItem[] | null;
-    "mounts": store$0.ProfileMount[] | null;
-    "caches": store$0.CacheMount[] | null;
+    "default": boolean;
+    "global": boolean;
+    "allow": string[] | null;
+    "deny": string[] | null;
+    "mounts": fleet$0.MountRef[] | null;
+    "caches": string[] | null;
+    "skills": fleet$0.SkillRef[] | null;
     "sandboxes": string[] | null;
 }
 
 /**
  * SandboxCache is a configured cache plus its live attachment state for one
  * sandbox.
+ * SandboxCache is a configured cache plus its live attachment state for one
+ * sandbox.
  */
 export interface SandboxCache {
-    "id": number;
+    "slug": string;
     "name": string;
     "description": string;
     "host_path": string;
     "target_path": string;
     "read_only": boolean;
-    "auto_attach": boolean;
-    "enabled": boolean;
-    "created_at": string;
-    "updated_at": string;
+    "auto_attach": boolean | null;
+    "enabled": boolean | null;
     "attached": boolean;
     "direct": boolean;
     "profiles": string[] | null;
@@ -107,9 +188,14 @@ export interface SandboxCache {
  */
 export interface SandboxDetail {
     "sandbox": SandboxSummary;
-    "profiles": store$0.Profile[] | null;
+    "profiles": ProfileRef[] | null;
     "mounts": sbx$0.MountInfo[] | null;
     "mounts_error"?: string;
+
+    /**
+     * Incomplete reports a config directory adopted from the daemon without its original create parameters.
+     */
+    "incomplete": boolean;
     "image"?: string;
     "image_digest"?: string;
     "kits"?: string[] | null;
@@ -118,8 +204,19 @@ export interface SandboxDetail {
     "policy_rules": sbx$0.PolicyRule[] | null;
     "caches": SandboxCache[] | null;
     "profile_mounts": SandboxProfileMount[] | null;
+    "direct_mounts": SandboxDirectMount[] | null;
     "additional_workspaces"?: sbx$0.WorkspaceMount[] | null;
     "skills": SandboxSkill[] | null;
+}
+
+/**
+ * SandboxDirectMount is a sandbox-owned declared mount with its live state.
+ */
+export interface SandboxDirectMount {
+    "host_path": string;
+    "target_path": string;
+    "read_only": boolean;
+    "attached": boolean;
 }
 
 /**
@@ -131,29 +228,22 @@ export interface SandboxProfileMount {
     "target_path": string;
     "read_only": boolean;
     "profile_names": string[] | null;
-
-    /**
-     * ProfileMountIDs lists the declaring profile_mounts rows so the UI can
-     * opt out of (or re-enable) every declaration at once.
-     */
-    "profile_mount_ids": number[] | null;
     "opted_out": boolean;
     "attached": boolean;
 }
 
 /**
- * SandboxSkill is a skill or command a sandbox exposes, with its mount target,
- * provenance and live mount state for the Skills tab.
+ * SandboxSkill is a skill or command a sandbox exposes, with its mount
+ * target, provenance and live mount state for the Skills tab.
  */
 export interface SandboxSkill {
-    "id": number;
-    "store_id": number;
-    "store_name": string;
+    "store": string;
     "kind": string;
     "name": string;
     "description": string;
     "plugin": string;
     "rel_path": string;
+    "store_name": string;
     "target": string;
     "sources": string[] | null;
     "mounted": boolean;
@@ -195,15 +285,36 @@ export interface SandboxSummary {
      */
     "memory_used_bytes": number;
     "memory_total_bytes": number;
+
+    /**
+     * Incomplete reports a config directory adopted from the daemon without its original create parameters.
+     */
+    "incomplete": boolean;
 }
 
 /**
- * SkillReconcileResult reports what one reconcile pass changed.
+ * SkillReconcileResult reports one convergence pass.
  */
 export interface SkillReconcileResult {
     "applied": number;
     "removed": number;
     "errors": string[] | null;
+}
+
+/**
+ * SkillStoreView is a skill store registration plus its checkout and sync
+ * state.
+ */
+export interface SkillStoreView {
+    "slug": string;
+    "name": string;
+    "description": string;
+    "url": string;
+    "ref": string;
+    "auth": string;
+    "path": string;
+    "synced_at": string;
+    "error": string;
 }
 
 /**
@@ -254,4 +365,9 @@ export enum Topic {
      * TopicSkills carries the registered skill stores.
      */
     TopicSkills = "skills",
+
+    /**
+     * TopicKits is published when a kit repository or its catalog changes.
+     */
+    TopicKits = "kits",
 };

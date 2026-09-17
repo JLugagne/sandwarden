@@ -5,7 +5,7 @@ import { api } from "@/api/client";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { queryKeys } from "@/store/realtime";
 import { cn } from "@/lib/cn";
-import { defaultTerminal, enabledTerminals, loadTerminalPrefs } from "@/lib/terminals";
+import { defaultTerminal, enabledTerminals, fetchTerminalPrefs, loadTerminalPrefs, type TerminalPrefs } from "@/lib/terminals";
 import { IconChevronDown, IconTerminal } from "./Icons";
 
 const SEGMENT =
@@ -26,12 +26,22 @@ export function OpenInTerminalButton({
   className?: string;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [prefs] = useState(loadTerminalPrefs);
+  const [prefs, setPrefs] = useState<TerminalPrefs>(loadTerminalPrefs);
   const anchorRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const anchorName = `--anchor-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
 
   const terminals = useQuery({ queryKey: queryKeys.terminals, queryFn: api.terminals, staleTime: 60_000 });
+
+  useEffect(() => {
+    let active = true;
+    void fetchTerminalPrefs().then((loaded) => {
+      if (active) setPrefs(loaded);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
   const available = useMemo(() => enabledTerminals(terminals.data ?? [], prefs), [terminals.data, prefs]);
   const preferred = useMemo(() => defaultTerminal(terminals.data ?? [], prefs), [terminals.data, prefs]);
 

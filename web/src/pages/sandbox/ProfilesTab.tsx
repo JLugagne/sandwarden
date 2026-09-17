@@ -12,18 +12,18 @@ export function ProfilesTab({ name, detail }: { name: string; detail: SandboxDet
   const [selected, setSelected] = useState("");
 
   const assign = useApiMutation({
-    mutationFn: (profileId: number) => api.assignProfile(name, profileId),
+    mutationFn: (profileSlug: string) => api.assignProfile(name, profileSlug),
     success: "Profile assigned",
     onSuccess: () => setSelected(""),
   });
   const unassign = useApiMutation({
-    mutationFn: (profileId: number) => api.unassignProfile(name, profileId),
+    mutationFn: (profileSlug: string) => api.unassignProfile(name, profileSlug),
     success: "Profile unassigned",
   });
 
   const assigned = detail.profiles ?? [];
-  const assignedIds = new Set(assigned.map((profile) => profile.id));
-  const available = (profiles.data ?? []).filter((profile) => !assignedIds.has(profile.id));
+  const assignedSlugs = new Set(assigned.map((profile) => profile.slug));
+  const available = (profiles.data ?? []).filter((profile) => !assignedSlugs.has(profile.slug));
 
   return (
     <div className="flex flex-col gap-4">
@@ -45,21 +45,23 @@ export function ProfilesTab({ name, detail }: { name: string; detail: SandboxDet
             </thead>
             <tbody>
               {assigned.map((profile) => (
-                <TRow key={profile.id}>
+                <TRow key={profile.slug}>
                   <TD className="font-medium">{profile.name}</TD>
                   <TD>
                     <span className="flex gap-1.5">
-                      {profile.is_default ? <Badge tone="warning">default</Badge> : null}
-                      {profile.is_global ? <Badge tone="accent">global</Badge> : null}
+                      {profile.default ? <Badge tone="warning">default</Badge> : null}
+                      {profile.global ? <Badge tone="accent">global</Badge> : null}
                     </span>
                   </TD>
-                  <TD className="text-muted">{profile.description || "—"}</TD>
+                  <TD className="text-muted">
+                    {(profiles.data ?? []).find((entry) => entry.slug === profile.slug)?.description || "—"}
+                  </TD>
                   <TD className="text-right">
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => unassign.mutate(profile.id)}
-                      loading={unassign.isPending && unassign.variables === profile.id}
+                      onClick={() => unassign.mutate(profile.slug)}
+                      loading={unassign.isPending && unassign.variables === profile.slug}
                     >
                       Unassign
                     </Button>
@@ -86,7 +88,7 @@ export function ProfilesTab({ name, detail }: { name: string; detail: SandboxDet
             <Select value={selected} onChange={(event) => setSelected(event.target.value)} className="max-w-xs">
               <option value="">Choose a profile…</option>
               {available.map((profile) => (
-                <option key={profile.id} value={profile.id}>
+                <option key={profile.slug} value={profile.slug}>
                   {profile.name}
                 </option>
               ))}
@@ -95,7 +97,7 @@ export function ProfilesTab({ name, detail }: { name: string; detail: SandboxDet
               variant="primary"
               disabled={!selected}
               loading={assign.isPending}
-              onClick={() => assign.mutate(Number(selected))}
+              onClick={() => assign.mutate(selected)}
             >
               Assign
             </Button>

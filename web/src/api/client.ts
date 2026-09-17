@@ -1,30 +1,35 @@
 import { Desktop } from "@/bindings/github.com/JLugagne/sandwarden/internal/desktop";
 import { Notify } from "@/bindings/github.com/JLugagne/sandwarden/internal/desktop/notifier";
+import type { ConfigStaleness, StaleKind } from "@/lib/config";
 import type {
+  AppConfig,
   CacheInput,
-  CacheMount,
+  CacheView,
+  CompleteSandboxRequest,
   CreateSandboxRequest,
   CustomSecretRequest,
   Health,
+  ImportReport,
   ImportSecretsRequest,
   JobView,
+  KitAddResult,
   KitItemView,
   KitStore,
   KitStoreInput,
   KitValidation,
+  MountRef,
   PolicyActionResult,
   PolicyLog,
   PolicyRule,
-  ProfileMount,
   ProfileView,
   RegistrySecretRequest,
-  Rule,
   SandboxDetail,
   SandboxSummary,
   SearchResult,
   SecretList,
   ServiceSecretRequest,
   SkillItem,
+  SkillRef,
   SkillStore,
   SkillStoreInput,
   Template,
@@ -36,9 +41,34 @@ import type {
  * Typed adapter over the Wails bindings. The public surface matches the old
  * REST client so pages did not have to change; the return shapes are kept
  * (`{ job_id }`, `{ result }`, …) because that is what the callers expect.
+ * Identifiers are string slugs everywhere.
  */
 
 const asArray = <T>(value: T[] | null | undefined): T[] => value ?? [];
+
+type FleetCache = Awaited<ReturnType<typeof Desktop.ListCaches>> extends (infer T)[] | null ? T : never;
+
+const cacheView = (cache: FleetCache): CacheView => ({
+  slug: cache.Slug,
+  dir: cache.Dir,
+  name: cache.App.name,
+  description: cache.App.description,
+  host_path: cache.App.host_path,
+  target_path: cache.App.target_path,
+  read_only: cache.App.read_only,
+  auto_attach: cache.App.auto_attach,
+  enabled: cache.App.enabled,
+});
+
+const cacheInput = (input: CacheInput) => ({
+  name: input.name,
+  description: input.description,
+  host_path: input.host_path,
+  target_path: input.target_path,
+  read_only: input.read_only,
+  auto_attach: input.auto_attach,
+  enabled: input.enabled,
+});
 
 export const api = {
   health: () => Desktop.Health() as Promise<Health>,
@@ -46,6 +76,35 @@ export const api = {
   checkUpdates: (force = false) => Desktop.CheckUpdates(force) as Promise<VersionInfo>,
   startDaemon: () => Desktop.StartDaemon(),
   notify: (title: string, body: string) => Notify(title, body),
+
+  getConfig: () => Desktop.GetConfig().then((config) => config as unknown as AppConfig),
+  setConfig: (config: AppConfig) =>
+    Desktop.SetConfig({
+      terminals: {
+        enabled: config.terminals.enabled,
+        default: config.terminals.default,
+      },
+      notifications: config.notifications,
+    }),
+  fleetDir: () => Desktop.FleetDir(),
+  sandboxConfigDir: (slug: string) => Desktop.SandboxConfigDir(slug),
+  profileConfigDir: (slug: string) => Desktop.ProfileConfigDir(slug),
+  readSandboxConfig: (name: string) => Desktop.ReadSandboxConfig(name).then((files) => asArray(files)),
+  readProfileConfig: (slug: string) => Desktop.ReadProfileConfig(slug).then((files) => asArray(files)),
+  reloadFleet: () => Desktop.ReloadFleet().then((errors) => asArray(errors)),
+  configStaleness: () =>
+    Desktop.ConfigStaleness().then(
+      (report): ConfigStaleness => ({
+        stale: Boolean(report?.stale),
+        changed: asArray(report?.changed).map((file) => ({
+          kind: String(file.kind) as StaleKind,
+          slug: file.slug,
+          name: file.name,
+          file: file.file,
+          path: file.path,
+        })),
+      }),
+    ),
 
   terminals: () => Desktop.ListTerminals().then((rows) => asArray(rows) as unknown as Terminal[]),
   openInTerminal: (terminalId: string, dir: string, command: string) =>
@@ -68,6 +127,11 @@ export const api = {
       profile: body.profile ?? "",
       template: body.template ?? "",
       kits: asArray(body.kits),
+      profiles: asArray(body.profiles),
+      caches: asArray(body.caches),
+      skills: asArray(body.skills),
+      run_args: body.run_args ?? "",
+      mounts: asArray(body.mounts),
       publish: asArray(body.publish),
       env: asArray(body.env),
       deny_network: asArray(body.deny_network),
@@ -75,9 +139,24 @@ export const api = {
       attach_caches: body.attach_caches ?? false,
       job_id: body.job_id ?? "",
     }).then((jobID) => ({ job_id: jobID })),
-  deleteSandbox: (name: string, force = false) => Desktop.DeleteSandbox(name, force),
+  deleteSandbox: (name: string, force = false, purgeConfig = false) =>
+    Desktop.DeleteSandbox(name, force, purgeConfig),
+  importSandboxes: (names: string[] = []) =>
+    Desktop.ImportSandboxes({ names }).then((report) => report as unknown as ImportReport),
+  completeSandboxConfig: (name: string, body: CompleteSandboxRequest) =>
+    Desktop.CompleteSandboxConfig(name, body),
   startSandbox: (name: string) => Desktop.StartSandbox(name),
   stopSandbox: (name: string) => Desktop.StopSandbox(name),
+  applySandbox: (name: string, jobID: string) =>
+    Desktop.ApplySandbox(name, jobID).then((id) => ({ job_id: id })),
+  recreateSandbox: (name: string, jobID: string) =>
+    Desktop.RecreateSandbox(name, jobID).then((id) => ({ job_id: id })),
+  attachKit: (name: string, ref: string) =>
+    Desktop.AttachKit(name, ref).then((result) => result as unknown as KitAddResult),
+  validateSandbox: (slug: string) =>
+    Desktop.ValidateSandbox(slug).then((result) => result as unknown as KitValidation),
+  validateProfile: (slug: string) =>
+    Desktop.ValidateProfile(slug).then((result) => result as unknown as KitValidation),
   addMount: (name: string, body: { path: string; target?: string; read_only: boolean }) =>
     Desktop.AddMount(name, {
       path: body.path,
@@ -89,8 +168,8 @@ export const api = {
   exec: (name: string, command: string, jobId: string) =>
     Desktop.Exec(name, { command, job_id: jobId }).then((jobID) => ({ job_id: jobID })),
   setSandboxRunArgs: (name: string, args: string) => Desktop.SetSandboxRunArgs(name, args),
-  assignProfile: (name: string, profileId: number) => Desktop.AssignProfile(name, profileId),
-  unassignProfile: (name: string, profileId: number) => Desktop.UnassignProfile(name, profileId),
+  assignProfile: (name: string, profileSlug: string) => Desktop.AssignProfile(name, profileSlug),
+  unassignProfile: (name: string, profileSlug: string) => Desktop.UnassignProfile(name, profileSlug),
   sandboxPolicy: (name: string) =>
     Desktop.SandboxPolicy(name).then((rules) => asArray(rules) as unknown as PolicyRule[]),
   sandboxPolicyAction: (name: string, action: string, resources: string[]) =>
@@ -105,22 +184,28 @@ export const api = {
   createProfile: (body: { name: string; description: string; is_default: boolean; is_global: boolean }) =>
     Desktop.CreateProfile(body).then((profile) => profile as unknown as ProfileView),
   updateProfile: (
-    id: number,
+    slug: string,
     body: { name: string; description: string; is_default: boolean; is_global: boolean },
-  ) => Desktop.UpdateProfile(id, body).then((profile) => profile as unknown as ProfileView),
-  deleteProfile: (id: number) => Desktop.DeleteProfile(id),
-  addProfileMount: (profileId: number, body: { host_path: string; target_path: string; read_only: boolean }) =>
-    Desktop.AddProfileMount(profileId, body).then((mount) => mount as unknown as ProfileMount),
-  removeProfileMount: (profileId: number, mountId: number) => Desktop.RemoveProfileMount(profileId, mountId),
-  addProfileCache: (profileId: number, cacheId: number) => Desktop.AddProfileCache(profileId, cacheId),
-  removeProfileCache: (profileId: number, cacheId: number) => Desktop.RemoveProfileCache(profileId, cacheId),
-  detachProfileMount: (name: string, mountId: number) => Desktop.DetachProfileMount(name, mountId),
-  applyProfileMount: (name: string, mountId: number) => Desktop.ApplyProfileMount(name, mountId),
-  detachProfileCache: (name: string, cacheId: number) => Desktop.DetachProfileCache(name, cacheId),
-  applyProfileCache: (name: string, cacheId: number) => Desktop.ApplyProfileCache(name, cacheId),
-  addRule: (profileId: number, body: { decision: string; pattern: string }) =>
-    Desktop.AddRule(profileId, body).then((rule) => rule as unknown as Rule),
-  removeRule: (profileId: number, ruleId: number) => Desktop.RemoveRule(profileId, ruleId),
+  ) => Desktop.UpdateProfile(slug, body).then((profile) => profile as unknown as ProfileView),
+  deleteProfile: (slug: string) => Desktop.DeleteProfile(slug),
+  addProfileMount: (profileSlug: string, body: { host_path: string; target_path: string; read_only: boolean }) =>
+    Desktop.AddProfileMount(profileSlug, body).then((mount) => mount as unknown as MountRef),
+  removeProfileMount: (profileSlug: string, hostPath: string, targetPath: string) =>
+    Desktop.RemoveProfileMount(profileSlug, hostPath, targetPath),
+  addProfileCache: (profileSlug: string, cacheSlug: string) =>
+    Desktop.AddProfileCache(profileSlug, cacheSlug),
+  removeProfileCache: (profileSlug: string, cacheSlug: string) =>
+    Desktop.RemoveProfileCache(profileSlug, cacheSlug),
+  detachProfileMount: (name: string, hostPath: string, targetPath: string) =>
+    Desktop.DetachProfileMount(name, hostPath, targetPath),
+  applyProfileMount: (name: string, hostPath: string, targetPath: string) =>
+    Desktop.ApplyProfileMount(name, hostPath, targetPath),
+  detachProfileCache: (name: string, cacheSlug: string) => Desktop.DetachProfileCache(name, cacheSlug),
+  applyProfileCache: (name: string, cacheSlug: string) => Desktop.ApplyProfileCache(name, cacheSlug),
+  addRule: (slug: string, body: { decision: string; pattern: string }) =>
+    Desktop.AddRule(slug, body).then(() => undefined),
+  removeRule: (slug: string, body: { decision: string; pattern: string }) =>
+    Desktop.RemoveRule(slug, body),
 
   secrets: () => Desktop.ListSecrets("").then((list) => list as unknown as SecretList),
   setServiceSecret: (body: ServiceSecretRequest) =>
@@ -183,14 +268,13 @@ export const api = {
   cancelJob: (id: string) => Desktop.CancelJob(id),
   fsPick: (start?: string) => Desktop.PickFolder(start ?? "").then((path) => ({ path })),
 
-  caches: () => Desktop.ListCaches().then((rows) => asArray(rows) as unknown as CacheMount[]),
-  createCache: (body: CacheInput) =>
-    Desktop.CreateCache(body).then((cache) => cache as unknown as CacheMount),
-  updateCache: (id: number, body: CacheInput) =>
-    Desktop.UpdateCache(id, body).then((cache) => cache as unknown as CacheMount),
-  deleteCache: (id: number) => Desktop.DeleteCache(id),
-  attachCache: (name: string, cacheId: number) => Desktop.AttachCache(name, cacheId),
-  detachCache: (name: string, cacheId: number) => Desktop.DetachCache(name, cacheId),
+  caches: () => Desktop.ListCaches().then((rows) => asArray(rows).map(cacheView)),
+  createCache: (body: CacheInput) => Desktop.CreateCache(cacheInput(body)).then(cacheView),
+  updateCache: (slug: string, body: CacheInput) =>
+    Desktop.UpdateCache(slug, cacheInput(body)).then(cacheView),
+  deleteCache: (slug: string) => Desktop.DeleteCache(slug),
+  attachCache: (name: string, cacheSlug: string) => Desktop.AttachCache(name, cacheSlug),
+  detachCache: (name: string, cacheSlug: string) => Desktop.DetachCache(name, cacheSlug),
   reapplyCaches: (name: string) =>
     Desktop.ReapplyCaches(name).then((result) => ({
       applied: result.applied,
@@ -198,8 +282,16 @@ export const api = {
     })),
 
   skillStores: () => Desktop.ListSkillStores().then((rows) => asArray(rows) as unknown as SkillStore[]),
-  skillItems: (storeId = 0) =>
-    Desktop.ListSkillItems(storeId).then((rows) => asArray(rows) as unknown as SkillItem[]),
+  skillItems: async (storeSlug = "") => {
+    const [stores, rows] = await Promise.all([
+      Desktop.ListSkillStores(),
+      Desktop.ListSkillItems(storeSlug),
+    ]);
+    const names = new Map(asArray(stores).map((store) => [store.slug, store.name]));
+    return asArray(rows).map(
+      (item): SkillItem => ({ ...item, store_name: names.get(item.store) ?? item.store }),
+    );
+  },
   createSkillStore: (body: SkillStoreInput) =>
     Desktop.CreateSkillStore({
       name: body.name,
@@ -208,23 +300,23 @@ export const api = {
       ref: body.ref,
       auth: body.auth,
     }).then((store) => store as unknown as SkillStore),
-  updateSkillStore: (id: number, body: SkillStoreInput) =>
-    Desktop.UpdateSkillStore(id, {
+  updateSkillStore: (slug: string, body: SkillStoreInput) =>
+    Desktop.UpdateSkillStore(slug, {
       name: body.name,
       description: body.description,
       url: body.url,
       ref: body.ref,
       auth: body.auth,
     }).then((store) => store as unknown as SkillStore),
-  deleteSkillStore: (id: number) => Desktop.DeleteSkillStore(id),
-  refreshSkillStore: (id: number) =>
-    Desktop.RefreshSkillStore(id).then((store) => store as unknown as SkillStore),
-  addProfileSkillItem: (profileId: number, itemId: number) =>
-    Desktop.AddProfileSkillItem(profileId, itemId),
-  removeProfileSkillItem: (profileId: number, itemId: number) =>
-    Desktop.RemoveProfileSkillItem(profileId, itemId),
-  attachSkillItem: (name: string, itemId: number) => Desktop.AttachSkillItem(name, itemId),
-  detachSkillItem: (name: string, itemId: number) => Desktop.DetachSkillItem(name, itemId),
+  deleteSkillStore: (slug: string) => Desktop.DeleteSkillStore(slug),
+  refreshSkillStore: (slug: string) =>
+    Desktop.RefreshSkillStore(slug).then((store) => store as unknown as SkillStore),
+  addProfileSkillItem: (profileSlug: string, ref: SkillRef) =>
+    Desktop.AddProfileSkillItem(profileSlug, ref),
+  removeProfileSkillItem: (profileSlug: string, ref: SkillRef) =>
+    Desktop.RemoveProfileSkillItem(profileSlug, ref),
+  attachSkillItem: (name: string, ref: SkillRef) => Desktop.AttachSkillItem(name, ref),
+  detachSkillItem: (name: string, ref: SkillRef) => Desktop.DetachSkillItem(name, ref),
   reconcileSkills: (name: string) =>
     Desktop.ReconcileSkills(name).then((result) => ({
       applied: result.applied,
@@ -233,8 +325,8 @@ export const api = {
     })),
 
   kitStores: () => Desktop.ListKitStores().then((rows) => asArray(rows) as unknown as KitStore[]),
-  kitItems: (storeId = 0) =>
-    Desktop.ListKitItems(storeId).then((rows) => asArray(rows) as unknown as KitItemView[]),
+  kitItems: (storeSlug = "") =>
+    Desktop.ListKitItems(storeSlug).then((rows) => asArray(rows) as unknown as KitItemView[]),
   createKitStore: (body: KitStoreInput) =>
     Desktop.CreateKitStore({
       name: body.name,
@@ -243,18 +335,19 @@ export const api = {
       ref: body.ref,
       auth: body.auth,
     }).then((store) => store as unknown as KitStore),
-  updateKitStore: (id: number, body: KitStoreInput) =>
-    Desktop.UpdateKitStore(id, {
+  updateKitStore: (slug: string, body: KitStoreInput) =>
+    Desktop.UpdateKitStore(slug, {
       name: body.name,
       description: body.description,
       url: body.url,
       ref: body.ref,
       auth: body.auth,
     }).then((store) => store as unknown as KitStore),
-  deleteKitStore: (id: number) => Desktop.DeleteKitStore(id),
-  refreshKitStore: (id: number) => Desktop.RefreshKitStore(id).then((store) => store as unknown as KitStore),
-  validateKit: (itemId: number) =>
-    Desktop.KitValidate(itemId).then((result) => result as unknown as KitValidation),
+  deleteKitStore: (slug: string) => Desktop.DeleteKitStore(slug),
+  refreshKitStore: (slug: string) =>
+    Desktop.RefreshKitStore(slug).then((store) => store as unknown as KitStore),
+  validateKit: (storeSlug: string, name: string) =>
+    Desktop.KitValidate(storeSlug, name).then((result) => result as unknown as KitValidation),
 
   search: (query: string) =>
     Desktop.Search(query).then((rows) => asArray(rows) as unknown as SearchResult[]),

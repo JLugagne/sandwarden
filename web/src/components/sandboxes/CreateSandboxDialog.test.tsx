@@ -7,7 +7,7 @@ import { api } from "@/api/client";
 import { ToastProvider } from "@/components/Toaster";
 import { jobHub } from "@/store/jobs";
 import type { KitItemView } from "@/types";
-import { CreateSandboxDialog } from "./CreateSandboxDialog";
+import { CreateSandboxDialog, firstSecretEnvEntry, secretValueReason } from "./CreateSandboxDialog";
 
 afterEach(cleanup);
 
@@ -16,8 +16,7 @@ const linterKitRef = "git+https://github.com/acme/kits#dir=go-linter";
 const formatterKitRef = "git+https://github.com/acme/kits#dir=go-formatter";
 
 const kitItem = (overrides: Partial<KitItemView>): KitItemView => ({
-  id: 1,
-  store_id: 1,
+  store: "acme/kits",
   store_name: "acme/kits",
   kind: "mixin",
   name: "kit",
@@ -33,9 +32,9 @@ const kitItem = (overrides: Partial<KitItemView>): KitItemView => ({
 });
 
 const kitItems: KitItemView[] = [
-  kitItem({ id: 1, kind: "sandbox", name: "go-agent", display_name: "Go Agent Kit", ref: agentKitRef }),
-  kitItem({ id: 2, kind: "mixin", name: "go-linter", display_name: "Go Linter", ref: linterKitRef }),
-  kitItem({ id: 3, kind: "mixin", name: "go-formatter", display_name: "Go Formatter", ref: formatterKitRef }),
+  kitItem({ kind: "sandbox", name: "go-agent", display_name: "Go Agent Kit", ref: agentKitRef }),
+  kitItem({ kind: "mixin", name: "go-linter", display_name: "Go Linter", ref: linterKitRef }),
+  kitItem({ kind: "mixin", name: "go-formatter", display_name: "Go Formatter", ref: formatterKitRef }),
 ];
 
 vi.mock("@/api/client", () => ({
@@ -187,5 +186,83 @@ describe("new sandbox dialog", () => {
 
     fireEvent.click(screen.getAllByTitle("Remove workspace")[1]);
     expect(screen.getAllByPlaceholderText("/absolute/host/path")).toHaveLength(1);
+  });
+
+  it("keeps bare KEY env entries submittable and warns that values are written in clear", async () => {
+    vi.mocked(api.createSandbox).mockClear();
+    renderDialog();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Options/ }));
+    expect(screen.getByText(/written in clear/)).toBeDefined();
+
+    fireEvent.change(screen.getByLabelText(/^Environment/), { target: { value: "ANTHROPIC_API_KEY" } });
+    const create = screen.getByRole("button", { name: "Create" });
+    expect(create.hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(create);
+    await waitFor(() => {
+      expect(api.createSandbox).toHaveBeenCalledWith(expect.objectContaining({ env: ["ANTHROPIC_API_KEY"] }));
+    });
+  });
+
+  it("refuses to submit an env value that looks like a secret", async () => {
+    vi.mocked(api.createSandbox).mockClear();
+    renderDialog();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Options/ }));
+    fireEvent.change(screen.getByLabelText(/^Environment/), {
+      target: { value: "ANTHROPIC_API_KEY=sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH" },
+    });
+
+    expect(await screen.findByText(/ANTHROPIC_API_KEY looks like a secret/)).toBeDefined();
+    const create = screen.getByRole("button", { name: "Create" });
+    expect(create.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(create);
+    expect(api.createSandbox).not.toHaveBeenCalled();
+  });
+});
+
+describe("secret env heuristic", () => {
+  it("accepts empty, short and structured values", () => {
+    for (const value of [
+      "",
+      "true",
+      "debug",
+      "8g",
+      "/usr/local/go",
+      "https://proxy:8080",
+      "some.long.domain.name.example.com",
+      "this_is_a_long_value_with_underscores",
+      "550e8400-e29b-41d4-a716-446655440000",
+    ]) {
+      expect(secretValueReason(value)).toBe("");
+    }
+  });
+
+  it("rejects known prefixes and long high-entropy tokens", () => {
+    for (const value of [
+      "sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH",
+      "ghp_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIII",
+      "gho_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIII",
+      "xoxb-" + "123456789012-abcdefghijklmnop",
+      "xoxp-" + "123456789012-abcdefghijklmnop",
+      "AKIAIOSFODNN7EXAMPLE",
+      "AIzaSyA1234567890abcdefghijklmnopqrst",
+      "glpat-xxxxxxxxxxxxxxxxxxxx",
+      "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA",
+      "9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a",
+      "aB3dE5fG7hI9jK1lM3nO5pQ7rS9tU1vW3xY5zA7bC9dE1fG3h",
+    ]) {
+      expect(secretValueReason(value)).not.toBe("");
+    }
+  });
+
+  it("finds the first offending entry and ignores bare keys", () => {
+    expect(firstSecretEnvEntry("NODE_ENV=development\nANTHROPIC_API_KEY")).toBeNull();
+    expect(firstSecretEnvEntry("ANTHROPIC_API_KEY=\nNODE_ENV=development")).toBeNull();
+    expect(firstSecretEnvEntry("NODE_ENV=development\nGITHUB_TOKEN=ghp_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIII")).toEqual({
+      key: "GITHUB_TOKEN",
+      reason: 'GitHub token prefix "ghp_"',
+    });
   });
 });

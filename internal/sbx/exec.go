@@ -24,6 +24,7 @@ func (c *Client) Exec(ctx context.Context, sandbox string, command []string, out
 	}
 	args := append([]string{"exec", sandbox}, command...)
 	cmd := exec.CommandContext(ctx, BinaryPath(), args...)
+	cmd.WaitDelay = childWaitDelay
 	cmd.Stdout = out
 	cmd.Stderr = out
 	if err := cmd.Run(); err != nil {

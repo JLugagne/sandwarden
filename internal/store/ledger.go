@@ -5,91 +5,89 @@ import (
 	"database/sql"
 )
 
-// AppliedRule records an sbx policy rule that this app created on a profile's
-// behalf, so it can be removed precisely without touching hand-made rules.
-// SandboxName is "" for globally applied rules.
+// The ledger is read-modify-write state: a convergence pass lists a target's
+// rows, installs the missing rules on the daemon and records them. Callers run
+// the whole cycle under the fleet lock (internal/fleet/lock.go) so a concurrent
+// GUI or CLI process sees the first pass's rows and does not duplicate them;
+// the helpers here stay lock-free.
+//
+// AppliedRule is one policy rule the app installed on a profile's behalf. The
+// ledger is what lets sandwarden remove exactly its own rules and never
+// hand-made ones; it is the only runtime state that cannot be derived from
+// the files.
 type AppliedRule struct {
-	ID          int64
-	ProfileID   int64
-	SandboxName string
-	RuleID      string
-	Pattern     string
-	Decision    string
-	CreatedAt   string
+	ID        int64  `json:"id"`
+	Profile   string `json:"profile"`
+	Sandbox   string `json:"sandbox"`
+	RuleID    string `json:"rule_id"`
+	Pattern   string `json:"pattern"`
+	Decision  string `json:"decision"`
+	CreatedAt string `json:"created_at"`
 }
 
-// RecordAppliedRule stores the sbx rule id returned by a policy mutation.
-func (s *Store) RecordAppliedRule(ctx context.Context, profileID int64, sandbox, ruleID, pattern, decision string) error {
+const appliedRuleCols = `id, profile, sandbox, rule_id, pattern, decision, created_at`
+
+// RecordAppliedRule appends one applied rule to the ledger.
+func (s *Store) RecordAppliedRule(ctx context.Context, profile, sandbox, ruleID, pattern, decision string) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO applied_rules (profile_id, sandbox_name, rule_id, pattern, decision, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		profileID, sandbox, ruleID, pattern, decision, now())
+		`INSERT INTO applied_rules (profile, sandbox, rule_id, pattern, decision, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		profile, sandbox, ruleID, pattern, decision, now())
 	return err
 }
 
-// ListAppliedRules returns the ledger rows for a profile and target ("" = global).
-func (s *Store) ListAppliedRules(ctx context.Context, profileID int64, sandbox string) ([]AppliedRule, error) {
+// ListAppliedRules returns the ledger rows for one profile and sandbox.
+func (s *Store) ListAppliedRules(ctx context.Context, profile, sandbox string) ([]AppliedRule, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, profile_id, sandbox_name, rule_id, pattern, decision, created_at
-		 FROM applied_rules WHERE profile_id = ? AND sandbox_name = ? ORDER BY pattern`,
-		profileID, sandbox)
+		`SELECT `+appliedRuleCols+` FROM applied_rules WHERE profile = ? AND sandbox = ? ORDER BY id`, profile, sandbox)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanApplied(rows)
+	return scanAppliedRules(rows)
 }
 
-// ListAllAppliedRules returns the whole ledger.
-func (s *Store) ListAllAppliedRules(ctx context.Context) ([]AppliedRule, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, profile_id, sandbox_name, rule_id, pattern, decision, created_at
-		 FROM applied_rules ORDER BY profile_id, sandbox_name, pattern`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanApplied(rows)
-}
-
-func scanApplied(rows *sql.Rows) ([]AppliedRule, error) {
-	var out []AppliedRule
-	for rows.Next() {
-		var a AppliedRule
-		if err := rows.Scan(&a.ID, &a.ProfileID, &a.SandboxName, &a.RuleID, &a.Pattern, &a.Decision, &a.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, a)
-	}
-	return out, rows.Err()
-}
-
-// DeleteAppliedRule removes one ledger row by id.
+// DeleteAppliedRule removes one ledger row.
 func (s *Store) DeleteAppliedRule(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM applied_rules WHERE id = ?`, id)
 	return err
 }
 
-// ClearAppliedForTarget drops every ledger row for a profile/target pair.
-func (s *Store) ClearAppliedForTarget(ctx context.Context, profileID int64, sandbox string) error {
-	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM applied_rules WHERE profile_id = ? AND sandbox_name = ?`, profileID, sandbox)
+// ClearAppliedForTarget drops every ledger row of one profile and sandbox.
+func (s *Store) ClearAppliedForTarget(ctx context.Context, profile, sandbox string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM applied_rules WHERE profile = ? AND sandbox = ?`, profile, sandbox)
 	return err
 }
 
-// OwnedRuleIDs returns the set of sbx rule ids managed by this app.
-func (s *Store) OwnedRuleIDs(ctx context.Context) (map[string]bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT rule_id FROM applied_rules`)
+// ClearAppliedForProfile drops every ledger row of one profile.
+func (s *Store) ClearAppliedForProfile(ctx context.Context, profile string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM applied_rules WHERE profile = ?`, profile)
+	return err
+}
+
+func scanAppliedRules(rows *sql.Rows) ([]AppliedRule, error) {
+	rules := []AppliedRule{}
+	for rows.Next() {
+		var r AppliedRule
+		if err := rows.Scan(&r.ID, &r.Profile, &r.Sandbox, &r.RuleID, &r.Pattern, &r.Decision, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		rules = append(rules, r)
+	}
+	return rules, rows.Err()
+}
+
+// ListAllAppliedRules returns every ledger row.
+func (s *Store) ListAllAppliedRules(ctx context.Context) ([]AppliedRule, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+appliedRuleCols+` FROM applied_rules ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make(map[string]bool)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out[id] = true
-	}
-	return out, rows.Err()
+	return scanAppliedRules(rows)
+}
+
+// ClearAppliedForSandbox drops every ledger row of one sandbox.
+func (s *Store) ClearAppliedForSandbox(ctx context.Context, sandbox string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM applied_rules WHERE sandbox = ?`, sandbox)
+	return err
 }

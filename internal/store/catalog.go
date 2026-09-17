@@ -2,74 +2,70 @@ package store
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
-	"hash"
 	"hash/fnv"
 	"strconv"
 )
 
-// catalogFingerprintQueries lists every table that makes up the skill and kit
-// catalogs, with nullable columns coalesced so the digest is stable.
-var catalogFingerprintQueries = []string{
-	`SELECT id, name, description, url, ref, auth, path, COALESCE(synced_at, ''), COALESCE(error, '') FROM skill_stores ORDER BY id`,
-	`SELECT id, store_id, kind, name, description, plugin, rel_path FROM skill_items ORDER BY id`,
-	`SELECT id, name, description, url, ref, auth, path, COALESCE(synced_at, ''), COALESCE(error, '') FROM kit_stores ORDER BY id`,
-	`SELECT id, store_id, kind, name, display_name, description, version, image, requires_agent, rel_path, spec FROM kit_items ORDER BY id`,
-}
-
-// CatalogFingerprint returns a digest of the skill and kit catalogs: every
-// store registration and every discovered item, document bodies excluded. It
-// changes whenever the catalog moves, so callers can cache derived data (such
-// as a search index) and rebuild it only when needed.
+// CatalogFingerprint digests the discovered catalogs so the search index is
+// rebuilt only when something actually changed.
 func (s *Store) CatalogFingerprint(ctx context.Context) (string, error) {
-	digest := fnv.New64a()
-	for _, query := range catalogFingerprintQueries {
-		if err := s.digestCatalogQuery(ctx, digest, query); err != nil {
+	h := fnv.New64a()
+	skillRows, err := s.db.QueryContext(ctx, `SELECT `+skillItemCols+` FROM skill_items ORDER BY store, kind, name`)
+	if err != nil {
+		return "", err
+	}
+	defer skillRows.Close()
+	for skillRows.Next() {
+		var item SkillItem
+		if err := skillRows.Scan(&item.Store, &item.Kind, &item.Name, &item.Description, &item.Plugin, &item.RelPath); err != nil {
 			return "", err
 		}
+		fmt.Fprintf(h, "s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00", item.Store, item.Kind, item.Name, item.Description, item.Plugin, item.RelPath)
 	}
-	return strconv.FormatUint(digest.Sum64(), 16), nil
+	if err := skillRows.Err(); err != nil {
+		return "", err
+	}
+	kitRows, err := s.db.QueryContext(ctx, `SELECT store, kind, name, display_name, description, version, image, requires_agent, rel_path FROM kit_items ORDER BY store, name`)
+	if err != nil {
+		return "", err
+	}
+	defer kitRows.Close()
+	for kitRows.Next() {
+		var item KitItem
+		if err := kitRows.Scan(&item.Store, &item.Kind, &item.Name, &item.DisplayName, &item.Description,
+			&item.Version, &item.Image, &item.RequiresAgent, &item.RelPath); err != nil {
+			return "", err
+		}
+		fmt.Fprintf(h, "k\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00",
+			item.Store, item.Kind, item.Name, item.DisplayName, item.Description, item.Version, item.Image, item.RequiresAgent, item.RelPath)
+	}
+	if err := kitRows.Err(); err != nil {
+		return "", err
+	}
+	return strconv.FormatUint(h.Sum64(), 16), nil
 }
 
-// digestCatalogQuery folds every row of one catalog query into the digest.
-func (s *Store) digestCatalogQuery(ctx context.Context, digest hash.Hash64, query string) error {
-	rows, err := s.db.QueryContext(ctx, query)
+// CatalogSizes returns the number of catalog rows per store slug for one kind
+// ("skill" or "kit").
+func (s *Store) CatalogSizes(ctx context.Context, kind string) (map[string]int, error) {
+	table := "skill_items"
+	if kind == "kit" {
+		table = "kit_items"
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT store, COUNT(*) FROM `+table+` GROUP BY store`)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
-	columns, err := rows.Columns()
-	if err != nil {
-		return err
-	}
-	values := make([]any, len(columns))
-	pointers := make([]any, len(columns))
-	for i := range values {
-		pointers[i] = &values[i]
-	}
+	sizes := map[string]int{}
 	for rows.Next() {
-		if err := rows.Scan(pointers...); err != nil {
-			return err
+		var storeSlug string
+		var count int
+		if err := rows.Scan(&storeSlug, &count); err != nil {
+			return nil, err
 		}
-		for _, value := range values {
-			switch typed := value.(type) {
-			case nil:
-				digest.Write([]byte{0})
-			case []byte:
-				digest.Write(typed)
-			case string:
-				digest.Write([]byte(typed))
-			case int64:
-				var encoded [8]byte
-				binary.LittleEndian.PutUint64(encoded[:], uint64(typed))
-				digest.Write(encoded[:])
-			default:
-				fmt.Fprintf(digest, "%v", typed)
-			}
-			digest.Write([]byte{0x1f})
-		}
-		digest.Write([]byte{0x1e})
+		sizes[storeSlug] = count
 	}
-	return rows.Err()
+	return sizes, rows.Err()
 }

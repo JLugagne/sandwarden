@@ -5,281 +5,376 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
-	"time"
 
+	"github.com/JLugagne/sandwarden/internal/fleet"
+	"github.com/JLugagne/sandwarden/internal/sbx"
 	"github.com/JLugagne/sandwarden/internal/store"
 )
 
-// ListCaches returns every configured shared cache.
-func (a *App) ListCaches(ctx context.Context) ([]store.CacheMount, error) {
-	return a.Store.ListCacheMounts(ctx)
+// CacheInput is the editable definition of a shared cache.
+type CacheInput struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	HostPath    string `json:"host_path"`
+	TargetPath  string `json:"target_path"`
+	ReadOnly    bool   `json:"read_only"`
+	AutoAttach  bool   `json:"auto_attach"`
+	Enabled     bool   `json:"enabled"`
 }
 
-// GetCache returns one configured cache.
-func (a *App) GetCache(ctx context.Context, id int64) (store.CacheMount, error) {
-	return a.Store.GetCacheMount(ctx, id)
-}
-
-// CreateCache validates and stores a cache definition.
-func (a *App) CreateCache(ctx context.Context, c store.CacheMount) (store.CacheMount, error) {
-	normalized, err := validateCache(c)
-	if err != nil {
-		return store.CacheMount{}, err
+// ListCaches returns every shared cache definition.
+func (a *App) ListCaches(ctx context.Context) ([]fleet.Cache, error) {
+	caches := a.Fleet.Caches()
+	out := make([]fleet.Cache, 0, len(caches))
+	for _, c := range caches {
+		out = append(out, *c)
 	}
-	out, err := a.Store.CreateCacheMount(ctx, normalized)
-	if err != nil {
-		return store.CacheMount{}, err
-	}
-	a.Notify(TopicCaches)
 	return out, nil
 }
 
-// UpdateCache rewrites a cache definition and refreshes viewers of every
-// sandbox it is assigned to.
-func (a *App) UpdateCache(ctx context.Context, c store.CacheMount) (store.CacheMount, error) {
-	normalized, err := validateCache(c)
-	if err != nil {
-		return store.CacheMount{}, err
+// GetCache returns one cache by slug.
+func (a *App) GetCache(ctx context.Context, slug string) (fleet.Cache, error) {
+	c, ok := a.Fleet.Cache(slug)
+	if !ok {
+		return fleet.Cache{}, store.ErrNotFound
 	}
-	if err := a.Store.UpdateCacheMount(ctx, normalized); err != nil {
-		return store.CacheMount{}, err
-	}
-	a.Notify(TopicCaches)
-	a.notifyCacheSandboxes(ctx, normalized.ID)
-	return a.Store.GetCacheMount(ctx, normalized.ID)
+	return *c, nil
 }
 
-// DeleteCache removes a cache definition. Live bind mounts are left in place;
-// they are dropped on the next sandbox restart or from the Caches tab.
-func (a *App) DeleteCache(ctx context.Context, id int64) error {
-	assignments, err := a.Store.AllCacheAssignments(ctx)
-	if err != nil {
-		return err
+// CreateCache writes a new cache definition.
+func (a *App) CreateCache(ctx context.Context, input CacheInput) (fleet.Cache, error) {
+	if err := validateCacheInput(input); err != nil {
+		return fleet.Cache{}, err
 	}
-	if err := a.Store.DeleteCacheMount(ctx, id); err != nil {
-		return err
+	var created fleet.Cache
+	err := a.withFleetLock(func() error {
+		auto, enabled := input.AutoAttach, input.Enabled
+		c, err := a.Fleet.CreateCache(input.Name, fleet.CacheApp{
+			Name:        input.Name,
+			Description: input.Description,
+			HostPath:    input.HostPath,
+			TargetPath:  input.TargetPath,
+			ReadOnly:    input.ReadOnly,
+			AutoAttach:  &auto,
+			Enabled:     &enabled,
+		})
+		if err != nil {
+			return err
+		}
+		created = *c
+		return nil
+	})
+	if err != nil {
+		return fleet.Cache{}, err
 	}
 	a.Notify(TopicCaches)
-	for _, name := range assignments[id] {
+	return created, nil
+}
+
+// UpdateCache rewrites a cache definition and re-applies it where attached.
+func (a *App) UpdateCache(ctx context.Context, slug string, input CacheInput) (fleet.Cache, error) {
+	if err := validateCacheInput(input); err != nil {
+		return fleet.Cache{}, err
+	}
+	var updated fleet.Cache
+	err := a.withFleetLock(func() error {
+		c, ok := a.Fleet.Cache(slug)
+		if !ok {
+			return store.ErrNotFound
+		}
+		auto, enabled := input.AutoAttach, input.Enabled
+		previous := c.App
+		c.App = fleet.CacheApp{
+			Name:        input.Name,
+			Description: input.Description,
+			HostPath:    input.HostPath,
+			TargetPath:  input.TargetPath,
+			ReadOnly:    input.ReadOnly,
+			AutoAttach:  &auto,
+			Enabled:     &enabled,
+		}
+		if err := a.Fleet.SaveCache(c); err != nil {
+			return err
+		}
+		for _, s := range a.sandboxesWithCache(slug) {
+			if pathChanged(previous, c.App) {
+				if info, err := a.Sbx.InspectSandbox(ctx, s.Name()); err == nil && info.Running() {
+					_ = a.Sbx.UnmountFolderAt(ctx, s.Name(), previous.HostPath, previous.EffectiveTarget())
+				}
+			}
+			a.ReapplyCaches(ctx, s.Name())
+		}
+		updated = *c
+		return nil
+	})
+	if err != nil {
+		return fleet.Cache{}, err
+	}
+	a.Notify(TopicCaches)
+	return updated, nil
+}
+
+// DeleteCache removes a cache definition and detaches it everywhere.
+func (a *App) DeleteCache(ctx context.Context, slug string) error {
+	return a.withFleetLock(func() error {
+		c, ok := a.Fleet.Cache(slug)
+		if !ok {
+			return store.ErrNotFound
+		}
+		for _, s := range a.sandboxesWithCache(slug) {
+			if info, err := a.Sbx.InspectSandbox(ctx, s.Name()); err == nil && info.Running() {
+				if mounts, err := a.Sbx.Mounts(ctx, s.Name()); err == nil && mountPresent(mounts, c.App.HostPath, c.App.TargetPath) {
+					_ = a.Sbx.UnmountFolderAt(ctx, s.Name(), c.App.HostPath, c.App.TargetPath)
+				}
+			}
+			s.App.Caches = removeString(s.App.Caches, slug)
+			if s.App.OptOuts != nil {
+				s.App.OptOuts.Caches = removeString(s.App.OptOuts.Caches, slug)
+			}
+			_ = a.Fleet.SaveSandbox(s)
+		}
+		if err := a.Fleet.DeleteCache(slug); err != nil {
+			return err
+		}
+		a.Notify(TopicCaches)
+		return nil
+	})
+}
+
+// AssignCache declares a direct cache attachment on a sandbox and mounts it
+// immediately when the sandbox runs.
+func (a *App) AssignCache(ctx context.Context, name, cacheSlug string) error {
+	return a.withFleetLock(func() error {
+		s, err := a.ensureSandboxConfig(ctx, name)
+		if err != nil {
+			return err
+		}
+		c, ok := a.Fleet.Cache(cacheSlug)
+		if !ok {
+			return fmt.Errorf("cache %q not found", cacheSlug)
+		}
+		if !slices.Contains(s.App.Caches, cacheSlug) {
+			s.App.Caches = append(s.App.Caches, cacheSlug)
+		}
+		if s.App.OptOuts != nil {
+			s.App.OptOuts.Caches = removeString(s.App.OptOuts.Caches, cacheSlug)
+		}
+		if err := a.Fleet.SaveSandbox(s); err != nil {
+			return err
+		}
+		if info, err := a.Sbx.InspectSandbox(ctx, name); err == nil && info.Running() {
+			if err := a.mountCache(ctx, name, *c); err != nil {
+				return err
+			}
+		}
+		a.Notify(TopicCaches)
 		a.Notify(TopicSandbox(name))
-	}
-	return nil
+		return nil
+	})
 }
 
-// AssignCache marks a cache as desired for a sandbox and mounts it when the
-// sandbox is running.
-func (a *App) AssignCache(ctx context.Context, sandbox string, cacheID int64) error {
-	c, err := a.Store.GetCacheMount(ctx, cacheID)
-	if err != nil {
-		return err
-	}
-	if !c.Enabled {
-		return errors.New("this cache is disabled")
-	}
-	if err := a.mountCache(ctx, sandbox, c); err != nil {
-		return err
-	}
-	if err := a.Store.AssignCache(ctx, sandbox, cacheID); err != nil {
-		return err
-	}
-	a.Notify(TopicCaches)
-	a.Notify(TopicSandbox(sandbox))
-	return nil
-}
-
-// UnassignCache drops the desired state and unmounts the bind when possible.
-func (a *App) UnassignCache(ctx context.Context, sandbox string, cacheID int64) error {
-	c, err := a.Store.GetCacheMount(ctx, cacheID)
-	if err != nil {
-		return err
-	}
-	if err := a.Store.UnassignCache(ctx, sandbox, cacheID); err != nil {
-		return err
-	}
-	if info, err := a.Sbx.InspectSandbox(ctx, sandbox); err == nil && info.Running() {
-		_ = a.Sbx.UnmountFolderAt(ctx, sandbox, c.HostPath, c.TargetPath)
-	}
-	a.Notify(TopicCaches)
-	a.Notify(TopicSandbox(sandbox))
-	return nil
+// UnassignCache revokes a direct cache attachment and unmounts it.
+func (a *App) UnassignCache(ctx context.Context, name, cacheSlug string) error {
+	return a.withFleetLock(func() error {
+		s, err := a.ensureSandboxConfig(ctx, name)
+		if err != nil {
+			return err
+		}
+		c, ok := a.Fleet.Cache(cacheSlug)
+		if !ok {
+			return fmt.Errorf("cache %q not found", cacheSlug)
+		}
+		s.App.Caches = removeString(s.App.Caches, cacheSlug)
+		if err := a.Fleet.SaveSandbox(s); err != nil {
+			return err
+		}
+		if info, err := a.Sbx.InspectSandbox(ctx, name); err == nil && info.Running() {
+			if mounts, err := a.Sbx.Mounts(ctx, name); err == nil && mountPresent(mounts, c.App.HostPath, c.App.TargetPath) {
+				if err := a.Sbx.UnmountFolderAt(ctx, name, c.App.HostPath, c.App.TargetPath); err != nil {
+					return err
+				}
+			}
+		}
+		a.Notify(TopicCaches)
+		a.Notify(TopicSandbox(name))
+		return nil
+	})
 }
 
 // ReapplyCaches mounts every desired cache that is missing from a running
-// sandbox. Errors are per-cache and never abort the whole pass.
-func (a *App) ReapplyCaches(ctx context.Context, sandbox string) (int, []string) {
-	caches, err := a.desiredCaches(ctx, sandbox)
+// sandbox. Errors are per-cache and never abort the whole pass. It reads the
+// fleet and the daemon only: callers hold the fleet lock when it is part of a
+// mutation, and read-only callers take no lock.
+func (a *App) ReapplyCaches(ctx context.Context, name string) (int, []string) {
+	caches, err := a.desiredCaches(ctx, name)
 	if err != nil {
 		return 0, []string{err.Error()}
 	}
 	if len(caches) == 0 {
 		return 0, nil
 	}
-	mounts, err := a.Sbx.Mounts(ctx, sandbox)
+	mounts, err := a.Sbx.Mounts(ctx, name)
 	if err != nil {
 		return 0, []string{err.Error()}
 	}
 	applied := 0
 	var errs []string
 	for _, c := range caches {
-		if !c.Enabled || cacheMounted(mounts, c) {
+		if cacheMounted(mounts, c) {
 			continue
 		}
-		if err := a.mountCache(ctx, sandbox, c); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", c.Name, err))
+		if err := a.mountCache(ctx, name, c); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", c.App.Name, err))
 			continue
 		}
 		applied++
 	}
 	if applied > 0 {
-		a.Notify(TopicSandbox(sandbox))
+		a.Notify(TopicSandbox(name))
 	}
 	return applied, errs
 }
 
-// mountCache prepares the target directory and bind-mounts the cache into a
-// running sandbox.
-func (a *App) mountCache(ctx context.Context, sandbox string, c store.CacheMount) error {
-	info, err := a.Sbx.InspectSandbox(ctx, sandbox)
+// desiredCaches merges the caches declared directly by the sandbox with those
+// its profiles provide, minus its opt-outs.
+func (a *App) desiredCaches(ctx context.Context, name string) ([]fleet.Cache, error) {
+	s, ok := a.Fleet.SandboxByName(name)
+	if !ok {
+		return nil, fmt.Errorf("no configuration found for sandbox %q", name)
+	}
+	optedOut := map[string]bool{}
+	if s.App.OptOuts != nil {
+		for _, slug := range s.App.OptOuts.Caches {
+			optedOut[slug] = true
+		}
+	}
+	merged := map[string]fleet.Cache{}
+	for _, p := range a.profilesForSandbox(s) {
+		for _, slug := range p.App.Caches {
+			if optedOut[slug] {
+				continue
+			}
+			if c, ok := a.Fleet.Cache(slug); ok && c.App.IsEnabled() {
+				merged[slug] = *c
+			}
+		}
+	}
+	for _, slug := range s.App.Caches {
+		if c, ok := a.Fleet.Cache(slug); ok && c.App.IsEnabled() {
+			merged[slug] = *c
+		}
+	}
+	out := make([]fleet.Cache, 0, len(merged))
+	for _, c := range merged {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].App.Name < out[j].App.Name })
+	return out, nil
+}
+
+// mountCache binds a cache host path into a running sandbox.
+func (a *App) mountCache(ctx context.Context, name string, c fleet.Cache) error {
+	info, err := a.Sbx.InspectSandbox(ctx, name)
 	if err != nil {
 		return err
 	}
 	if !info.Running() {
-		return fmt.Errorf("sandbox %q is not running; start it before attaching caches", sandbox)
+		return fmt.Errorf("sandbox %q is not running; start it before attaching caches", name)
 	}
-	_ = a.Sbx.MkdirAll(ctx, sandbox, c.TargetPath)
-	return a.Sbx.MountFolderAt(ctx, sandbox, c.HostPath, c.TargetPath, c.ReadOnly)
+	target := c.App.TargetPath
+	if strings.TrimSpace(target) == "" {
+		target = c.App.HostPath
+	}
+	_ = a.Sbx.MkdirAll(ctx, name, target)
+	return a.Sbx.MountFolderAt(ctx, name, c.App.HostPath, target, c.App.ReadOnly)
 }
 
-// reapplyCachesWhenReady waits for a freshly started sandbox and re-mounts its
-// desired caches, retrying briefly while the VM comes up.
-func (a *App) reapplyCachesWhenReady(ctx context.Context, name string) {
-	caches, err := a.desiredCaches(ctx, name)
-	if err != nil {
+// attachAutoCaches adds every auto-attach cache to a fresh sandbox and mounts
+// it; used after create when the config already carries them. The caller holds
+// the fleet lock.
+func (a *App) attachAutoCaches(ctx context.Context, name string, w io.Writer) {
+	s, ok := a.Fleet.SandboxByName(name)
+	if !ok {
 		return
 	}
-	mounts, err := a.Store.ProfileMountsForSandbox(ctx, name)
-	if err != nil {
-		return
-	}
-	if len(caches) == 0 && len(mounts) == 0 {
-		return
-	}
-	for attempt := 0; attempt < 8; attempt++ {
-		if ctx.Err() != nil {
-			return
-		}
-		info, err := a.Sbx.InspectSandbox(ctx, name)
-		if err == nil && info.Running() {
-			_, errs := a.ReapplyCaches(ctx, name)
-			a.syncProfileMounts(ctx, name, nil)
-			if len(errs) == 0 {
-				return
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(1500 * time.Millisecond):
-		}
-	}
-}
-
-// attachAutoCaches mounts every auto-attach cache into a newly created sandbox
-// and records the desired state. Failures are reported to the job output.
-func (a *App) attachAutoCaches(ctx context.Context, sandbox string, w io.Writer) {
-	caches, err := a.Store.AutoAttachCaches(ctx)
-	if err != nil {
-		return
-	}
-	for _, c := range caches {
-		if err := a.mountCache(ctx, sandbox, c); err != nil {
-			fmt.Fprintf(w, "cache %s: %v\n", c.Name, err)
+	changed := false
+	for _, c := range a.Fleet.Caches() {
+		if !c.App.AutoAttaches() || !c.App.IsEnabled() || slices.Contains(s.App.Caches, c.Slug) {
 			continue
 		}
-		if err := a.Store.AssignCache(ctx, sandbox, c.ID); err != nil {
-			fmt.Fprintf(w, "cache %s: %v\n", c.Name, err)
-			continue
+		s.App.Caches = append(s.App.Caches, c.Slug)
+		changed = true
+	}
+	if changed {
+		if err := a.Fleet.SaveSandbox(s); err != nil {
+			fmt.Fprintf(w, "caches: %v\n", err)
+			return
 		}
-		fmt.Fprintf(w, "cache %s: mounted %s at %s\n", c.Name, c.HostPath, c.TargetPath)
+	}
+	if applied, errs := a.ReapplyCaches(ctx, name); applied > 0 || len(errs) > 0 {
+		fmt.Fprintf(w, "caches: %d attached\n", applied)
+		for _, err := range errs {
+			fmt.Fprintf(w, "cache error: %s\n", err)
+		}
 	}
 	a.Notify(TopicCaches)
-	a.Notify(TopicSandbox(sandbox))
+	a.Notify(TopicSandbox(name))
 }
 
-func (a *App) sandboxNameSet(ctx context.Context) map[string]bool {
-	set := make(map[string]bool)
-	if sandboxes, err := a.Sbx.ListSandboxes(ctx); err == nil {
-		for _, s := range sandboxes {
-			set[s.Name] = true
-		}
-	}
-	return set
-}
-
-// findNewSandbox returns the name of the sandbox that appeared after creation.
-func (a *App) findNewSandbox(ctx context.Context, before map[string]bool) string {
-	sandboxes, err := a.Sbx.ListSandboxes(ctx)
-	if err != nil {
-		return ""
-	}
-	newest := ""
-	var newestAt time.Time
-	for _, s := range sandboxes {
-		if before[s.Name] {
+// sandboxesWithCache lists every sandbox referencing a cache, directly or
+// through a profile.
+func (a *App) sandboxesWithCache(cacheSlug string) []*fleet.Sandbox {
+	out := []*fleet.Sandbox{}
+	for _, s := range a.Fleet.Sandboxes() {
+		if slices.Contains(s.App.Caches, cacheSlug) {
+			out = append(out, s)
 			continue
 		}
-		if s.CreatedAt == nil {
-			if newest == "" {
-				newest = s.Name
+		for _, slug := range s.App.Profiles {
+			if p, ok := a.Fleet.Profile(slug); ok && slices.Contains(p.App.Caches, cacheSlug) {
+				out = append(out, s)
+				break
 			}
-			continue
-		}
-		if newest == "" || s.CreatedAt.After(newestAt) {
-			newestAt = *s.CreatedAt
-			newest = s.Name
 		}
 	}
-	return newest
+	return out
 }
 
-func (a *App) notifyCacheSandboxes(ctx context.Context, cacheID int64) {
-	assignments, err := a.Store.AllCacheAssignments(ctx)
-	if err != nil {
-		return
+func cacheMounted(mounts []sbx.MountInfo, c fleet.Cache) bool {
+	target := c.App.TargetPath
+	if strings.TrimSpace(target) == "" {
+		target = c.App.HostPath
 	}
-	for _, name := range assignments[cacheID] {
-		a.Notify(TopicSandbox(name))
-	}
+	return mountPresent(mounts, c.App.HostPath, target)
 }
 
-func validateCache(c store.CacheMount) (store.CacheMount, error) {
-	c.Name = strings.TrimSpace(c.Name)
-	c.HostPath = expandHome(strings.TrimSpace(c.HostPath))
-	c.TargetPath = strings.TrimSpace(c.TargetPath)
-	if c.Name == "" {
-		return store.CacheMount{}, errors.New("cache name is required")
+func validateCacheInput(input CacheInput) error {
+	if strings.TrimSpace(input.Name) == "" {
+		return errors.New("cache name is required")
 	}
-	if !filepath.IsAbs(c.HostPath) {
-		return store.CacheMount{}, errors.New("host path must be absolute")
+	if !filepath.IsAbs(fleet.ExpandHome(input.HostPath)) {
+		return errors.New("host path must be absolute")
 	}
-	if !filepath.IsAbs(c.TargetPath) {
-		return store.CacheMount{}, errors.New("sandbox path must be absolute")
+	if target := strings.TrimSpace(input.TargetPath); target != "" && !filepath.IsAbs(target) {
+		return errors.New("target path must be absolute")
 	}
-	return c, nil
+	return nil
 }
 
-// expandHome resolves a leading ~ with the host user's home directory, so the
-// UI can offer presets like ~/.npm.
-func expandHome(path string) string {
-	if path != "~" && !strings.HasPrefix(path, "~/") {
-		return path
+func pathChanged(before, after fleet.CacheApp) bool {
+	return before.HostPath != after.HostPath || before.EffectiveTarget() != after.EffectiveTarget() || before.ReadOnly != after.ReadOnly
+}
+
+func removeString(in []string, want string) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v != want {
+			out = append(out, v)
+		}
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-	return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
+	return out
 }

@@ -9,8 +9,7 @@ import { KitsPage } from "./KitsPage";
 afterEach(cleanup);
 
 const item = {
-  id: 7,
-  store_id: 1,
+  store: "sbx-kits-contrib",
   store_name: "sbx-kits-contrib",
   kind: "mixin",
   name: "code-server",
@@ -40,7 +39,7 @@ vi.mock("@/api/client", () => ({
   api: {
     kitStores: vi.fn(async () => [
       {
-        id: 1,
+        slug: "sbx-kits-contrib",
         name: "sbx-kits-contrib",
         description: "Community kits",
         url: "https://github.com/docker/sbx-kits-contrib",
@@ -49,8 +48,6 @@ vi.mock("@/api/client", () => ({
         path: "/data/kits/contrib",
         synced_at: "2026-09-16T16:00:00Z",
         error: "",
-        created_at: "2026-09-16T16:00:00Z",
-        updated_at: "2026-09-16T16:00:00Z",
       },
     ]),
     kitItems: vi.fn(async () => [item]),
@@ -112,6 +109,6 @@ describe("kits page", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Validate" }));
 
     expect(await screen.findByText("Kit is valid")).toBeDefined();
-    expect(vi.mocked(api.validateKit)).toHaveBeenCalledWith(7);
+    expect(vi.mocked(api.validateKit)).toHaveBeenCalledWith("sbx-kits-contrib", "code-server");
   });
 });

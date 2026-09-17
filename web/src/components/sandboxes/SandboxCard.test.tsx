@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "@/api/client";
 import { ToastProvider } from "@/components/Toaster";
 import type { SandboxSummary } from "@/types";
 import { SandboxCard } from "./SandboxCard";
@@ -13,7 +14,8 @@ vi.mock("@/api/client", () => ({
   api: {
     startSandbox: vi.fn(),
     stopSandbox: vi.fn(),
-    deleteSandbox: vi.fn(),
+    deleteSandbox: vi.fn(async () => undefined),
+    configStaleness: vi.fn(async () => ({ stale: false, changed: [] })),
   },
 }));
 
@@ -25,6 +27,7 @@ function sandbox(overrides: Partial<SandboxSummary> = {}): SandboxSummary {
     running: true,
     workspace: "/w",
     mount_policy_denied: false,
+    incomplete: false,
     profiles: [],
     run_args: "",
     connect: { run: "sbx run box", shell: "sbx exec box bash" },
@@ -102,5 +105,74 @@ describe("sandbox card resource indicators", () => {
     for (const fill of fills) {
       expect(fill.style.width).toBe("0%");
     }
+  });
+});
+
+describe("sandbox card incomplete config", () => {
+  it("badges an incomplete config directory", () => {
+    renderCard(sandbox({ incomplete: true }));
+
+    expect(screen.getByText("incomplete")).toBeDefined();
+  });
+
+  it("hides the badge when the config is complete", async () => {
+    renderCard(sandbox());
+
+    await screen.findByText("CPU");
+    expect(screen.queryByText("incomplete")).toBeNull();
+  });
+});
+
+describe("sandbox card deletion", () => {
+  it("forces the deletion after the user confirms it", async () => {
+    renderCard(sandbox());
+
+    fireEvent.click(screen.getByTitle("Delete"));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(api.deleteSandbox).toHaveBeenCalledWith("box", true, false);
+    });
+  });
+
+  it("also purges the config directory when asked", async () => {
+    renderCard(sandbox());
+
+    fireEvent.click(screen.getByTitle("Delete"));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "also delete the config directory" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(api.deleteSandbox).toHaveBeenCalledWith("box", true, true);
+    });
+  });
+});
+
+describe("sandbox card staleness", () => {
+  it("badges a sandbox whose config file changed on disk", async () => {
+    vi.mocked(api.configStaleness).mockResolvedValue({
+      stale: true,
+      changed: [
+        {
+          kind: "sandbox",
+          slug: "box",
+          name: "box",
+          file: "sandwarden.yaml",
+          path: "/config/sandboxes/box/sandwarden.yaml",
+        },
+      ],
+    });
+
+    renderCard(sandbox());
+
+    expect(await screen.findByText("changed on disk")).toBeDefined();
+  });
+
+  it("hides the badge when the fleet is not stale", async () => {
+    renderCard(sandbox());
+
+    await screen.findByText("CPU");
+    expect(screen.queryByText("changed on disk")).toBeNull();
   });
 });

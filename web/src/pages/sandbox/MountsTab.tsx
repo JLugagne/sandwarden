@@ -17,7 +17,7 @@ import {
   TH,
   TRow,
 } from "@/components/ui";
-import type { MountInfo, SandboxDetail } from "@/types";
+import type { SandboxDetail } from "@/types";
 
 interface MountRow {
   key: string;
@@ -27,7 +27,6 @@ interface MountRow {
   mounted: boolean;
   profiles: string[];
   optedOut: boolean;
-  mountIds: number[];
 }
 
 function effectiveTarget(host: string, target?: string): string {
@@ -38,7 +37,7 @@ function mountKey(host: string, target?: string): string {
   return `${host}\u0000${effectiveTarget(host, target)}`;
 }
 
-/** Merges runtime mounts and profile defaults into one row per host/target. */
+/** Merges runtime, direct and profile mounts into one row per host/target. */
 function buildRows(detail: SandboxDetail): MountRow[] {
   const rows = new Map<string, MountRow>();
   for (const profileMount of detail.profile_mounts ?? []) {
@@ -51,7 +50,19 @@ function buildRows(detail: SandboxDetail): MountRow[] {
       mounted: profileMount.attached,
       profiles: profileMount.profile_names ?? [],
       optedOut: profileMount.opted_out,
-      mountIds: profileMount.profile_mount_ids ?? [],
+    });
+  }
+  for (const direct of detail.direct_mounts ?? []) {
+    const target = effectiveTarget(direct.host_path, direct.target_path);
+    const key = mountKey(direct.host_path, target);
+    rows.set(key, {
+      key,
+      host: direct.host_path,
+      target,
+      readOnly: direct.read_only,
+      mounted: direct.attached,
+      profiles: rows.get(key)?.profiles ?? [],
+      optedOut: rows.get(key)?.optedOut ?? false,
     });
   }
   for (const mount of detail.mounts ?? []) {
@@ -70,7 +81,6 @@ function buildRows(detail: SandboxDetail): MountRow[] {
       mounted: true,
       profiles: [],
       optedOut: false,
-      mountIds: [],
     });
   }
   return [...rows.values()].sort((left, right) =>
@@ -83,7 +93,7 @@ export function MountsTab({ name, detail }: { name: string; detail: SandboxDetai
   const [path, setPath] = useState("");
   const [target, setTarget] = useState("");
   const [readOnly, setReadOnly] = useState(false);
-  const [pendingRemove, setPendingRemove] = useState<MountInfo | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<MountRow | null>(null);
   const [pendingDetach, setPendingDetach] = useState<MountRow | null>(null);
 
   const add = useApiMutation({
@@ -98,23 +108,19 @@ export function MountsTab({ name, detail }: { name: string; detail: SandboxDetai
   });
 
   const remove = useApiMutation({
-    mutationFn: (mount: MountInfo) => api.removeMount(name, mount.host_path, mount.container_target || undefined),
+    mutationFn: (row: MountRow) => api.removeMount(name, row.host, row.target),
     success: "Unmounted",
     onSuccess: () => setPendingRemove(null),
   });
 
   const detachProfile = useApiMutation({
-    mutationFn: async (row: MountRow) => {
-      for (const mountId of row.mountIds) await api.detachProfileMount(name, mountId);
-    },
+    mutationFn: (row: MountRow) => api.detachProfileMount(name, row.host, row.target),
     success: "Profile mount detached",
     onSuccess: () => setPendingDetach(null),
   });
 
   const applyProfile = useApiMutation({
-    mutationFn: async (row: MountRow) => {
-      for (const mountId of row.mountIds) await api.applyProfileMount(name, mountId);
-    },
+    mutationFn: (row: MountRow) => api.applyProfileMount(name, row.host, row.target),
     success: "Profile mount re-enabled",
   });
 
@@ -199,15 +205,7 @@ export function MountsTab({ name, detail }: { name: string; detail: SandboxDetai
                         size="sm"
                         variant="ghost"
                         disabled={!detail.sandbox.running}
-                        onClick={() =>
-                          setPendingRemove(
-                            (detail.mounts ?? []).find(
-                              (mount) =>
-                                mount.host_path === row.host &&
-                                effectiveTarget(mount.host_path, mount.container_target) === row.target,
-                            ) ?? { host_path: row.host, container_target: row.target },
-                          )
-                        }
+                        onClick={() => setPendingRemove(row)}
                       >
                         Unmount
                       </Button>
@@ -291,7 +289,7 @@ export function MountsTab({ name, detail }: { name: string; detail: SandboxDetai
       <ConfirmDialog
         open={pendingRemove !== null}
         title="Unmount this path?"
-        body={<span className="font-mono text-xs">{pendingRemove?.host_path}</span>}
+        body={<span className="font-mono text-xs">{pendingRemove?.host}</span>}
         confirmLabel="Unmount"
         busy={remove.isPending}
         onConfirm={() => pendingRemove && remove.mutate(pendingRemove)}

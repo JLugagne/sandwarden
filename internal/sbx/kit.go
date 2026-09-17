@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -149,4 +150,20 @@ func (c *Client) KitValidate(ctx context.Context, ref string) (string, error) {
 		return "", errors.New("kit reference is required")
 	}
 	return c.runCLI(ctx, nil, nil, "kit", "validate", ref)
+}
+
+// KitAdd runs `sbx kit add SANDBOX REF`: sbx recreates the sandbox's container
+// with the reference appended to its kit list, preserving kit-owned volumes
+// (agent session state) and --clone workspaces. Combined output is teed to
+// stream when it is non-nil; a refusal is returned verbatim.
+func (c *Client) KitAdd(ctx context.Context, sandbox, ref string, stream io.Writer) (string, error) {
+	sandbox = strings.TrimSpace(sandbox)
+	if sandbox == "" {
+		return "", errors.New("sandbox name is required")
+	}
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", errors.New("kit reference is required")
+	}
+	return c.runCLI(ctx, nil, stream, "kit", "add", sandbox, ref)
 }

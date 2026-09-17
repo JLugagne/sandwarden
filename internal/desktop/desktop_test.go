@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/JLugagne/sandwarden/internal/app"
+	"github.com/JLugagne/sandwarden/internal/fleet"
 	"github.com/JLugagne/sandwarden/internal/sbx"
 	"github.com/JLugagne/sandwarden/internal/store"
 )
@@ -110,7 +111,11 @@ func newTestDesktop(t *testing.T, sandboxes ...string) (*Desktop, *app.App, *fak
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	core := app.New(sbx.New(socket), st)
+	fl, err := fleet.Open(filepath.Join(t.TempDir(), "config"))
+	if err != nil {
+		t.Fatalf("open fleet: %v", err)
+	}
+	core := app.New(sbx.New(socket), st, fl)
 	return New(core, context.Background(), "test"), core, fake
 }
 
@@ -156,7 +161,7 @@ func TestSandboxPolicyActionIsScoped(t *testing.T) {
 func TestCreateSandboxRunsJob(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "fake-sbx")
 	argsFile := filepath.Join(t.TempDir(), "args.txt")
-	content := "#!/bin/sh\nprintf '%s\\n' \"$*\" > " + argsFile + "\nprintf 'created\\n'\n"
+	content := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + argsFile + "\nprintf 'created\\n'\n"
 	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
 		t.Fatalf("write fake sbx: %v", err)
 	}
@@ -264,7 +269,7 @@ func TestCachesCreateAttachDetach(t *testing.T) {
 		t.Fatal("expected validation error for relative host path")
 	}
 
-	if err := d.AttachCache("box", cache.ID); err != nil {
+	if err := d.AttachCache("box", cache.Slug); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	detail, err := d.SandboxDetail("box")
@@ -275,7 +280,7 @@ func TestCachesCreateAttachDetach(t *testing.T) {
 		t.Fatalf("unexpected detail caches: %+v", detail.Caches)
 	}
 
-	if err := d.DetachCache("box", cache.ID); err != nil {
+	if err := d.DetachCache("box", cache.Slug); err != nil {
 		t.Fatalf("detach: %v", err)
 	}
 }

@@ -6,16 +6,25 @@ export {
 } from "./models.js";
 
 export type {
+    ApplyReport,
+    ConfigFile,
     ConnectInfo,
     Event,
+    ImportReport,
+    ImportResult,
     JobView,
+    KitAddResult,
     KitItemView,
+    KitStoreView,
     KitValidation,
+    ProfileRef,
     ProfileView,
     SandboxCache,
     SandboxDetail,
+    SandboxDirectMount,
     SandboxProfileMount,
     SandboxSkill,
     SandboxSummary,
-    SkillReconcileResult
+    SkillReconcileResult,
+    SkillStoreView
 } from "./models.js";

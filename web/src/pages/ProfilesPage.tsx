@@ -1,14 +1,18 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { errorMessage, useApiMutation } from "@/hooks/useApiMutation";
+import { useConfigStaleness } from "@/hooks/useConfigStaleness";
 import { queryKeys } from "@/store/realtime";
+import { staleSlugs } from "@/lib/config";
+import { StaleBadge } from "@/components/StaleBadge";
 import { useToasts } from "@/components/Toaster";
 import {
   Badge,
   Button,
   CheckboxField,
+  ConfigViewer,
   ConfirmDialog,
   DecisionBadge,
   EmptyState,
@@ -28,16 +32,25 @@ import {
   TH,
   TRow,
 } from "@/components/ui";
-import { skillMenuGroups } from "@/lib/catalog";
+import { skillMenuGroups, skillRefKey } from "@/lib/catalog";
+import { cn } from "@/lib/cn";
 import { KindBadge } from "@/pages/SkillsPage";
-import type { CacheMount, ProfileMount, ProfileView, SkillItem } from "@/types";
+import type { CacheView, ProfileView, SkillItem, SkillRef } from "@/types";
 
 type ProfileBody = { name: string; description: string; is_default: boolean; is_global: boolean };
 type MountInput = { host_path: string; target_path: string; read_only: boolean };
 
+interface RuleRow {
+  decision: string;
+  pattern: string;
+}
+
 export function ProfilesPage() {
   const [editing, setEditing] = useState<ProfileView | null>(null);
   const [deleting, setDeleting] = useState<ProfileView | null>(null);
+  const [viewingFiles, setViewingFiles] = useState<ProfileView | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [highlight, setHighlight] = useState<string | null>(null);
 
   const profiles = useQuery({ queryKey: queryKeys.profiles, queryFn: api.profiles });
   const catalog = useQuery({ queryKey: queryKeys.skillItems, queryFn: () => api.skillItems() });
@@ -48,56 +61,56 @@ export function ProfilesPage() {
     success: (profile) => `Profile ${profile.name} created`,
   });
   const update = useApiMutation({
-    mutationFn: ({ id, body }: { id: number; body: ProfileBody }) => api.updateProfile(id, body),
+    mutationFn: ({ slug, body }: { slug: string; body: ProfileBody }) => api.updateProfile(slug, body),
     success: (profile) => `Profile ${profile.name} updated`,
     onSuccess: () => setEditing(null),
   });
   const remove = useApiMutation({
-    mutationFn: (id: number) => api.deleteProfile(id),
+    mutationFn: (slug: string) => api.deleteProfile(slug),
     success: "Profile deleted",
     onSuccess: () => setDeleting(null),
   });
   const addRule = useApiMutation({
-    mutationFn: ({ profileId, decision, pattern }: { profileId: number; decision: string; pattern: string }) =>
-      api.addRule(profileId, { decision, pattern }),
+    mutationFn: ({ slug, decision, pattern }: { slug: string; decision: string; pattern: string }) =>
+      api.addRule(slug, { decision, pattern }),
     success: "Rule added",
   });
   const removeRule = useApiMutation({
-    mutationFn: ({ profileId, ruleId }: { profileId: number; ruleId: number }) =>
-      api.removeRule(profileId, ruleId),
+    mutationFn: ({ slug, decision, pattern }: { slug: string; decision: string; pattern: string }) =>
+      api.removeRule(slug, { decision, pattern }),
     success: "Rule removed",
   });
   const addItem = useApiMutation({
-    mutationFn: ({ profileId, itemId }: { profileId: number; itemId: number }) =>
-      api.addProfileSkillItem(profileId, itemId),
+    mutationFn: ({ slug, ref }: { slug: string; ref: SkillRef }) =>
+      api.addProfileSkillItem(slug, ref),
     success: "Skill added to profile",
   });
   const removeItem = useApiMutation({
-    mutationFn: ({ profileId, itemId }: { profileId: number; itemId: number }) =>
-      api.removeProfileSkillItem(profileId, itemId),
+    mutationFn: ({ slug, ref }: { slug: string; ref: SkillRef }) =>
+      api.removeProfileSkillItem(slug, ref),
     success: "Skill removed from profile",
   });
   const addMount = useApiMutation({
-    mutationFn: ({ profileId, body }: { profileId: number; body: MountInput }) =>
-      api.addProfileMount(profileId, body),
+    mutationFn: ({ slug, body }: { slug: string; body: MountInput }) =>
+      api.addProfileMount(slug, body),
     success: "Default mount added",
     invalidate: [queryKeys.profiles],
   });
   const removeMount = useApiMutation({
-    mutationFn: ({ profileId, mountId }: { profileId: number; mountId: number }) =>
-      api.removeProfileMount(profileId, mountId),
+    mutationFn: ({ slug, hostPath, targetPath }: { slug: string; hostPath: string; targetPath: string }) =>
+      api.removeProfileMount(slug, hostPath, targetPath),
     success: "Default mount removed",
     invalidate: [queryKeys.profiles],
   });
   const addCache = useApiMutation({
-    mutationFn: ({ profileId, cacheId }: { profileId: number; cacheId: number }) =>
-      api.addProfileCache(profileId, cacheId),
+    mutationFn: ({ slug, cacheSlug }: { slug: string; cacheSlug: string }) =>
+      api.addProfileCache(slug, cacheSlug),
     success: "Default cache added",
     invalidate: [queryKeys.profiles],
   });
   const removeCache = useApiMutation({
-    mutationFn: ({ profileId, cacheId }: { profileId: number; cacheId: number }) =>
-      api.removeProfileCache(profileId, cacheId),
+    mutationFn: ({ slug, cacheSlug }: { slug: string; cacheSlug: string }) =>
+      api.removeProfileCache(slug, cacheSlug),
     success: "Default cache removed",
     invalidate: [queryKeys.profiles],
   });
@@ -105,7 +118,31 @@ export function ProfilesPage() {
   const rows = profiles.data ?? [];
   // Follow the refreshed query data so the dialog sees mounts/caches/rules
   // added while it is open.
-  const openProfile = editing ? rows.find((profile) => profile.id === editing.id) ?? editing : null;
+  const openProfile = editing ? rows.find((profile) => profile.slug === editing.slug) ?? editing : null;
+
+  // Deep link from the global search overlay: `/profiles?profile=<slug>`
+  // highlights the matching card, scrolls it into view and strips the parameter.
+  useEffect(() => {
+    const slug = searchParams.get("profile");
+    if (!slug) return;
+    setHighlight(slug);
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.delete("profile");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (highlight === null || rows.length === 0) return;
+    if (!rows.some((profile) => profile.slug === highlight)) return;
+    document.getElementById(`profile-${highlight}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const timer = window.setTimeout(() => setHighlight(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [highlight, rows]);
 
   return (
     <>
@@ -126,12 +163,15 @@ export function ProfilesPage() {
           <EmptyState title="No profiles yet" description="Create one above, then add rules, skills, mounts and caches." />
         ) : (
           rows.map((profile) => (
-            <ProfileCard
-              key={profile.id}
-              profile={profile}
-              onEdit={() => setEditing(profile)}
-              onDelete={() => setDeleting(profile)}
-            />
+            <div key={profile.slug} id={`profile-${profile.slug}`}>
+              <ProfileCard
+                profile={profile}
+                highlighted={highlight === profile.slug}
+                onEdit={() => setEditing(profile)}
+                onDelete={() => setDeleting(profile)}
+                onViewFiles={() => setViewingFiles(profile)}
+              />
+            </div>
           ))
         )}
       </div>
@@ -142,7 +182,7 @@ export function ProfilesPage() {
         catalog={catalog.data ?? []}
         busy={update.isPending}
         onClose={() => setEditing(null)}
-        onSave={(body) => openProfile && update.mutate({ id: openProfile.id, body })}
+        onSave={(body) => openProfile && update.mutate({ slug: openProfile.slug, body })}
         addRule={addRule}
         removeRule={removeRule}
         addItem={addItem}
@@ -152,13 +192,22 @@ export function ProfilesPage() {
         addCache={addCache}
         removeCache={removeCache}
       />
+      <ConfigViewer
+        open={viewingFiles !== null}
+        target={{
+          kind: "profile",
+          slug: viewingFiles?.slug ?? "",
+          title: viewingFiles?.name,
+        }}
+        onClose={() => setViewingFiles(null)}
+      />
       <ConfirmDialog
         open={deleting !== null}
         title={`Delete profile ${deleting?.name ?? ""}?`}
         body="Its rules are removed from every sandbox it is assigned to, and its default mounts and caches are released."
         confirmLabel="Delete"
         busy={remove.isPending}
-        onConfirm={() => deleting && remove.mutate(deleting.id)}
+        onConfirm={() => deleting && remove.mutate(deleting.slug)}
         onClose={() => setDeleting(null)}
       />
     </>
@@ -183,28 +232,57 @@ function Counter({ label, value }: { label: string; value: number }) {
   );
 }
 
+function profileRuleCount(profile: ProfileView): number {
+  return (profile.allow ?? []).length + (profile.deny ?? []).length;
+}
+
 function ProfileCard({
   profile,
+  highlighted,
   onEdit,
   onDelete,
+  onViewFiles,
 }: {
   profile: ProfileView;
+  highlighted: boolean;
   onEdit: () => void;
   onDelete: () => void;
+  onViewFiles: () => void;
 }) {
+  const toast = useToasts();
+  const validate = useApiMutation({
+    mutationFn: (slug: string) => api.validateProfile(slug),
+    onSuccess: (result) => {
+      toast.push({
+        tone: result.ok ? "success" : "danger",
+        title: result.ok ? "Profile is valid" : "Profile is invalid",
+        body: result.output,
+      });
+    },
+  });
   const sandboxes = profile.sandboxes ?? [];
+  const staleness = useConfigStaleness();
+  const changedOnDisk = staleSlugs(staleness.data, "profile").has(profile.slug);
   return (
     <Panel
+      className={cn(highlighted && "ring-2 ring-accent")}
       title={
         <span className="flex flex-wrap items-center gap-2">
           {profile.name}
-          {profile.is_default ? <Badge tone="warning">default</Badge> : null}
-          {profile.is_global ? <Badge tone="accent">global</Badge> : null}
+          {changedOnDisk ? <StaleBadge /> : null}
+          {profile.default ? <Badge tone="warning">default</Badge> : null}
+          {profile.global ? <Badge tone="accent">global</Badge> : null}
         </span>
       }
       description={profile.description || undefined}
       actions={
         <>
+          <Button size="sm" variant="ghost" loading={validate.isPending} onClick={() => validate.mutate(profile.slug)}>
+            Validate
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onViewFiles}>
+            View files
+          </Button>
           <Button size="sm" variant="ghost" onClick={onEdit}>
             Edit
           </Button>
@@ -216,8 +294,8 @@ function ProfileCard({
     >
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap gap-1.5">
-          <Counter label="rules" value={(profile.rules ?? []).length} />
-          <Counter label="skills" value={(profile.items ?? []).length} />
+          <Counter label="rules" value={profileRuleCount(profile)} />
+          <Counter label="skills" value={(profile.skills ?? []).length} />
           <Counter label="mounts" value={(profile.mounts ?? []).length} />
           <Counter label="caches" value={(profile.caches ?? []).length} />
           <Counter label="sandboxes" value={sandboxes.length} />
@@ -357,15 +435,18 @@ function RulesSection({
   profile: ProfileView;
   addRule: {
     isPending: boolean;
-    mutate: (variables: { profileId: number; decision: string; pattern: string }) => void;
+    mutate: (variables: { slug: string; decision: string; pattern: string }) => void;
   };
   removeRule: {
     isPending: boolean;
-    variables?: { profileId: number; ruleId: number };
-    mutate: (variables: { profileId: number; ruleId: number }) => void;
+    variables?: { slug: string; decision: string; pattern: string };
+    mutate: (variables: { slug: string; decision: string; pattern: string }) => void;
   };
 }) {
-  const rules = profile.rules ?? [];
+  const rules: RuleRow[] = [
+    ...(profile.allow ?? []).map((pattern) => ({ decision: "allow", pattern })),
+    ...(profile.deny ?? []).map((pattern) => ({ decision: "deny", pattern })),
+  ];
   return (
     <div className="flex flex-col">
       <p className="mb-3 text-sm text-muted">
@@ -388,7 +469,7 @@ function RulesSection({
             </TRow>
           ) : (
             rules.map((rule) => (
-              <TRow key={rule.id}>
+              <TRow key={`${rule.decision}:${rule.pattern}`}>
                 <TD>
                   <DecisionBadge decision={rule.decision} />
                 </TD>
@@ -397,8 +478,12 @@ function RulesSection({
                   <Button
                     size="sm"
                     variant="ghost"
-                    loading={removeRule.isPending && removeRule.variables?.ruleId === rule.id}
-                    onClick={() => removeRule.mutate({ profileId: profile.id, ruleId: rule.id })}
+                    loading={
+                      removeRule.isPending &&
+                      removeRule.variables?.decision === rule.decision &&
+                      removeRule.variables?.pattern === rule.pattern
+                    }
+                    onClick={() => removeRule.mutate({ slug: profile.slug, decision: rule.decision, pattern: rule.pattern })}
                   >
                     Remove
                   </Button>
@@ -408,7 +493,7 @@ function RulesSection({
           )}
         </tbody>
       </TableWrap>
-      <AddRuleRow busy={addRule.isPending} onAdd={(decision, pattern) => addRule.mutate({ profileId: profile.id, decision, pattern })} />
+      <AddRuleRow busy={addRule.isPending} onAdd={(decision, pattern) => addRule.mutate({ slug: profile.slug, decision, pattern })} />
     </div>
   );
 }
@@ -454,19 +539,23 @@ function SkillsSection({
   add,
   remove,
   addBusy,
-  removeBusyId,
+  removeBusyKey,
 }: {
   profile: ProfileView;
   catalog: SkillItem[];
-  add: (itemId: number) => void;
-  remove: (itemId: number) => void;
+  add: (ref: SkillRef) => void;
+  remove: (ref: SkillRef) => void;
   addBusy: boolean;
-  removeBusyId: number | null;
+  removeBusyKey: string | null;
 }) {
-  const current = profile.items ?? [];
-  const currentIds = new Set(current.map((item) => item.id));
-  const available = catalog.filter((item) => !currentIds.has(item.id));
+  const current = profile.skills ?? [];
+  const currentKeys = new Set(current.map(skillRefKey));
+  const available = catalog.filter((item) => !currentKeys.has(skillRefKey(item)));
   const groups = skillMenuGroups(available);
+  const pick = (key: string) => {
+    const item = available.find((entry) => skillRefKey(entry) === key);
+    if (item) add({ store: item.store, kind: item.kind, name: item.name });
+  };
 
   return (
     <div className="flex flex-col">
@@ -487,26 +576,33 @@ function SkillsSection({
               <TH>Kind</TH>
               <TH>Name</TH>
               <TH>Store</TH>
-              <TH>Plugin</TH>
               <TH className="w-24" />
             </tr>
           </thead>
           <tbody>
-            {current.map((item) => (
-              <TRow key={item.id}>
-                <TD>
-                  <KindBadge kind={item.kind} />
-                </TD>
-                <TD className="font-medium">{item.name}</TD>
-                <TD className="text-muted">{item.store_name}</TD>
-                <TD className="text-muted">{item.plugin || "—"}</TD>
-                <TD className="text-right">
-                  <Button size="sm" variant="ghost" loading={removeBusyId === item.id} onClick={() => remove(item.id)}>
-                    Remove
-                  </Button>
-                </TD>
-              </TRow>
-            ))}
+            {current.map((ref) => {
+              const key = skillRefKey(ref);
+              const item = catalog.find((entry) => skillRefKey(entry) === key);
+              return (
+                <TRow key={key}>
+                  <TD>
+                    <KindBadge kind={ref.kind} />
+                  </TD>
+                  <TD className="font-medium">{ref.name}</TD>
+                  <TD className="text-muted">{item?.store_name ?? ref.store}</TD>
+                  <TD className="text-right">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      loading={removeBusyKey === key}
+                      onClick={() => remove({ store: ref.store, kind: ref.kind, name: ref.name })}
+                    >
+                      Remove
+                    </Button>
+                  </TD>
+                </TRow>
+              );
+            })}
           </tbody>
         </TableWrap>
       )}
@@ -516,7 +612,7 @@ function SkillsSection({
         ) : (
           <MenuSelect
             groups={groups}
-            onChange={(itemId) => add(Number(itemId))}
+            onChange={pick}
             placeholder="Choose a skill or command…"
             searchPlaceholder="Search skills and commands…"
             disabled={addBusy}
@@ -533,13 +629,13 @@ function MountsSection({
   add,
   remove,
   addBusy,
-  removeBusyId,
+  removeBusyKey,
 }: {
   profile: ProfileView;
   add: (body: MountInput) => void;
-  remove: (mountId: number) => void;
+  remove: (hostPath: string, targetPath: string) => void;
   addBusy: boolean;
-  removeBusyId: number | null;
+  removeBusyKey: string | null;
 }) {
   const toast = useToasts();
   const [host, setHost] = useState("");
@@ -574,23 +670,26 @@ function MountsSection({
             </tr>
           </thead>
           <tbody>
-            {mounts.map((mount: ProfileMount) => (
-              <TRow key={mount.id}>
-                <TD className="font-mono text-xs">{mount.host_path}</TD>
-                <TD className="font-mono text-xs">{mount.target_path || mount.host_path}</TD>
-                <TD>{mount.read_only ? <Badge tone="warning">ro</Badge> : <Badge>rw</Badge>}</TD>
-                <TD className="text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    loading={removeBusyId === mount.id}
-                    onClick={() => remove(mount.id)}
-                  >
-                    Remove
-                  </Button>
-                </TD>
-              </TRow>
-            ))}
+            {mounts.map((mount) => {
+              const key = `${mount.host_path}\u0000${mount.target_path}`;
+              return (
+                <TRow key={key}>
+                  <TD className="font-mono text-xs">{mount.host_path}</TD>
+                  <TD className="font-mono text-xs">{mount.target_path || mount.host_path}</TD>
+                  <TD>{mount.read_only ? <Badge tone="warning">ro</Badge> : <Badge>rw</Badge>}</TD>
+                  <TD className="text-right">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      loading={removeBusyKey === key}
+                      onClick={() => remove(mount.host_path, mount.target_path)}
+                    >
+                      Remove
+                    </Button>
+                  </TD>
+                </TRow>
+              );
+            })}
           </tbody>
         </TableWrap>
       )}
@@ -643,19 +742,21 @@ function CachesSection({
   add,
   remove,
   addBusy,
-  removeBusyId,
+  removeBusySlug,
 }: {
   profile: ProfileView;
-  caches: CacheMount[];
-  add: (cacheId: number) => void;
-  remove: (cacheId: number) => void;
+  caches: CacheView[];
+  add: (cacheSlug: string) => void;
+  remove: (cacheSlug: string) => void;
   addBusy: boolean;
-  removeBusyId: number | null;
+  removeBusySlug: string | null;
 }) {
   const [selected, setSelected] = useState("");
-  const current = profile.caches ?? [];
-  const currentIds = new Set(current.map((cache) => cache.id));
-  const available = caches.filter((cache) => !currentIds.has(cache.id) && cache.enabled);
+  const currentSlugs = profile.caches ?? [];
+  const current = currentSlugs
+    .map((slug) => caches.find((cache) => cache.slug === slug))
+    .filter((cache): cache is CacheView => cache !== undefined);
+  const available = caches.filter((cache) => !currentSlugs.includes(cache.slug) && cache.enabled !== false);
 
   return (
     <div className="flex flex-col">
@@ -679,7 +780,7 @@ function CachesSection({
           </thead>
           <tbody>
             {current.map((cache) => (
-              <TRow key={cache.id}>
+              <TRow key={cache.slug}>
                 <TD className="font-medium">{cache.name}</TD>
                 <TD className="font-mono text-xs">
                   {cache.host_path}
@@ -691,8 +792,8 @@ function CachesSection({
                   <Button
                     size="sm"
                     variant="ghost"
-                    loading={removeBusyId === cache.id}
-                    onClick={() => remove(cache.id)}
+                    loading={removeBusySlug === cache.slug}
+                    onClick={() => remove(cache.slug)}
                   >
                     Remove
                   </Button>
@@ -710,7 +811,7 @@ function CachesSection({
             <Select value={selected} onChange={(event) => setSelected(event.target.value)} className="max-w-xs">
               <option value="">Choose a cache…</option>
               {available.map((cache) => (
-                <option key={cache.id} value={cache.id}>
+                <option key={cache.slug} value={cache.slug}>
                   {cache.name} ({cache.host_path})
                 </option>
               ))}
@@ -720,7 +821,7 @@ function CachesSection({
               disabled={!selected}
               loading={addBusy}
               onClick={() => {
-                add(Number(selected));
+                add(selected);
                 setSelected("");
               }}
             >
@@ -750,53 +851,53 @@ function ProfileDialog({
   removeCache,
 }: {
   profile: ProfileView | null;
-  caches: CacheMount[];
+  caches: CacheView[];
   catalog: SkillItem[];
   busy: boolean;
   onClose: () => void;
   onSave: (body: ProfileBody) => void;
-  addRule: { isPending: boolean; mutate: (variables: { profileId: number; decision: string; pattern: string }) => void };
+  addRule: { isPending: boolean; mutate: (variables: { slug: string; decision: string; pattern: string }) => void };
   removeRule: {
     isPending: boolean;
-    variables?: { profileId: number; ruleId: number };
-    mutate: (variables: { profileId: number; ruleId: number }) => void;
+    variables?: { slug: string; decision: string; pattern: string };
+    mutate: (variables: { slug: string; decision: string; pattern: string }) => void;
   };
-  addItem: { isPending: boolean; mutate: (variables: { profileId: number; itemId: number }) => void };
+  addItem: { isPending: boolean; mutate: (variables: { slug: string; ref: SkillRef }) => void };
   removeItem: {
     isPending: boolean;
-    variables?: { profileId: number; itemId: number };
-    mutate: (variables: { profileId: number; itemId: number }) => void;
+    variables?: { slug: string; ref: SkillRef };
+    mutate: (variables: { slug: string; ref: SkillRef }) => void;
   };
-  addMount: { isPending: boolean; mutate: (variables: { profileId: number; body: MountInput }) => void };
+  addMount: { isPending: boolean; mutate: (variables: { slug: string; body: MountInput }) => void };
   removeMount: {
     isPending: boolean;
-    variables?: { profileId: number; mountId: number };
-    mutate: (variables: { profileId: number; mountId: number }) => void;
+    variables?: { slug: string; hostPath: string; targetPath: string };
+    mutate: (variables: { slug: string; hostPath: string; targetPath: string }) => void;
   };
-  addCache: { isPending: boolean; mutate: (variables: { profileId: number; cacheId: number }) => void };
+  addCache: { isPending: boolean; mutate: (variables: { slug: string; cacheSlug: string }) => void };
   removeCache: {
     isPending: boolean;
-    variables?: { profileId: number; cacheId: number };
-    mutate: (variables: { profileId: number; cacheId: number }) => void;
+    variables?: { slug: string; cacheSlug: string };
+    mutate: (variables: { slug: string; cacheSlug: string }) => void;
   };
 }) {
   const [tab, setTab] = useState("general");
   const [name, setName] = useState(profile?.name ?? "");
   const [description, setDescription] = useState(profile?.description ?? "");
-  const [isDefault, setIsDefault] = useState(profile?.is_default ?? false);
-  const [isGlobal, setIsGlobal] = useState(profile?.is_global ?? false);
-  const [loadedId, setLoadedId] = useState(profile?.id ?? -1);
+  const [isDefault, setIsDefault] = useState(profile?.default ?? false);
+  const [isGlobal, setIsGlobal] = useState(profile?.global ?? false);
+  const [loadedSlug, setLoadedSlug] = useState<string | null>(profile?.slug ?? null);
 
-  if (profile && profile.id !== loadedId) {
-    setLoadedId(profile.id);
+  if (profile && profile.slug !== loadedSlug) {
+    setLoadedSlug(profile.slug);
     setTab("general");
     setName(profile.name);
     setDescription(profile.description);
-    setIsDefault(profile.is_default);
-    setIsGlobal(profile.is_global);
+    setIsDefault(profile.default);
+    setIsGlobal(profile.global);
   }
-  if (!profile && loadedId !== -1) {
-    setLoadedId(-1);
+  if (!profile && loadedSlug !== null) {
+    setLoadedSlug(null);
   }
 
   return (
@@ -827,8 +928,8 @@ function ProfileDialog({
           <Tabs
             tabs={[
               { id: "general", label: "General" },
-              { id: "rules", label: "Rules", count: (profile.rules ?? []).length },
-              { id: "skills", label: "Skills", count: (profile.items ?? []).length },
+              { id: "rules", label: "Rules", count: profileRuleCount(profile) },
+              { id: "skills", label: "Skills", count: (profile.skills ?? []).length },
               { id: "mounts", label: "Mounts", count: (profile.mounts ?? []).length },
               { id: "caches", label: "Caches", count: (profile.caches ?? []).length },
             ]}
@@ -853,29 +954,33 @@ function ProfileDialog({
             <SkillsSection
               profile={profile}
               catalog={catalog}
-              add={(itemId) => addItem.mutate({ profileId: profile.id, itemId })}
-              remove={(itemId) => removeItem.mutate({ profileId: profile.id, itemId })}
+              add={(ref) => addItem.mutate({ slug: profile.slug, ref })}
+              remove={(ref) => removeItem.mutate({ slug: profile.slug, ref })}
               addBusy={addItem.isPending}
-              removeBusyId={removeItem.isPending ? removeItem.variables?.itemId ?? null : null}
+              removeBusyKey={removeItem.isPending && removeItem.variables ? skillRefKey(removeItem.variables.ref) : null}
             />
           ) : null}
           {tab === "mounts" ? (
             <MountsSection
               profile={profile}
-              add={(body) => addMount.mutate({ profileId: profile.id, body })}
-              remove={(mountId) => removeMount.mutate({ profileId: profile.id, mountId })}
+              add={(body) => addMount.mutate({ slug: profile.slug, body })}
+              remove={(hostPath, targetPath) => removeMount.mutate({ slug: profile.slug, hostPath, targetPath })}
               addBusy={addMount.isPending}
-              removeBusyId={removeMount.isPending ? removeMount.variables?.mountId ?? null : null}
+              removeBusyKey={
+                removeMount.isPending && removeMount.variables
+                  ? `${removeMount.variables.hostPath}\u0000${removeMount.variables.targetPath}`
+                  : null
+              }
             />
           ) : null}
           {tab === "caches" ? (
             <CachesSection
               profile={profile}
               caches={caches}
-              add={(cacheId) => addCache.mutate({ profileId: profile.id, cacheId })}
-              remove={(cacheId) => removeCache.mutate({ profileId: profile.id, cacheId })}
+              add={(cacheSlug) => addCache.mutate({ slug: profile.slug, cacheSlug })}
+              remove={(cacheSlug) => removeCache.mutate({ slug: profile.slug, cacheSlug })}
               addBusy={addCache.isPending}
-              removeBusyId={removeCache.isPending ? removeCache.variables?.cacheId ?? null : null}
+              removeBusySlug={removeCache.isPending ? removeCache.variables?.cacheSlug ?? null : null}
             />
           ) : null}
         </div>

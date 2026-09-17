@@ -5,6 +5,11 @@ export { Card, Chip, Description, DescriptionList, PageHeader, Panel } from "./C
 export { CommandLine, CopyButton } from "./CopyButton";
 export { OpenInTerminalButton } from "./OpenInTerminalButton";
 export { Checkbox, CheckboxField, Field, Input, Select, TextArea } from "./Field";
+export {
+  ConfigViewer,
+  type ConfigFileView,
+  type ConfigTarget,
+} from "./ConfigViewer";
 export { EmptyState, ErrorNote, LogView, Spinner } from "./Feedback";
 export * from "./Icons";
 export { Modal } from "./Modal";

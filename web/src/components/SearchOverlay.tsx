@@ -4,10 +4,14 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { cn } from "@/lib/cn";
+import { searchResultBadge, searchResultLocation, searchResultTone } from "@/lib/search";
 import { Badge, IconSearch, Spinner } from "@/components/ui";
-import type { SearchResult } from "@/types";
+import type { SearchResult, SearchResultKind } from "@/types";
 
-const GROUPS: { kind: SearchResult["kind"]; label: string }[] = [
+const GROUPS: { kind: SearchResultKind; label: string }[] = [
+  { kind: "sandbox", label: "Sandboxes" },
+  { kind: "profile", label: "Profiles" },
+  { kind: "cache", label: "Caches" },
   { kind: "skill", label: "Skills" },
   { kind: "command", label: "Commands" },
   { kind: "kit", label: "Kits" },
@@ -101,7 +105,7 @@ export function SearchOverlay() {
   }
 
   function openResult(result: SearchResult) {
-    navigate(`/${result.kind === "kit" ? "kits" : "skills"}?item=${result.id}`);
+    navigate(searchResultLocation(result));
     close();
   }
 
@@ -129,7 +133,7 @@ export function SearchOverlay() {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Search skills, commands and kits"
+        aria-label="Search sandboxes, profiles, caches and catalogs"
         className="relative z-10 flex w-full max-w-xl flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-lg"
       >
         <div className="flex items-center gap-2.5 border-b border-border px-3">
@@ -139,7 +143,7 @@ export function SearchOverlay() {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onInputKeyDown}
-            placeholder="Search skills, commands and kits…"
+            placeholder="Search sandboxes, profiles, caches, skills and kits…"
             aria-label="Search query"
             className="h-11 w-full bg-transparent text-sm text-fg outline-none placeholder:text-faint"
           />
@@ -167,7 +171,7 @@ export function SearchOverlay() {
                   const index = flat.indexOf(item);
                   return (
                     <button
-                      key={`${item.kind}-${item.id}`}
+                      key={`${item.kind}-${item.slug ?? item.store}-${item.name}`}
                       type="button"
                       data-index={index}
                       onMouseEnter={() => setActive(index)}
@@ -178,7 +182,7 @@ export function SearchOverlay() {
                       )}
                     >
                       <span className="flex items-center gap-2">
-                        <Badge tone={item.kind === "kit" ? "accent" : "neutral"}>{kindLabel(item)}</Badge>
+                        <Badge tone={searchResultTone(item.kind)}>{searchResultBadge(item)}</Badge>
                         <span className="truncate text-sm font-medium">{item.display_name || item.name}</span>
                         <span className="ml-auto shrink-0 text-2xs text-faint">{item.store_name}</span>
                       </span>
@@ -202,9 +206,4 @@ export function SearchOverlay() {
     </div>,
     document.body,
   );
-}
-
-function kindLabel(result: SearchResult): string {
-  if (result.kind === "kit") return result.kit_kind || "kit";
-  return result.kind;
 }

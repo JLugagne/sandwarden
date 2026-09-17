@@ -41,7 +41,7 @@ export function KitsPage() {
   const [inspecting, setInspecting] = useState<KitItemView | null>(null);
   const [removingTemplate, setRemovingTemplate] = useState<Template | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
-  const [pendingItemId, setPendingItemId] = useState<number | null>(null);
+  const [pendingItem, setPendingItem] = useState<{ store: string; name: string } | null>(null);
 
   const create = useApiMutation({
     mutationFn: (body: KitStoreInput) => api.createKitStore(body),
@@ -50,19 +50,19 @@ export function KitsPage() {
     onSuccess: () => setEditing(null),
   });
   const update = useApiMutation({
-    mutationFn: ({ id, body }: { id: number; body: KitStoreInput }) => api.updateKitStore(id, body),
+    mutationFn: ({ slug, body }: { slug: string; body: KitStoreInput }) => api.updateKitStore(slug, body),
     success: (store) => (store.error ? undefined : `Repository ${store.name} updated`),
     invalidate: [queryKeys.kitStores, queryKeys.kitItems],
     onSuccess: () => setEditing(null),
   });
   const remove = useApiMutation({
-    mutationFn: (id: number) => api.deleteKitStore(id),
+    mutationFn: (slug: string) => api.deleteKitStore(slug),
     success: "Repository deleted",
     invalidate: [queryKeys.kitStores, queryKeys.kitItems],
     onSuccess: () => setDeleting(null),
   });
   const refresh = useApiMutation({
-    mutationFn: (id: number) => api.refreshKitStore(id),
+    mutationFn: (slug: string) => api.refreshKitStore(slug),
     success: (store) => (store.error ? undefined : `Repository ${store.name} refreshed`),
     invalidate: [queryKeys.kitStores, queryKeys.kitItems],
   });
@@ -77,16 +77,17 @@ export function KitsPage() {
   const catalog = items.data ?? [];
   const templateRows = templates.data ?? [];
 
-  // Deep link from the global search overlay: `/kits?item=<id>` opens the
-  // details dialog once the catalog is loaded.
+  // Deep link from the global search overlay: `/kits?store=<slug>&item=<name>`
+  // opens the details dialog once the catalog is loaded.
   useEffect(() => {
+    const store = searchParams.get("store");
     const raw = searchParams.get("item");
     if (!raw) return;
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed)) setPendingItemId(parsed);
+    setPendingItem({ store: store ?? "", name: raw });
     setSearchParams(
       (current) => {
         const next = new URLSearchParams(current);
+        next.delete("store");
         next.delete("item");
         return next;
       },
@@ -95,12 +96,12 @@ export function KitsPage() {
   }, [searchParams, setSearchParams]);
 
   useEffect(() => {
-    if (pendingItemId === null) return;
-    const match = catalog.find((item) => item.id === pendingItemId);
+    if (pendingItem === null) return;
+    const match = catalog.find((item) => item.name === pendingItem.name && item.store === pendingItem.store);
     if (!match) return;
     setInspecting(match);
-    setPendingItemId(null);
-  }, [pendingItemId, catalog]);
+    setPendingItem(null);
+  }, [pendingItem, catalog]);
 
   return (
     <>
@@ -142,11 +143,11 @@ export function KitsPage() {
 
         {rows.map((store) => (
           <StorePanel
-            key={store.id}
+            key={store.slug}
             store={store}
-            items={catalog.filter((item) => item.store_id === store.id)}
-            refreshing={refresh.isPending && refresh.variables === store.id}
-            onRefresh={() => refresh.mutate(store.id)}
+            items={catalog.filter((item) => item.store === store.slug)}
+            refreshing={refresh.isPending && refresh.variables === store.slug}
+            onRefresh={() => refresh.mutate(store.slug)}
             onEdit={() => setEditing({ mode: "edit", store })}
             onDelete={() => setDeleting(store)}
             onInspect={setInspecting}
@@ -202,7 +203,7 @@ export function KitsPage() {
         busy={create.isPending || update.isPending}
         onClose={() => setEditing(null)}
         onSubmit={(body) => {
-          if (editing?.mode === "edit") update.mutate({ id: editing.store.id, body });
+          if (editing?.mode === "edit") update.mutate({ slug: editing.store.slug, body });
           else create.mutate(body);
         }}
       />
@@ -213,7 +214,7 @@ export function KitsPage() {
         body="Its checkout and discovered kits are removed. Sandboxes that already reference its kits keep the reference."
         confirmLabel="Delete"
         busy={remove.isPending}
-        onConfirm={() => deleting && remove.mutate(deleting.id)}
+        onConfirm={() => deleting && remove.mutate(deleting.slug)}
         onClose={() => setDeleting(null)}
       />
 
@@ -252,7 +253,7 @@ function StorePanel({
   const toast = useToasts();
 
   const validate = useApiMutation({
-    mutationFn: (itemId: number) => api.validateKit(itemId),
+    mutationFn: ({ store, name }: { store: string; name: string }) => api.validateKit(store, name),
     onSuccess: (result) => {
       toast.push({
         tone: result.ok ? "success" : "danger",
@@ -312,7 +313,7 @@ function StorePanel({
           </thead>
           <tbody>
             {items.map((item) => (
-              <TRow key={item.id}>
+              <TRow key={item.ref}>
                 <TD>
                   <KindBadge kind={item.kind} />
                 </TD>
@@ -327,8 +328,12 @@ function StorePanel({
                   <Button
                     size="sm"
                     variant="ghost"
-                    loading={validate.isPending && validate.variables === item.id}
-                    onClick={() => validate.mutate(item.id)}
+                    loading={
+                      validate.isPending &&
+                      validate.variables?.store === item.store &&
+                      validate.variables?.name === item.name
+                    }
+                    onClick={() => validate.mutate({ store: item.store, name: item.name })}
                   >
                     Validate
                   </Button>
@@ -548,14 +553,14 @@ function StoreDialog({
   onClose: () => void;
 }) {
   const [input, setInput] = useState<KitStoreInput>(EMPTY_STORE);
-  const [loadedId, setLoadedId] = useState<number | "new" | null>(null);
+  const [loadedSlug, setLoadedSlug] = useState<string | "new" | null>(null);
 
-  const target = store ? store.id : ("new" as const);
-  if (!open && loadedId !== null) {
-    setLoadedId(null);
+  const target = store ? store.slug : ("new" as const);
+  if (!open && loadedSlug !== null) {
+    setLoadedSlug(null);
   }
-  if (open && loadedId !== target) {
-    setLoadedId(target);
+  if (open && loadedSlug !== target) {
+    setLoadedSlug(target);
     setInput(
       store
         ? {

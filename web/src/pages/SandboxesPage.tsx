@@ -4,12 +4,14 @@ import { api } from "@/api/client";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { queryKeys } from "@/store/realtime";
 import { CreateSandboxDialog } from "@/components/sandboxes/CreateSandboxDialog";
+import { ImportSandboxesDialog } from "@/components/sandboxes/ImportSandboxesDialog";
 import { SandboxCard } from "@/components/sandboxes/SandboxCard";
 import { Button, EmptyState, ErrorNote, IconPlus, PageHeader, Spinner } from "@/components/ui";
 import type { SandboxSummary } from "@/types";
 
 export function SandboxesPage() {
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const sandboxes = useQuery({ queryKey: queryKeys.sandboxes, queryFn: api.listSandboxes });
   const health = useQuery({ queryKey: queryKeys.health, queryFn: api.health, retry: 0, staleTime: 30_000 });
 
@@ -35,9 +37,14 @@ export function SandboxesPage() {
           ) : undefined
         }
         actions={
-          <Button variant="primary" size="md" onClick={() => setCreating(true)}>
-            <IconPlus /> New sandbox
-          </Button>
+          <>
+            <Button variant="outline" size="md" onClick={() => setImporting(true)}>
+              Import existing
+            </Button>
+            <Button variant="primary" size="md" onClick={() => setCreating(true)}>
+              <IconPlus /> New sandbox
+            </Button>
+          </>
         }
       />
 
@@ -78,6 +85,7 @@ export function SandboxesPage() {
       )}
 
       <CreateSandboxDialog open={creating} onClose={() => setCreating(false)} />
+      <ImportSandboxesDialog open={importing} onClose={() => setImporting(false)} />
     </>
   );
 }

@@ -2,9 +2,12 @@ package search
 
 import (
 	"context"
+	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -13,7 +16,8 @@ import (
 	"github.com/JLugagne/sandwarden/internal/store"
 )
 
-// Kind identifies the catalog an indexed document comes from.
+// Kind identifies what an indexed document comes from: a fleet config entity
+// (sandbox, profile, cache) or a discovered catalog item (skill, command, kit).
 type Kind string
 
 // Indexed document kinds.
@@ -21,37 +25,51 @@ const (
 	KindSkill   Kind = "skill"
 	KindCommand Kind = "command"
 	KindKit     Kind = "kit"
+	KindSandbox Kind = "sandbox"
+	KindProfile Kind = "profile"
+	KindCache   Kind = "cache"
 )
 
-// Document is one indexable catalog entry: a skill, a command or a kit. Body
-// carries the text read from the checkout (SKILL.md, the command file or
-// spec.yaml); it is indexed but never returned to the UI.
+// Document is one indexable entry: a discovered skill, command or kit, or a
+// fleet sandbox, profile or cache. Body carries the text read from a checkout
+// (SKILL.md, the command file or spec.yaml); it is indexed but never returned
+// to the UI.
 type Document struct {
 	Kind        Kind
-	ID          int64
-	StoreID     int64
+	Store       string
 	StoreName   string
 	Name        string
 	DisplayName string
+	// Slug is the config directory slug used to route config entities.
+	// It is not indexed, so a renamed entity cannot resurface through a stale slug.
+	Slug        string
 	Description string
 	Plugin      string
 	KitKind     string
-	Body        string
+	// Agent is the base agent a sandbox runs, or a kit requires.
+	Agent string
+	// Refs carries the short references of a config entity: profile and cache
+	// slugs, allow and deny patterns, host paths.
+	Refs []string
+	Body string
 }
 
 // Result is one ranked hit.
 type Result struct {
-	Kind        Kind    `json:"kind"`
-	ID          int64   `json:"id"`
-	StoreID     int64   `json:"store_id"`
-	StoreName   string  `json:"store_name"`
-	Name        string  `json:"name"`
-	DisplayName string  `json:"display_name,omitempty"`
-	Description string  `json:"description"`
-	Plugin      string  `json:"plugin,omitempty"`
-	KitKind     string  `json:"kit_kind,omitempty"`
-	Score       float64 `json:"score"`
-	Snippet     string  `json:"snippet,omitempty"`
+	Kind        Kind   `json:"kind"`
+	Store       string `json:"store"`
+	StoreName   string `json:"store_name"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name,omitempty"`
+	// Slug routes config entity hits; it is not part of the searchable text.
+	Slug        string `json:"slug,omitempty"`
+	Description string `json:"description"`
+	Plugin      string `json:"plugin,omitempty"`
+	KitKind     string `json:"kit_kind,omitempty"`
+	// Agent is set on sandbox hits.
+	Agent   string  `json:"agent,omitempty"`
+	Score   float64 `json:"score"`
+	Snippet string  `json:"snippet,omitempty"`
 }
 
 // Okapi parameters and snippet limits.
@@ -63,21 +81,23 @@ const (
 	snippetRunes  = 160
 )
 
-// Index is an immutable BM25 index over skill and kit documents. It is safe
-// for concurrent queries.
+// Index is an immutable BM25 index over the discovered catalogs and the
+// fleet config entities. It is safe for concurrent queries.
 type Index struct {
 	bm    *bm25.BM25Okapi
 	docs  []Document
 	vocab []string
 }
 
-// Build lists the skill and kit catalogs from the store and indexes their
-// metadata and document bodies.
-func Build(ctx context.Context, st *store.Store) (*Index, error) {
-	docs, err := Collect(ctx, st)
+// Build collects the discovered catalogs, appends the caller's fleet config
+// documents and indexes them. storePaths maps "skill:<slug>" and
+// "kit:<slug>" to the store checkout directories.
+func Build(ctx context.Context, st *store.Store, storePaths map[string]string, config []Document) (*Index, error) {
+	docs, err := Collect(ctx, st, storePaths)
 	if err != nil {
 		return nil, err
 	}
+	docs = append(docs, config...)
 	return New(docs)
 }
 
@@ -114,10 +134,6 @@ func New(docs []Document) (*Index, error) {
 	return &Index{bm: engine, docs: indexed, vocab: vocab}, nil
 }
 
-// Search returns the documents that match query, best first. Terms match
-// whole words and, from two characters on, word prefixes, so type-ahead
-// ("kub") already finds "kubernetes". A blank or one-character query returns
-// no results.
 // Search returns the documents that match query, best first. Terms match
 // whole words and, from two characters on, word prefixes, so type-ahead
 // ("kub") already finds "kubernetes". A blank or one-character query returns
@@ -185,7 +201,8 @@ func (ix *Index) expand(terms []string) []string {
 
 // searchText is the indexed representation of one document. The name,
 // display name and store are repeated so a metadata match outranks a
-// body-only match.
+// body-only match; the agent and references of config entities are indexed
+// next to the description and the body.
 func (d Document) searchText() string {
 	var builder strings.Builder
 	boost := strings.TrimSpace(strings.Join([]string{d.Name, d.DisplayName, d.StoreName}, "\n"))
@@ -195,16 +212,31 @@ func (d Document) searchText() string {
 	}
 	builder.WriteString(d.Description)
 	builder.WriteString("\n")
+	builder.WriteString(d.Agent)
+	builder.WriteString("\n")
 	builder.WriteString(d.Plugin)
+	builder.WriteString("\n")
+	builder.WriteString(d.refsText())
 	builder.WriteString("\n")
 	builder.WriteString(d.Body)
 	return builder.String()
 }
 
-// snippet returns a short window of the document body around the first
-// matched term, or an empty string when the match is not in the body.
+// refsText joins the document references into one indexable block, bounded
+// like a body so a long rule list cannot bloat the index.
+func (d Document) refsText() string {
+	if len(d.Refs) == 0 {
+		return ""
+	}
+	return truncateRunes(strings.Join(d.Refs, "\n"), maxBodyRunes)
+}
+
+// snippet returns a short window of the document text around the first
+// matched term, or an empty string when the match is neither in the body nor
+// in the references. The window is bounded, so a long value is never dumped.
 func (d Document) snippet(terms []string) string {
-	body := strings.Join(strings.Fields(d.Body), " ")
+	text := strings.TrimSpace(d.Body + "\n" + d.refsText())
+	body := strings.Join(strings.Fields(text), " ")
 	if body == "" {
 		return ""
 	}
@@ -236,28 +268,20 @@ func (d Document) snippet(terms []string) string {
 	if end > len(runes) {
 		end = len(runes)
 	}
-	text := string(runes[start:end])
+	window := string(runes[start:end])
 	if start > 0 {
-		text = "…" + text
+		window = "…" + window
 	}
 	if end < len(runes) {
-		text += "…"
+		window += "…"
 	}
-	return strings.TrimSpace(text)
+	return strings.TrimSpace(window)
 }
 
 // Collect lists every skill, command and kit with the body read from its
 // checkout. Missing or unreadable files only cost the body.
-func Collect(ctx context.Context, st *store.Store) ([]Document, error) {
-	skillStores, err := st.ListSkillStores(ctx)
-	if err != nil {
-		return nil, err
-	}
+func Collect(ctx context.Context, st *store.Store, storePaths map[string]string) ([]Document, error) {
 	skills, err := st.ListAllSkillItems(ctx)
-	if err != nil {
-		return nil, err
-	}
-	kitStores, err := st.ListKitStores(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -265,38 +289,28 @@ func Collect(ctx context.Context, st *store.Store) ([]Document, error) {
 	if err != nil {
 		return nil, err
 	}
-	skillPaths := make(map[int64]string, len(skillStores))
-	for _, item := range skillStores {
-		skillPaths[item.ID] = item.Path
-	}
-	kitPaths := make(map[int64]string, len(kitStores))
-	for _, item := range kitStores {
-		kitPaths[item.ID] = item.Path
-	}
 	docs := make([]Document, 0, len(skills)+len(kits))
 	for _, item := range skills {
+		root := storePaths["skill:"+item.Store]
 		docs = append(docs, Document{
 			Kind:        Kind(item.Kind),
-			ID:          item.ID,
-			StoreID:     item.StoreID,
-			StoreName:   item.StoreName,
+			Store:       item.Store,
 			Name:        item.Name,
 			Description: item.Description,
 			Plugin:      item.Plugin,
-			Body:        skillBody(skillPaths[item.StoreID], item.RelPath, item.Kind),
+			Body:        skillBody(root, item.RelPath, item.Kind),
 		})
 	}
 	for _, item := range kits {
+		root := storePaths["kit:"+item.Store]
 		docs = append(docs, Document{
 			Kind:        KindKit,
-			ID:          item.ID,
-			StoreID:     item.StoreID,
-			StoreName:   item.StoreName,
+			Store:       item.Store,
 			Name:        item.Name,
 			DisplayName: item.DisplayName,
 			Description: item.Description,
 			KitKind:     item.Kind,
-			Body:        readBody(filepath.Join(kitPaths[item.StoreID], filepath.FromSlash(item.RelPath), "spec.yaml")),
+			Body:        readBody(filepath.Join(root, filepath.FromSlash(item.RelPath), "spec.yaml")),
 		})
 	}
 	return docs, nil
@@ -322,12 +336,7 @@ func readBody(path string) string {
 	if err != nil {
 		return ""
 	}
-	text := strings.ToValidUTF8(string(data), "")
-	runes := []rune(text)
-	if len(runes) > maxBodyRunes {
-		text = string(runes[:maxBodyRunes])
-	}
-	return text
+	return truncateRunes(strings.ToValidUTF8(string(data), ""), maxBodyRunes)
 }
 
 // Tokenize lowercases text and splits it on every non letter or digit rune.
@@ -357,14 +366,15 @@ func (ix *Index) result(index int, score float64, terms []string) Result {
 	doc := ix.docs[index]
 	return Result{
 		Kind:        doc.Kind,
-		ID:          doc.ID,
-		StoreID:     doc.StoreID,
+		Store:       doc.Store,
 		StoreName:   doc.StoreName,
 		Name:        doc.Name,
 		DisplayName: doc.DisplayName,
+		Slug:        doc.Slug,
 		Description: doc.Description,
 		Plugin:      doc.Plugin,
 		KitKind:     doc.KitKind,
+		Agent:       doc.Agent,
 		Score:       score,
 		Snippet:     doc.snippet(terms),
 	}
@@ -405,4 +415,26 @@ func (ix *Index) fallback(terms []string, limit int) []Result {
 		results = append(results, ix.result(h.index, float64(h.score), terms))
 	}
 	return results
+}
+
+// Fingerprint digests the indexed fields of documents so callers rebuild a
+// cached index only when the documents actually changed. The body is left out
+// on purpose: config documents are built from the in-memory fleet and carry
+// no body, and catalog bodies are covered by the store fingerprint.
+func Fingerprint(docs []Document) string {
+	h := fnv.New64a()
+	for _, doc := range docs {
+		fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00",
+			doc.Kind, doc.Name, doc.DisplayName, doc.Slug, doc.Description, doc.Agent, strings.Join(doc.Refs, "\x1f"))
+	}
+	return strconv.FormatUint(h.Sum64(), 16)
+}
+
+// truncateRunes cuts text down to its first limit runes.
+func truncateRunes(text string, limit int) string {
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit])
 }

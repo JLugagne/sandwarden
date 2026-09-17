@@ -2,12 +2,16 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApiMutation } from "@/hooks/useApiMutation";
+import { useConfigStaleness } from "@/hooks/useConfigStaleness";
 import { cn } from "@/lib/cn";
+import { staleNames } from "@/lib/config";
 import { formatBytes, formatPort, formatTime, joinList } from "@/lib/format";
+import { StaleBadge } from "@/components/StaleBadge";
 import {
   Badge,
   Button,
   Card,
+  CheckboxField,
   Chip,
   CommandLine,
   ConfirmDialog,
@@ -22,6 +26,9 @@ import type { SandboxSummary } from "@/types";
 export function SandboxCard({ sandbox }: { sandbox: SandboxSummary }) {
   const navigate = useNavigate();
   const [confirming, setConfirming] = useState(false);
+  const [purgeConfig, setPurgeConfig] = useState(false);
+  const staleness = useConfigStaleness();
+  const changedOnDisk = staleNames(staleness.data, "sandbox").has(sandbox.name);
 
   const start = useApiMutation({
     mutationFn: () => api.startSandbox(sandbox.name),
@@ -32,7 +39,7 @@ export function SandboxCard({ sandbox }: { sandbox: SandboxSummary }) {
     success: `Stopping ${sandbox.name}`,
   });
   const remove = useApiMutation({
-    mutationFn: () => api.deleteSandbox(sandbox.name),
+    mutationFn: (purge: boolean) => api.deleteSandbox(sandbox.name, true, purge),
     success: `Deleted ${sandbox.name}`,
     onSuccess: () => setConfirming(false),
   });
@@ -76,9 +83,15 @@ export function SandboxCard({ sandbox }: { sandbox: SandboxSummary }) {
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold">{sandbox.name}</span>
           <StatusBadge running={sandbox.running} status={sandbox.status} />
+          {changedOnDisk ? <StaleBadge /> : null}
           {sandbox.agent ? <Badge>{sandbox.agent}</Badge> : null}
           {sandbox.daemon_profile ? <Badge tone="accent">profile {sandbox.daemon_profile}</Badge> : null}
           {sandbox.mount_policy_denied ? <Badge tone="danger">mount denied</Badge> : null}
+          {sandbox.incomplete ? (
+            <span title="Imported without its original create parameters: CPU, memory and env cannot be restored by a recreate.">
+              <Badge tone="warning">incomplete</Badge>
+            </span>
+          ) : null}
           <div className="ml-auto flex items-center gap-1.5" onClick={(event) => event.stopPropagation()}>
             {sandbox.running ? (
               <Button size="icon" variant="outline" title="Stop" disabled={busy} onClick={() => stop.mutate()}>
@@ -166,7 +179,16 @@ export function SandboxCard({ sandbox }: { sandbox: SandboxSummary }) {
         title={`Delete ${sandbox.name}?`}
         body={
           <>
-            This removes the sandbox and its runtime. Assigned profiles are unapplied first.
+            <span className="block">
+              This removes the sandbox and its runtime. Open sessions are disconnected and assigned
+              profiles are unapplied first.
+            </span>
+            <CheckboxField
+              label="also delete the config directory"
+              hint="Without it the sandbox files are kept and the sandbox can be recreated later."
+              checked={purgeConfig}
+              onChange={setPurgeConfig}
+            />
             {sandbox.profiles && sandbox.profiles.length > 0 ? (
               <span className="mt-2 block text-xs text-faint">Profiles: {joinList(sandbox.profiles)}</span>
             ) : null}
@@ -174,8 +196,11 @@ export function SandboxCard({ sandbox }: { sandbox: SandboxSummary }) {
         }
         confirmLabel="Delete"
         busy={remove.isPending}
-        onConfirm={() => remove.mutate()}
-        onClose={() => setConfirming(false)}
+        onConfirm={() => remove.mutate(purgeConfig)}
+        onClose={() => {
+          setConfirming(false);
+          setPurgeConfig(false);
+        }}
       />
     </>
   );

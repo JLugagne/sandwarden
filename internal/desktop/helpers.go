@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/JLugagne/sandwarden/internal/sbx"
-	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 // cleanStrings trims entries and drops the empty ones.
@@ -27,30 +26,4 @@ func normalizeSecretScope(scope string) string {
 		return sbx.SecretScopeHostOnly
 	}
 	return scope
-}
-
-// cacheFromInput builds a store record from the binding payload.
-func cacheFromInput(input CacheInput, id int64) store.CacheMount {
-	return store.CacheMount{
-		ID:          id,
-		Name:        strings.TrimSpace(input.Name),
-		Description: strings.TrimSpace(input.Description),
-		HostPath:    strings.TrimSpace(input.HostPath),
-		TargetPath:  strings.TrimSpace(input.TargetPath),
-		ReadOnly:    input.ReadOnly,
-		AutoAttach:  input.AutoAttach,
-		Enabled:     input.Enabled,
-	}
-}
-
-// skillStoreFromInput builds a store record from the binding payload.
-func skillStoreFromInput(input SkillStoreRequest, id int64) store.SkillStore {
-	return store.SkillStore{
-		ID:          id,
-		Name:        strings.TrimSpace(input.Name),
-		Description: strings.TrimSpace(input.Description),
-		URL:         strings.TrimSpace(input.URL),
-		Ref:         strings.TrimSpace(input.Ref),
-		Auth:        strings.TrimSpace(input.Auth),
-	}
 }

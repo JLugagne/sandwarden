@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/JLugagne/sandwarden/internal/fleet"
 	"github.com/JLugagne/sandwarden/internal/sbx"
-	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 // ConnectInfo carries the CLI commands that attach to a sandbox's agent.
@@ -40,14 +40,18 @@ type SandboxSummary struct {
 	// MemoryUsed/MemoryTotal are the sampled memory figures in bytes.
 	MemoryUsed  int64 `json:"memory_used_bytes"`
 	MemoryTotal int64 `json:"memory_total_bytes"`
+	// Incomplete reports a config directory adopted from the daemon without its original create parameters.
+	Incomplete bool `json:"incomplete"`
 }
 
 // SandboxDetail is the per-sandbox projection pushed on TopicSandbox.
 type SandboxDetail struct {
-	Sandbox              SandboxSummary        `json:"sandbox"`
-	Profiles             []store.Profile       `json:"profiles"`
-	Mounts               []sbx.MountInfo       `json:"mounts"`
-	MountsError          string                `json:"mounts_error,omitempty"`
+	Sandbox     SandboxSummary  `json:"sandbox"`
+	Profiles    []ProfileRef    `json:"profiles"`
+	Mounts      []sbx.MountInfo `json:"mounts"`
+	MountsError string          `json:"mounts_error,omitempty"`
+	// Incomplete reports a config directory adopted from the daemon without its original create parameters.
+	Incomplete           bool                  `json:"incomplete"`
 	Image                string                `json:"image,omitempty"`
 	ImageDigest          string                `json:"image_digest,omitempty"`
 	Kits                 []string              `json:"kits,omitempty"`
@@ -56,6 +60,7 @@ type SandboxDetail struct {
 	PolicyRules          []sbx.PolicyRule      `json:"policy_rules"`
 	Caches               []SandboxCache        `json:"caches"`
 	ProfileMounts        []SandboxProfileMount `json:"profile_mounts"`
+	DirectMounts         []SandboxDirectMount  `json:"direct_mounts"`
 	AdditionalWorkspaces []sbx.WorkspaceMount  `json:"additional_workspaces,omitempty"`
 	Skills               []SandboxSkill        `json:"skills"`
 }
@@ -66,25 +71,14 @@ func (a *App) SandboxSummaries(ctx context.Context) ([]SandboxSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	assignments, err := a.Store.AllAssignments(ctx)
-	if err != nil {
-		return nil, err
-	}
-	profiles, err := a.Store.ListProfiles(ctx)
-	if err != nil {
-		return nil, err
-	}
-	byID := make(map[int64]store.Profile, len(profiles))
-	for _, p := range profiles {
-		byID[p.ID] = p
-	}
-	runArgs, err := a.Store.AllRunArgs(ctx)
-	if err != nil {
-		return nil, err
-	}
 	out := make([]SandboxSummary, 0, len(sandboxes))
 	for _, s := range sandboxes {
-		summary := buildSummary(s, assignments[s.Name], byID, runArgs[s.Name])
+		var cfg *fleet.Sandbox
+		if c, ok := a.Fleet.SandboxByName(s.Name); ok {
+			cfg = c
+		}
+		summary := buildSummary(s, a.profileNames(cfg), runArgsOf(cfg))
+		summary.Incomplete = sandboxIncomplete(cfg)
 		a.stats.apply(&summary)
 		out = append(out, summary)
 	}
@@ -97,25 +91,17 @@ func (a *App) SandboxDetail(ctx context.Context, name string) (SandboxDetail, er
 	if err != nil {
 		return SandboxDetail{}, err
 	}
-	profiles, err := a.Store.ListProfilesForSandbox(ctx, name)
-	if err != nil {
-		return SandboxDetail{}, err
+	var cfg *fleet.Sandbox
+	if c, ok := a.Fleet.SandboxByName(name); ok {
+		cfg = c
 	}
-	byID := make(map[int64]store.Profile, len(profiles))
-	ids := make([]int64, 0, len(profiles))
-	for _, p := range profiles {
-		byID[p.ID] = p
-		ids = append(ids, p.ID)
-	}
-	runArgs, err := a.Store.RunArgsForSandbox(ctx, name)
-	if err != nil {
-		return SandboxDetail{}, err
-	}
-	summary := buildSummary(info, ids, byID, runArgs)
+	summary := buildSummary(info, a.profileNames(cfg), runArgsOf(cfg))
+	summary.Incomplete = sandboxIncomplete(cfg)
 	a.stats.apply(&summary)
 	detail := SandboxDetail{
 		Sandbox:              summary,
-		Profiles:             profiles,
+		Incomplete:           summary.Incomplete,
+		Profiles:             a.profileRefs(cfg),
 		AdditionalWorkspaces: info.AdditionalWorkspaces,
 	}
 	if inspected, err := a.Sbx.InspectDetail(ctx, name); err == nil {
@@ -145,16 +131,17 @@ func (a *App) SandboxDetail(ctx context.Context, name string) (SandboxDetail, er
 		detail.PolicyRules = rules
 	}
 	detail.Caches = a.sandboxCaches(ctx, name, detail.Mounts)
-	if profileMounts, err := a.profileMountsForSandbox(ctx, name, detail.Mounts); err == nil {
-		detail.ProfileMounts = profileMounts
+	if mounts, err := a.profileMountsForSandbox(ctx, name, detail.Mounts); err == nil {
+		detail.ProfileMounts = mounts
 	}
+	detail.DirectMounts = a.sandboxMounts(cfg, detail.Mounts)
 	if skills := a.sandboxSkills(ctx, name, detail.Mounts); len(skills) > 0 {
 		detail.Skills = skills
 	}
 	return detail, nil
 }
 
-func buildSummary(s sbx.Sandbox, assigned []int64, byID map[int64]store.Profile, runArgs string) SandboxSummary {
+func buildSummary(s sbx.Sandbox, profileNames []string, runArgs string) SandboxSummary {
 	sum := SandboxSummary{
 		Name:              s.Name,
 		ID:                s.ID,
@@ -166,17 +153,12 @@ func buildSummary(s sbx.Sandbox, assigned []int64, byID map[int64]store.Profile,
 		StoppedAt:         s.StoppedAt,
 		Ports:             s.Ports,
 		MountPolicyDenied: s.MountPolicyDenied != nil && *s.MountPolicyDenied,
-		Profiles:          []string{},
+		Profiles:          append([]string{}, profileNames...),
 		RunArgs:           runArgs,
 		Connect:           connectInfo(s.Name, runArgs),
 	}
 	if s.Profile != nil {
 		sum.DaemonProfile = *s.Profile
-	}
-	for _, id := range assigned {
-		if p, ok := byID[id]; ok {
-			sum.Profiles = append(sum.Profiles, p.Name)
-		}
 	}
 	return sum
 }
@@ -227,11 +209,15 @@ func (a *App) publishTopic(topic Topic) {
 			a.Hub.Publish(EventFor(topic, data))
 		}
 	case TopicCaches:
-		if data, err := a.Store.ListCacheMounts(ctx); err == nil {
+		if data, err := a.ListCaches(ctx); err == nil {
 			a.Hub.Publish(EventFor(topic, data))
 		}
 	case TopicSkills:
 		if data, err := a.ListSkillStores(ctx); err == nil {
+			a.Hub.Publish(EventFor(topic, data))
+		}
+	case TopicKits:
+		if data, err := a.ListKitStores(ctx); err == nil {
 			a.Hub.Publish(EventFor(topic, data))
 		}
 	}
@@ -284,61 +270,88 @@ func (n *notifier) drain() {
 
 // SandboxCache is a configured cache plus its live attachment state for one
 // sandbox.
+// SandboxCache is a configured cache plus its live attachment state for one
+// sandbox.
 type SandboxCache struct {
-	store.CacheMount
+	Slug string `json:"slug"`
+	fleet.CacheApp
 	Attached bool     `json:"attached"`
 	Direct   bool     `json:"direct"`
 	Profiles []string `json:"profiles"`
 	OptedOut bool     `json:"opted_out"`
 }
 
-func cacheMounted(mounts []sbx.MountInfo, c store.CacheMount) bool {
-	return mountPresent(mounts, c.HostPath, c.TargetPath)
-}
-
 // sandboxCaches projects the caches of one sandbox: direct assignments plus
 // profile defaults, with live attachment and opt-out state. The desired set
 // feeds the reconcile pass; this one feeds the UI.
-func (a *App) sandboxCaches(ctx context.Context, sandbox string, mounts []sbx.MountInfo) []SandboxCache {
-	direct, err := a.Store.ListCachesForSandbox(ctx, sandbox)
-	if err != nil {
+func (a *App) sandboxCaches(ctx context.Context, name string, mounts []sbx.MountInfo) []SandboxCache {
+	s, ok := a.Fleet.SandboxByName(name)
+	if !ok {
 		return nil
 	}
-	profiled, err := a.Store.ProfileCachesForSandbox(ctx, sandbox)
-	if err != nil {
-		return nil
+	optedOut := map[string]bool{}
+	if s.App.OptOuts != nil {
+		for _, slug := range s.App.OptOuts.Caches {
+			optedOut[slug] = true
+		}
 	}
-	optOuts, err := a.Store.ProfileOptOuts(ctx, sandbox)
-	if err != nil {
-		return nil
-	}
-	merged := map[int64]*SandboxCache{}
-	var order []int64
-	row := func(c store.CacheMount) *SandboxCache {
-		if existing, ok := merged[c.ID]; ok {
+	merged := map[string]*SandboxCache{}
+	var order []string
+	row := func(c fleet.Cache) *SandboxCache {
+		if existing, ok := merged[c.Slug]; ok {
 			return existing
 		}
-		created := &SandboxCache{CacheMount: c, Attached: cacheMounted(mounts, c)}
-		merged[c.ID] = created
-		order = append(order, c.ID)
+		created := &SandboxCache{Slug: c.Slug, CacheApp: c.App, Attached: cacheMounted(mounts, c)}
+		merged[c.Slug] = created
+		order = append(order, c.Slug)
 		return created
 	}
-	for _, c := range profiled {
-		entry := row(c.CacheMount)
-		if !slices.Contains(entry.Profiles, c.ProfileName) {
-			entry.Profiles = append(entry.Profiles, c.ProfileName)
+	for _, p := range a.profilesForSandbox(s) {
+		for _, slug := range p.App.Caches {
+			c, ok := a.Fleet.Cache(slug)
+			if !ok {
+				continue
+			}
+			entry := row(*c)
+			if label := p.Label(); !slices.Contains(entry.Profiles, label) {
+				entry.Profiles = append(entry.Profiles, label)
+			}
 		}
 	}
-	for _, c := range direct {
-		row(c).Direct = true
+	for _, slug := range s.App.Caches {
+		if c, ok := a.Fleet.Cache(slug); ok {
+			row(*c).Direct = true
+		}
 	}
 	out := make([]SandboxCache, 0, len(order))
-	for _, id := range order {
-		entry := merged[id]
-		entry.OptedOut = !entry.Direct && optOuts[store.ProfileOptOutKey(store.OptOutCache, id)]
+	for _, slug := range order {
+		entry := merged[slug]
+		entry.OptedOut = !entry.Direct && optedOut[slug]
 		sort.Strings(entry.Profiles)
 		out = append(out, *entry)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// sandboxMounts is the DirectMounts tab projection: the sandbox's own
+// declared mounts with their live attachment state.
+func (a *App) sandboxMounts(cfg *fleet.Sandbox, live []sbx.MountInfo) []SandboxDirectMount {
+	if cfg == nil {
+		return nil
+	}
+	out := make([]SandboxDirectMount, 0, len(cfg.App.Mounts))
+	for _, m := range cfg.App.Mounts {
+		out = append(out, SandboxDirectMount{
+			MountRef: m,
+			Attached: mountPresent(live, m.HostPath, m.EffectiveTarget()),
+		})
+	}
+	return out
+}
+
+// SandboxDirectMount is a sandbox-owned declared mount with its live state.
+type SandboxDirectMount struct {
+	fleet.MountRef
+	Attached bool `json:"attached"`
 }

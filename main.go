@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"embed"
-	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -12,7 +12,9 @@ import (
 	"syscall"
 
 	"github.com/JLugagne/sandwarden/internal/app"
+	"github.com/JLugagne/sandwarden/internal/cli"
 	"github.com/JLugagne/sandwarden/internal/desktop"
+	"github.com/JLugagne/sandwarden/internal/fleet"
 	"github.com/JLugagne/sandwarden/internal/sbx"
 	"github.com/JLugagne/sandwarden/internal/store"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -21,32 +23,42 @@ import (
 //go:embed all:web/dist
 var assets embed.FS
 
-// version is the release tag injected at build time (dev for local builds).
 var version = "dev"
 
 func main() {
-	socket := flag.String("socket", "", "sandboxd unix socket path (default: $DOCKER_SANDBOXES_API or XDG)")
-	dbPath := flag.String("db", "", "path to the SQLite database (default: XDG state dir)")
-	flag.Parse()
-
-	if *dbPath == "" {
-		*dbPath = defaultDBPath()
+	opts := &cli.Options{Version: version}
+	root := cli.New(opts, runGUI)
+	if err := root.Execute(); err != nil {
+		os.Exit(1)
 	}
-	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil {
-		log.Fatalf("create data dir: %v", err)
-	}
+}
 
-	st, err := store.Open(*dbPath)
+// runGUI launches the desktop application; it is the root command's action.
+func runGUI(opts *cli.Options) error {
+	dbPath := strings.TrimSpace(opts.DB)
+	if dbPath == "" {
+		dbPath = cli.DefaultDBPath()
+	}
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return fmt.Errorf("create data dir: %w", err)
+	}
+	st, err := store.Open(dbPath)
 	if err != nil {
-		log.Fatalf("open store: %v", err)
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	fl, err := fleet.Open(opts.ConfigDir)
+	if err != nil {
+		return fmt.Errorf("open config: %w", err)
 	}
 
-	client := sbx.New(*socket)
+	client := sbx.New(opts.Socket)
 	if _, err := client.ListSandboxes(context.Background()); err != nil {
 		log.Printf("warning: cannot reach sandboxd (%s): %v", sbx.SocketPath(), err)
 	}
 
-	core := app.New(client, st)
+	core := app.New(client, st, fl)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -56,7 +68,7 @@ func main() {
 	}
 	core.Start(ctx)
 
-	service := desktop.New(core, ctx, version)
+	service := desktop.New(core, ctx, opts.Version)
 	notifier := desktop.NewNotifier()
 
 	wailsApp := application.New(application.Options{
@@ -111,18 +123,5 @@ func main() {
 		wailsApp.Quit()
 	}()
 
-	if err := wailsApp.Run(); err != nil {
-		log.Fatal(err)
-	}
-}
-
-func defaultDBPath() string {
-	if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
-		return filepath.Join(dir, "sandwarden", "sandwarden.db")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "sandwarden.db"
-	}
-	return filepath.Join(home, ".local", "state", "sandwarden", "sandwarden.db")
+	return wailsApp.Run()
 }

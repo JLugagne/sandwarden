@@ -1,15 +1,19 @@
 import { api } from "@/api/client";
-
-const STORAGE_KEY = "sandwarden.notifications";
+import { cachedConfig, loadConfig, updateConfig } from "@/lib/config";
 
 /** Whether native desktop notifications are enabled for this installation. */
 export function notificationsEnabled(): boolean {
-  return localStorage.getItem(STORAGE_KEY) === "1";
+  return cachedConfig().notifications;
 }
 
-/** Persists the desktop notification preference. */
-export function setNotificationsEnabled(enabled: boolean): void {
-  localStorage.setItem(STORAGE_KEY, enabled ? "1" : "0");
+/** Loads the backend configuration and returns the notification preference. */
+export async function fetchNotificationsEnabled(): Promise<boolean> {
+  return (await loadConfig()).notifications;
+}
+
+/** Persists the desktop notification preference to the backend config file. */
+export async function setNotificationsEnabled(enabled: boolean): Promise<void> {
+  await updateConfig({ notifications: enabled });
 }
 
 /** Sends a native desktop notification when the preference is enabled. */

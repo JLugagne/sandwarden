@@ -10,10 +10,12 @@ export {
 
 export type {
     CacheInput,
+    CompleteSandboxRequest,
     CreateSandboxRequest,
     CustomSecretRequest,
     ExecRequest,
     Health,
+    ImportSandboxesRequest,
     ImportSecretsRequest,
     KitStoreRequest,
     MountRequest,
@@ -24,6 +26,7 @@ export type {
     RegistrySecretRequest,
     RuleRequest,
     ServiceSecretRequest,
+    SkillRefRequest,
     SkillStoreRequest,
     VersionInfo,
     WorkspaceSpec

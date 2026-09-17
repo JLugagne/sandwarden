@@ -8,26 +8,39 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/JLugagne/sandwarden/internal/fleet"
 	"github.com/JLugagne/sandwarden/internal/sbx"
 	"github.com/JLugagne/sandwarden/internal/search"
 	"github.com/JLugagne/sandwarden/internal/store"
 )
 
-// App coordinates the sandboxd client, the profile store, the event hub and
-// background jobs.
+// deleteSandboxTimeout bounds one daemon delete so a sandboxd stuck on a
+// wedged sandbox cannot leave the GUI waiting forever.
+var deleteSandboxTimeout = 2 * time.Minute
+
+// App coordinates the sandboxd client, the filesystem fleet, the derived
+// store index, the event hub and background jobs.
 type App struct {
-	Sbx         *sbx.Client
-	Store       *store.Store
-	Hub         *Hub
-	Jobs        *JobBroker
-	notifier    *notifier
-	stats       *statsTracker
+	Sbx   *sbx.Client
+	Store *store.Store
+	Fleet *fleet.Fleet
+	Hub   *Hub
+	Jobs  *JobBroker
+
+	notifier *notifier
+	stats    *statsTracker
+
 	mu          sync.Mutex
 	rootCtx     context.Context
 	seenBlocked map[string]bool
 	lastLogSig  string
 	reconcileCh chan struct{}
+	// lastState tracks the daemon status seen per sandbox so a stopped →
+	// running transition converges the sidecar exactly once.
+	lastState map[string]string
+
 	// searchMu guards the lazily built search index.
 	searchMu sync.Mutex
 	// searchIdx caches the BM25 index over the skill and kit catalogs.
@@ -36,50 +49,54 @@ type App struct {
 	searchFingerprint string
 }
 
-// New builds an App and its hub.
-func New(client *sbx.Client, st *store.Store) *App {
-	hub := NewHub()
+// New wires the application services together.
+func New(client *sbx.Client, st *store.Store, fl *fleet.Fleet) *App {
 	a := &App{
 		Sbx:         client,
 		Store:       st,
-		Hub:         hub,
-		Jobs:        NewJobBroker(hub),
-		seenBlocked: make(map[string]bool),
+		Fleet:       fl,
+		Hub:         NewHub(),
+		Jobs:        NewJobBroker(nil),
+		seenBlocked: map[string]bool{},
+		lastState:   map[string]string{},
 		reconcileCh: make(chan struct{}, 1),
-		stats:       newStatsTracker(),
 	}
+	a.Jobs = NewJobBroker(a.Hub)
 	a.notifier = newNotifier(a.publishTopic)
+	a.stats = newStatsTracker()
 	return a
 }
 
-// DeleteSandbox unapplies every profile from the sandbox, removes it, then
-// drops the local assignment rows.
-// DeleteSandbox unapplies every profile from the sandbox, removes it, then
-// drops the local assignment rows.
-func (a *App) DeleteSandbox(ctx context.Context, name string, force bool) error {
-	profiles, err := a.Store.ListProfilesForSandbox(ctx, name)
-	if err != nil {
-		return err
-	}
-	for _, p := range profiles {
-		if err := a.unapplyProfileFromTarget(ctx, p, name); err != nil {
-			return err
+// DeleteSandbox unapplies every profile from the sandbox, removes it from the
+// daemon, and drops the config directory when the caller asked to purge it.
+func (a *App) DeleteSandbox(ctx context.Context, name string, force, purgeConfig bool) error {
+	ctx, cancel := context.WithTimeout(ctx, deleteSandboxTimeout)
+	defer cancel()
+
+	var current *fleet.Sandbox
+	if s, ok := a.Fleet.SandboxByName(name); ok {
+		current = s
+		for _, slug := range s.App.Profiles {
+			if p, found := a.Fleet.Profile(slug); found {
+				if err := a.unapplyProfileFromTarget(ctx, p, name); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	if err := a.Sbx.DeleteSandbox(ctx, name, force); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("sandboxd did not answer the delete of %q within %s; it may be stuck, restart it with `sbx daemon restart`: %w", name, deleteSandboxTimeout, err)
+		}
 		return err
 	}
-	if err := a.Store.DropSandboxAssignments(ctx, name); err != nil {
+	if err := a.Store.ClearAppliedForSandbox(ctx, name); err != nil {
 		return err
 	}
-	if err := a.Store.DropSandboxCaches(ctx, name); err != nil {
-		return err
-	}
-	if err := a.Store.DropSandboxSkillItems(ctx, name); err != nil {
-		return err
-	}
-	if err := a.Store.DropSandboxRunArgs(ctx, name); err != nil {
-		return err
+	if purgeConfig && current != nil {
+		if err := a.Fleet.DeleteSandbox(current.Slug); err != nil {
+			return err
+		}
 	}
 	a.Notify(TopicSandboxes)
 	a.Notify(TopicCaches)
@@ -87,10 +104,14 @@ func (a *App) DeleteSandbox(ctx context.Context, name string, force bool) error 
 	return nil
 }
 
-// SetSandboxRunArgs stores the extra arguments appended after `--` to the
-// sandbox's connect run command; an empty value clears it.
+// SetSandboxRunArgs stores the custom arguments appended after -- on connect.
 func (a *App) SetSandboxRunArgs(ctx context.Context, name, args string) error {
-	if err := a.Store.SetRunArgs(ctx, name, args); err != nil {
+	s, err := a.ensureSandboxConfig(ctx, name)
+	if err != nil {
+		return err
+	}
+	s.App.RunArgs = strings.TrimSpace(args)
+	if err := a.Fleet.SaveSandbox(s); err != nil {
 		return err
 	}
 	a.Notify(TopicSandboxes)
@@ -98,17 +119,16 @@ func (a *App) SetSandboxRunArgs(ctx context.Context, name, args string) error {
 	return nil
 }
 
-// StartSandbox starts a sandbox's VM.
-// StartSandbox starts a sandbox's VM and re-attaches its desired cache mounts
-// once it is up (bind mounts do not survive a restart).
+// StartSandbox starts a sandbox's VM and converges its sidecar once it is up:
+// profile rules, profile and direct mounts, caches and skill mounts do not
+// survive a restart on their own.
 func (a *App) StartSandbox(ctx context.Context, name string) error {
 	if err := a.Sbx.StartSandbox(ctx, name); err != nil {
 		return err
 	}
 	a.Notify(TopicSandboxes)
 	a.Notify(TopicSandbox(name))
-	go a.reapplyCachesWhenReady(a.jobContext(), name)
-	go a.reapplySkillsWhenReady(a.jobContext(), name)
+	go a.applyWhenReady(a.jobContext(), name)
 	return nil
 }
 
@@ -122,32 +142,25 @@ func (a *App) StopSandbox(ctx context.Context, name string) error {
 	return nil
 }
 
-// StartCreateJob runs `sbx create` as a background job and returns its id.
-// StartCreateJob runs `sbx create` as a background job, optionally attaching
-// the auto-attach caches to the new sandbox, and returns the job id.
-func (a *App) StartCreateJob(opts sbx.CreateOptions, jobID string, attachCaches bool) string {
+// CreateRequest is everything needed to create a sandbox and record its
+// configuration directory.
+type CreateRequest struct {
+	Opts         sbx.CreateOptions
+	Profiles     []string
+	Caches       []string
+	Skills       []fleet.SkillRef
+	Mounts       []fleet.MountRef
+	RunArgs      string
+	AttachCaches bool
+}
+
+// StartCreateJob runs `sbx create` as a background job, writes the new
+// sandbox's config directory from the request, then converges it.
+// StartCreateJob runs `sbx create` as a background job, writes the new
+// sandbox's config directory from the request, then converges it.
+func (a *App) StartCreateJob(req CreateRequest, jobID string) string {
 	return a.Jobs.Start(a.jobContext(), jobID, func(ctx context.Context, w io.Writer) error {
-		var before map[string]bool
-		if attachCaches {
-			before = a.sandboxNameSet(ctx)
-		}
-		if err := a.Sbx.CreateSandbox(ctx, opts, w); err != nil {
-			return err
-		}
-		a.Notify(TopicSandboxes)
-		if !attachCaches {
-			return nil
-		}
-		name := strings.TrimSpace(opts.Name)
-		if name == "" {
-			name = a.findNewSandbox(ctx, before)
-		}
-		if name == "" {
-			fmt.Fprintln(w, "caches: could not identify the new sandbox; attach caches from its Caches tab")
-			return nil
-		}
-		a.attachAutoCaches(ctx, name, w)
-		return nil
+		return a.CreateSandbox(ctx, req, w)
 	})
 }
 
@@ -158,8 +171,7 @@ func (a *App) StartExecJob(sandbox, command, jobID string) string {
 	})
 }
 
-// StartImportJob runs `sbx secret import` as a background job and refreshes the
-// secret inventory once a real import succeeds.
+// StartImportJob imports host secrets through the sbx CLI as a job.
 func (a *App) StartImportJob(service string, all, dryRun, force bool, jobID string) string {
 	return a.Jobs.Start(a.jobContext(), jobID, func(ctx context.Context, w io.Writer) error {
 		err := a.Sbx.ImportSecrets(ctx, service, all, dryRun, force, w)
@@ -170,7 +182,7 @@ func (a *App) StartImportJob(service string, all, dryRun, force bool, jobID stri
 	})
 }
 
-// ApplyPolicy applies one or more daemon policy mutations and refreshes viewers.
+// ApplyPolicy runs ad-hoc policy mutations, untracked by the ledger.
 func (a *App) ApplyPolicy(ctx context.Context, actions ...sbx.PolicyAction) ([]sbx.PolicyActionResult, error) {
 	results, err := a.Sbx.ModifyPolicy(ctx, actions...)
 	if err != nil {
@@ -192,7 +204,7 @@ func (a *App) ApplyPolicy(ctx context.Context, actions ...sbx.PolicyAction) ([]s
 	return results, errors.Join(failures...)
 }
 
-// SandboxTraffic returns the proxy host log filtered to one sandbox.
+// SandboxTraffic returns the proxy log entries of one sandbox.
 func (a *App) SandboxTraffic(ctx context.Context, name string) (sbx.PolicyLog, error) {
 	log, err := a.Sbx.PolicyLog(ctx)
 	if err != nil {
@@ -212,19 +224,10 @@ func (a *App) SandboxTraffic(ctx context.Context, name string) (sbx.PolicyLog, e
 	return out, nil
 }
 
-func (a *App) jobContext() context.Context {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.rootCtx != nil {
-		return a.rootCtx
-	}
-	return context.Background()
-}
-
-// AddMountAt bind-mounts a host path into a running sandbox at target; an
-// empty target keeps the same path. Missing target directories are created.
+// AddMountAt declares a bind mount in the sandbox sidecar and attaches it
+// immediately when the sandbox runs.
 func (a *App) AddMountAt(ctx context.Context, name, hostPath, target string, readOnly bool) error {
-	hostPath = strings.TrimSpace(hostPath)
+	hostPath = fleet.ExpandHome(hostPath)
 	if hostPath == "" {
 		return errors.New("host path is required")
 	}
@@ -235,28 +238,103 @@ func (a *App) AddMountAt(ctx context.Context, name, hostPath, target string, rea
 	if target != "" && !filepath.IsAbs(target) {
 		return errors.New("target path must be absolute")
 	}
-	info, err := a.Sbx.InspectSandbox(ctx, name)
+	s, err := a.ensureSandboxConfig(ctx, name)
 	if err != nil {
 		return err
 	}
-	if !info.Running() {
-		return fmt.Errorf("sandbox %q is not running; start it before mounting", name)
+	mount := fleet.MountRef{HostPath: hostPath, TargetPath: target, ReadOnly: readOnly}
+	replaced := false
+	for i, m := range s.App.Mounts {
+		if m.HostPath == mount.HostPath && m.TargetPath == mount.TargetPath {
+			s.App.Mounts[i] = mount
+			replaced = true
+			break
+		}
 	}
-	if target != "" {
-		_ = a.Sbx.MkdirAll(ctx, name, target)
+	if !replaced {
+		s.App.Mounts = append(s.App.Mounts, mount)
 	}
-	if err := a.Sbx.MountFolderAt(ctx, name, hostPath, target, readOnly); err != nil {
+	if err := a.Fleet.SaveSandbox(s); err != nil {
 		return err
+	}
+	if info, err := a.Sbx.InspectSandbox(ctx, name); err == nil && info.Running() {
+		if target != "" {
+			_ = a.Sbx.MkdirAll(ctx, name, target)
+		}
+		if err := a.Sbx.MountFolderAt(ctx, name, hostPath, target, readOnly); err != nil {
+			return err
+		}
 	}
 	a.Notify(TopicSandbox(name))
 	return nil
 }
 
-// RemoveMountAt revokes a bind mount created with AddMountAt.
+// RemoveMountAt removes a declared bind mount and detaches it if attached.
 func (a *App) RemoveMountAt(ctx context.Context, name, hostPath, target string) error {
-	if err := a.Sbx.UnmountFolderAt(ctx, name, hostPath, target); err != nil {
+	s, err := a.ensureSandboxConfig(ctx, name)
+	if err != nil {
 		return err
+	}
+	kept := s.App.Mounts[:0]
+	for _, m := range s.App.Mounts {
+		if m.HostPath == hostPath && m.TargetPath == target {
+			continue
+		}
+		kept = append(kept, m)
+	}
+	s.App.Mounts = kept
+	if err := a.Fleet.SaveSandbox(s); err != nil {
+		return err
+	}
+	if info, err := a.Sbx.InspectSandbox(ctx, name); err == nil && info.Running() {
+		if err := a.Sbx.UnmountFolderAt(ctx, name, hostPath, target); err != nil {
+			return err
+		}
 	}
 	a.Notify(TopicSandbox(name))
 	return nil
+}
+
+func (a *App) jobContext() context.Context {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.rootCtx != nil {
+		return a.rootCtx
+	}
+	return context.Background()
+}
+
+func (a *App) sandboxNameSet(ctx context.Context) map[string]bool {
+	set := make(map[string]bool)
+	if sandboxes, err := a.Sbx.ListSandboxes(ctx); err == nil {
+		for _, s := range sandboxes {
+			set[s.Name] = true
+		}
+	}
+	return set
+}
+
+func (a *App) findNewSandbox(ctx context.Context, before map[string]bool) string {
+	sandboxes, err := a.Sbx.ListSandboxes(ctx)
+	if err != nil {
+		return ""
+	}
+	newest := ""
+	var newestAt time.Time
+	for _, s := range sandboxes {
+		if before[s.Name] {
+			continue
+		}
+		if s.CreatedAt == nil {
+			if newest == "" {
+				newest = s.Name
+			}
+			continue
+		}
+		if newest == "" || s.CreatedAt.After(newestAt) {
+			newestAt = *s.CreatedAt
+			newest = s.Name
+		}
+	}
+	return newest
 }

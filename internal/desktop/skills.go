@@ -1,89 +1,72 @@
 package desktop
 
 import (
-	"errors"
-
 	"github.com/JLugagne/sandwarden/internal/app"
 	"github.com/JLugagne/sandwarden/internal/store"
 )
 
 // ListSkillStores returns every registered skill store.
-func (d *Desktop) ListSkillStores() ([]store.SkillStore, error) {
+func (d *Desktop) ListSkillStores() ([]app.SkillStoreView, error) {
 	return d.app.ListSkillStores(d.root)
 }
 
-// ListSkillItems returns the discovered catalog of one store, or every store
-// when storeID is zero.
-func (d *Desktop) ListSkillItems(storeID int64) ([]store.SkillItem, error) {
-	return d.app.ListSkillItems(d.root, storeID)
+// ListSkillItems returns the discovered items of one store, or all of them
+// when storeSlug is empty.
+func (d *Desktop) ListSkillItems(storeSlug string) ([]store.SkillItem, error) {
+	return d.app.ListSkillItems(d.root, storeSlug)
 }
 
-// CreateSkillStore registers a skill store and performs its first checkout.
-// CreateSkillStore registers a skill store and performs its first checkout.
-func (d *Desktop) CreateSkillStore(req SkillStoreRequest) (store.SkillStore, error) {
-	return d.app.CreateSkillStore(d.root, skillStoreFromInput(req, 0))
+// CreateSkillStore registers, checks out and discovers a skill store.
+func (d *Desktop) CreateSkillStore(req SkillStoreRequest) (app.SkillStoreView, error) {
+	return d.app.CreateSkillStore(d.root, storeInput(req))
 }
 
-// UpdateSkillStore rewrites a skill store and refreshes it when its source
-// changed.
-// UpdateSkillStore rewrites a skill store and refreshes it when its source
-// changed.
-func (d *Desktop) UpdateSkillStore(id int64, req SkillStoreRequest) (store.SkillStore, error) {
-	if id == 0 {
-		return store.SkillStore{}, errors.New("store id is required")
-	}
-	return d.app.UpdateSkillStore(d.root, id, skillStoreFromInput(req, id))
+// UpdateSkillStore rewrites a skill store registration.
+func (d *Desktop) UpdateSkillStore(slug string, req SkillStoreRequest) (app.SkillStoreView, error) {
+	return d.app.UpdateSkillStore(d.root, slug, storeInput(req))
 }
 
-// DeleteSkillStore removes a skill store and its selections.
-func (d *Desktop) DeleteSkillStore(id int64) error {
-	if id == 0 {
-		return errors.New("store id is required")
-	}
-	return d.app.DeleteSkillStore(d.root, id)
+// DeleteSkillStore forgets a skill store, its checkout and its catalog.
+func (d *Desktop) DeleteSkillStore(slug string) error {
+	return d.app.DeleteSkillStore(d.root, slug)
 }
 
-// RefreshSkillStore re-checks out a store and rebuilds its catalog.
-func (d *Desktop) RefreshSkillStore(id int64) (store.SkillStore, error) {
-	if id == 0 {
-		return store.SkillStore{}, errors.New("store id is required")
-	}
-	return d.app.RefreshSkillStore(d.root, id)
+// RefreshSkillStore re-runs the checkout and discovery.
+func (d *Desktop) RefreshSkillStore(slug string) (app.SkillStoreView, error) {
+	return d.app.RefreshSkillStore(d.root, slug)
 }
 
-// AddProfileSkillItem selects a catalog item for a profile.
-func (d *Desktop) AddProfileSkillItem(profileID, itemID int64) error {
-	if profileID == 0 || itemID == 0 {
-		return errors.New("profile_id and item_id are required")
-	}
-	return d.app.AddSkillItemToProfile(d.root, profileID, itemID)
+// AddProfileSkillItem selects a catalog item on a profile.
+func (d *Desktop) AddProfileSkillItem(profileSlug string, ref SkillRefRequest) error {
+	return d.app.AddSkillItemToProfile(d.root, profileSlug, ref.SkillRefToFleet())
 }
 
-// RemoveProfileSkillItem deselects a catalog item from a profile.
-func (d *Desktop) RemoveProfileSkillItem(profileID, itemID int64) error {
-	if profileID == 0 || itemID == 0 {
-		return errors.New("profile_id and item_id are required")
-	}
-	return d.app.RemoveSkillItemFromProfile(d.root, profileID, itemID)
+// RemoveProfileSkillItem drops a selection from a profile.
+func (d *Desktop) RemoveProfileSkillItem(profileSlug string, ref SkillRefRequest) error {
+	return d.app.RemoveSkillItemFromProfile(d.root, profileSlug, ref.SkillRefToFleet())
 }
 
-// AttachSkillItem adds a catalog item directly to one sandbox.
-func (d *Desktop) AttachSkillItem(name string, itemID int64) error {
-	if itemID == 0 {
-		return errors.New("item_id is required")
-	}
-	return d.app.AttachSkillItem(d.root, name, itemID)
+// AttachSkillItem selects a catalog item directly on a sandbox.
+func (d *Desktop) AttachSkillItem(name string, ref SkillRefRequest) error {
+	return d.app.AttachSkillItem(d.root, name, ref.SkillRefToFleet())
 }
 
-// DetachSkillItem removes a directly attached catalog item from one sandbox.
-func (d *Desktop) DetachSkillItem(name string, itemID int64) error {
-	if itemID == 0 {
-		return errors.New("item_id is required")
-	}
-	return d.app.DetachSkillItem(d.root, name, itemID)
+// DetachSkillItem drops a direct selection from a sandbox.
+func (d *Desktop) DetachSkillItem(name string, ref SkillRefRequest) error {
+	return d.app.DetachSkillItem(d.root, name, ref.SkillRefToFleet())
 }
 
-// ReconcileSkills mounts and unmounts the .agents items of one sandbox.
+// ReconcileSkills converges the sandbox's .agents mounts.
 func (d *Desktop) ReconcileSkills(name string) (app.SkillReconcileResult, error) {
 	return d.app.ReconcileSkills(d.root, name)
+}
+
+func storeInput(req SkillStoreRequest) app.StoreInput {
+	return app.StoreInput{
+		Name:        req.Name,
+		Description: req.Description,
+		URL:         req.URL,
+		Ref:         req.Ref,
+		Auth:        req.Auth,
+	}
 }

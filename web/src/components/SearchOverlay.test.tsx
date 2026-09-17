@@ -18,9 +18,37 @@ vi.mock("@/api/client", () => ({
       async () =>
         [
           {
+            kind: "sandbox",
+            store: "",
+            store_name: "",
+            name: "frontend-box",
+            display_name: "Frontend Box",
+            slug: "frontend-box",
+            description: "UI work sandbox",
+            agent: "claude",
+            score: 4.4,
+          },
+          {
+            kind: "profile",
+            store: "",
+            store_name: "",
+            name: "Net Allow",
+            slug: "net-allow",
+            description: "corporate egress allowlist",
+            score: 4.1,
+          },
+          {
+            kind: "cache",
+            store: "",
+            store_name: "",
+            name: "Go module cache",
+            slug: "go-mod",
+            description: "shared downloads",
+            score: 3.7,
+          },
+          {
             kind: "skill",
-            id: 11,
-            store_id: 1,
+            store: "anthropics",
             store_name: "anthropics",
             name: "kubernetes-deploy",
             description: "Deploy workloads",
@@ -28,8 +56,7 @@ vi.mock("@/api/client", () => ({
           },
           {
             kind: "kit",
-            id: 7,
-            store_id: 2,
+            store: "sbx-kits-contrib",
             store_name: "sbx-kits-contrib",
             name: "code-server",
             display_name: "code-server (web VS Code)",
@@ -61,6 +88,13 @@ function renderOverlay() {
   );
 }
 
+async function openWithQuery(query: string) {
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  const input = await screen.findByLabelText("Search query");
+  fireEvent.change(input, { target: { value: query } });
+  return input;
+}
+
 describe("search overlay", () => {
   it("opens on Ctrl+K and lists grouped results", async () => {
     renderOverlay();
@@ -70,10 +104,16 @@ describe("search overlay", () => {
     const input = await screen.findByLabelText("Search query");
     expect(screen.getByText(/Type at least 2 characters/)).toBeDefined();
 
-    fireEvent.change(input, { target: { value: "kube" } });
+    fireEvent.change(input, { target: { value: "front" } });
 
-    expect(await screen.findByText("kubernetes-deploy")).toBeDefined();
+    expect(await screen.findByText("Frontend Box")).toBeDefined();
+    expect(screen.getByText("Net Allow")).toBeDefined();
+    expect(screen.getByText("Go module cache")).toBeDefined();
+    expect(screen.getByText("kubernetes-deploy")).toBeDefined();
     expect(screen.getByText("code-server (web VS Code)")).toBeDefined();
+    expect(screen.getByText("Sandboxes")).toBeDefined();
+    expect(screen.getByText("Profiles")).toBeDefined();
+    expect(screen.getByText("Caches")).toBeDefined();
     expect(screen.getByText("Skills")).toBeDefined();
     expect(screen.getByText("Kits")).toBeDefined();
   });
@@ -86,15 +126,50 @@ describe("search overlay", () => {
 
   it("navigates to the kits page when a kit result is opened", async () => {
     renderOverlay();
-    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    const input = await screen.findByLabelText("Search query");
-    fireEvent.change(input, { target: { value: "code" } });
+    const input = await openWithQuery("code");
     await screen.findByText("code-server (web VS Code)");
+
+    for (let step = 0; step < 4; step += 1) {
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+    }
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toBe("/kits?store=sbx-kits-contrib&item=code-server"),
+    );
+    expect(screen.queryByLabelText("Search query")).toBeNull();
+  });
+
+  it("opens the sandbox detail page for a sandbox hit", async () => {
+    renderOverlay();
+    const input = await openWithQuery("front");
+    await screen.findByText("Frontend Box");
+
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/sandboxes/frontend-box"));
+  });
+
+  it("opens the profiles page for a profile hit", async () => {
+    renderOverlay();
+    const input = await openWithQuery("net");
+    await screen.findByText("Net Allow");
 
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/kits?item=7"));
-    expect(screen.queryByLabelText("Search query")).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/profiles?profile=net-allow"));
+  });
+
+  it("opens the settings caches section for a cache hit", async () => {
+    renderOverlay();
+    const input = await openWithQuery("go");
+    await screen.findByText("Go module cache");
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/settings?cache=go-mod"));
   });
 });

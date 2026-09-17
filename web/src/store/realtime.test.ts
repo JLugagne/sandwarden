@@ -57,14 +57,14 @@ describe("applyEvent", () => {
 
   it("stores profiles, secrets and traffic snapshots", () => {
     const qc = client();
-    applyEvent(qc, { topic: "profiles", data: [{ id: 1, name: "p" }], ts: "t" });
+    applyEvent(qc, { topic: "profiles", data: [{ slug: "p", name: "p" }], ts: "t" });
     applyEvent(qc, { topic: "secrets", data: { stored: [], custom: [] }, ts: "t" });
     applyEvent(qc, { topic: "traffic", data: { blocked_hosts: [], allowed_hosts: [] }, ts: "t" });
-    applyEvent(qc, { topic: "caches", data: [{ id: 7, name: "go-mod" }], ts: "t" });
-    expect(qc.getQueryData(queryKeys.profiles)).toEqual([{ id: 1, name: "p" }]);
+    applyEvent(qc, { topic: "caches", data: [{ Slug: "go-mod", App: { name: "go-mod" } }], ts: "t" });
+    expect(qc.getQueryData(queryKeys.profiles)).toEqual([{ slug: "p", name: "p" }]);
     expect(qc.getQueryData(queryKeys.secrets)).toEqual({ stored: [], custom: [] });
     expect(qc.getQueryData(queryKeys.traffic)).toEqual({ blocked_hosts: [], allowed_hosts: [] });
-    expect(qc.getQueryData(queryKeys.caches)).toEqual([{ id: 7, name: "go-mod" }]);
+    expect(qc.getQueryData(queryKeys.caches)).toEqual([{ Slug: "go-mod", App: { name: "go-mod" } }]);
   });
 
   it("ignores blocked and job topics", () => {

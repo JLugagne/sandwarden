@@ -1,127 +1,42 @@
+// Package store is the derived SQLite index: the discovered skill and kit
+// catalogs, per-store sync state, and the ledger of policy rules sandwarden
+// applied. Sandbox, profile and cache definitions live in files, not here
+// (see internal/fleet).
 package store
 
 import (
+	"context"
 	"database/sql"
-
+	"errors"
 	"fmt"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
-// migrations are applied in order; user_version tracks the count applied.
-var migrations = []string{
-	`CREATE TABLE profiles (
-		id          INTEGER PRIMARY KEY AUTOINCREMENT,
-		name        TEXT NOT NULL UNIQUE,
-		description TEXT NOT NULL DEFAULT '',
-		is_default  INTEGER NOT NULL DEFAULT 0,
-		is_global   INTEGER NOT NULL DEFAULT 0,
-		created_at  TEXT NOT NULL,
-		updated_at  TEXT NOT NULL
-	);`,
-	`CREATE TABLE profile_rules (
-		id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-		decision   TEXT NOT NULL CHECK (decision IN ('allow','deny')),
-		pattern    TEXT NOT NULL,
-		created_at TEXT NOT NULL,
-		UNIQUE (profile_id, decision, pattern)
-	);`,
-	`CREATE TABLE sandbox_profiles (
-		sandbox_name TEXT NOT NULL,
-		profile_id   INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-		applied_at   TEXT NOT NULL,
-		PRIMARY KEY (sandbox_name, profile_id)
-	);`,
-	`CREATE TABLE applied_rules (
-		id           INTEGER PRIMARY KEY AUTOINCREMENT,
-		profile_id   INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-		sandbox_name TEXT NOT NULL DEFAULT '',
-		rule_id      TEXT NOT NULL,
-		pattern      TEXT NOT NULL,
-		decision     TEXT NOT NULL,
-		created_at   TEXT NOT NULL
-	);`,
-	`CREATE INDEX idx_applied_rules_target ON applied_rules (profile_id, sandbox_name);`,
-	`CREATE INDEX idx_applied_rules_rule ON applied_rules (rule_id);`,
-	`CREATE TABLE sandbox_default_optout (
-		sandbox_name TEXT PRIMARY KEY,
-		opted_out_at TEXT NOT NULL
-	);`,
-	`CREATE TABLE cache_mounts (
-		id          INTEGER PRIMARY KEY AUTOINCREMENT,
-		name        TEXT NOT NULL UNIQUE,
-		description TEXT NOT NULL DEFAULT '',
-		host_path   TEXT NOT NULL,
-		target_path TEXT NOT NULL,
-		read_only   INTEGER NOT NULL DEFAULT 0,
-		auto_attach INTEGER NOT NULL DEFAULT 1,
-		enabled     INTEGER NOT NULL DEFAULT 1,
-		created_at  TEXT NOT NULL,
-		updated_at  TEXT NOT NULL
-	);`,
-	`CREATE TABLE sandbox_caches (
-		sandbox_name TEXT NOT NULL,
-		cache_id     INTEGER NOT NULL REFERENCES cache_mounts(id) ON DELETE CASCADE,
-		attached_at  TEXT NOT NULL,
-		PRIMARY KEY (sandbox_name, cache_id)
-	);`,
-	`CREATE TABLE skill_stores (
-		id          INTEGER PRIMARY KEY AUTOINCREMENT,
-		name        TEXT NOT NULL UNIQUE,
-		description TEXT NOT NULL DEFAULT '',
-		url         TEXT NOT NULL,
-		ref         TEXT NOT NULL DEFAULT '',
-		path        TEXT NOT NULL,
-		synced_at   TEXT NOT NULL DEFAULT '',
-		error       TEXT NOT NULL DEFAULT '',
-		created_at  TEXT NOT NULL,
-		updated_at  TEXT NOT NULL
-	);`,
-	`CREATE TABLE skill_items (
-		id          INTEGER PRIMARY KEY AUTOINCREMENT,
-		store_id    INTEGER NOT NULL REFERENCES skill_stores(id) ON DELETE CASCADE,
+// ErrNotFound is returned when a requested row does not exist.
+var ErrNotFound = errors.New("not found")
+
+// Store owns the SQLite index.
+type Store struct {
+	db *sql.DB
+}
+
+// schema is the fresh, file-driven schema. Nothing here is a source of
+// truth: catalogs are rediscovered from git checkouts and the ledger only
+// tracks rules sandwarden itself installed.
+var schema = []string{
+	`CREATE TABLE IF NOT EXISTS skill_items (
+		store       TEXT NOT NULL,
 		kind        TEXT NOT NULL CHECK (kind IN ('skill','command')),
 		name        TEXT NOT NULL,
 		description TEXT NOT NULL DEFAULT '',
 		plugin      TEXT NOT NULL DEFAULT '',
 		rel_path    TEXT NOT NULL,
-		created_at  TEXT NOT NULL,
-		UNIQUE (store_id, kind, name)
-	);`,
-	`CREATE INDEX idx_skill_items_store ON skill_items (store_id);`,
-	`CREATE TABLE profile_skill_items (
-		profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-		item_id    INTEGER NOT NULL REFERENCES skill_items(id) ON DELETE CASCADE,
-		added_at   TEXT NOT NULL,
-		PRIMARY KEY (profile_id, item_id)
-	);`,
-	`CREATE INDEX idx_profile_skill_items_item ON profile_skill_items (item_id);`,
-	`CREATE TABLE sandbox_skill_items (
-		sandbox_name TEXT NOT NULL,
-		item_id      INTEGER NOT NULL REFERENCES skill_items(id) ON DELETE CASCADE,
-		added_at     TEXT NOT NULL,
-		PRIMARY KEY (sandbox_name, item_id)
-	);`,
-	`CREATE INDEX idx_sandbox_skill_items_item ON sandbox_skill_items (item_id);`,
-	`ALTER TABLE skill_stores ADD COLUMN auth TEXT NOT NULL DEFAULT '';`,
-	`CREATE TABLE kit_stores (
-		id          INTEGER PRIMARY KEY AUTOINCREMENT,
-		name        TEXT NOT NULL UNIQUE,
-		description TEXT NOT NULL DEFAULT '',
-		url         TEXT NOT NULL,
-		ref         TEXT NOT NULL DEFAULT '',
-		auth        TEXT NOT NULL DEFAULT '',
-		path        TEXT NOT NULL,
-		synced_at   TEXT NOT NULL DEFAULT '',
-		error       TEXT NOT NULL DEFAULT '',
-		created_at  TEXT NOT NULL,
-		updated_at  TEXT NOT NULL
-	);`,
-	`CREATE TABLE kit_items (
-		id             INTEGER PRIMARY KEY AUTOINCREMENT,
-		store_id       INTEGER NOT NULL REFERENCES kit_stores(id) ON DELETE CASCADE,
+		PRIMARY KEY (store, kind, name)
+	)`,
+	`CREATE TABLE IF NOT EXISTS kit_items (
+		store          TEXT NOT NULL,
 		kind           TEXT NOT NULL,
 		name           TEXT NOT NULL,
 		display_name   TEXT NOT NULL DEFAULT '',
@@ -131,79 +46,142 @@ var migrations = []string{
 		requires_agent TEXT NOT NULL DEFAULT '',
 		rel_path       TEXT NOT NULL,
 		spec           TEXT NOT NULL DEFAULT '',
-		created_at     TEXT NOT NULL,
-		UNIQUE (store_id, name)
-	);`,
-	`CREATE INDEX idx_kit_items_store ON kit_items (store_id);`,
-	`CREATE TABLE profile_mounts (
-		id          INTEGER PRIMARY KEY AUTOINCREMENT,
-		profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-		host_path   TEXT NOT NULL,
-		target_path TEXT NOT NULL DEFAULT '',
-		read_only   INTEGER NOT NULL DEFAULT 0,
-		created_at  TEXT NOT NULL,
-		UNIQUE (profile_id, host_path, target_path)
-	);`,
-	`CREATE INDEX idx_profile_mounts_profile ON profile_mounts (profile_id);`,
-	`CREATE TABLE profile_caches (
-		profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-		cache_id   INTEGER NOT NULL REFERENCES cache_mounts(id) ON DELETE CASCADE,
-		added_at   TEXT NOT NULL,
-		PRIMARY KEY (profile_id, cache_id)
-	);`,
-	`CREATE TABLE sandbox_profile_optouts (
-		sandbox_name TEXT NOT NULL,
-		kind         TEXT NOT NULL CHECK (kind IN ('mount','cache')),
-		ref_id       INTEGER NOT NULL,
-		opted_out_at TEXT NOT NULL,
-		PRIMARY KEY (sandbox_name, kind, ref_id)
-	);`,
-	`CREATE TABLE sandbox_run_args (
-		sandbox_name TEXT PRIMARY KEY,
-		args         TEXT NOT NULL DEFAULT '',
-		updated_at   TEXT NOT NULL
-	);`,
+		PRIMARY KEY (store, name)
+	)`,
+	`CREATE TABLE IF NOT EXISTS store_state (
+		kind      TEXT NOT NULL,
+		store     TEXT NOT NULL,
+		synced_at TEXT NOT NULL DEFAULT '',
+		error     TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (kind, store)
+	)`,
+	`CREATE TABLE IF NOT EXISTS applied_rules (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		profile    TEXT NOT NULL,
+		sandbox    TEXT NOT NULL DEFAULT '',
+		rule_id    TEXT NOT NULL,
+		pattern    TEXT NOT NULL,
+		decision   TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_applied_rules_target ON applied_rules (profile, sandbox)`,
+	`CREATE INDEX IF NOT EXISTS idx_applied_rules_rule ON applied_rules (rule_id)`,
 }
 
-// Store is the SQLite-backed profile store.
-type Store struct {
-	db *sql.DB
+// legacyTables belonged to the pre-fleet schema; they are dropped on open
+// because files are now the source of truth (no data migration by design).
+var legacyTables = []string{
+	"profiles",
+	"profile_rules",
+	"sandbox_profiles",
+	"applied_rules_v2",
+	"sandbox_default_optout",
+	"cache_mounts",
+	"sandbox_caches",
+	"skill_stores",
+	"skill_items",
+	"profile_skill_items",
+	"sandbox_skill_items",
+	"kit_stores",
+	"kit_items",
+	"profile_mounts",
+	"profile_caches",
+	"sandbox_profile_optouts",
+	"sandbox_run_args",
 }
 
-// Open opens (creating if needed) the SQLite database at path and applies
-// migrations.
+// Open opens (or creates) the SQLite index at path.
 func Open(path string) (*Store, error) {
-	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)", path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	s := &Store{db: db}
-	if err := s.migrate(); err != nil {
-		db.Close()
 		return nil, err
 	}
-	return s, nil
+	db.SetMaxOpenConns(1)
+	st := &Store{db: db}
+	if err := st.init(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return st, nil
 }
 
-// Close releases the database handle.
-func (s *Store) Close() error { return s.db.Close() }
-
-func (s *Store) migrate() error {
-	var version int
-	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
-		return fmt.Errorf("read schema version: %w", err)
+func (s *Store) init(ctx context.Context) error {
+	// Legacy tables carry foreign keys between them; enforcement must be off
+	// for the drops to succeed regardless of order.
+	if _, err := s.db.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		return fmt.Errorf("disable foreign keys: %w", err)
 	}
-	for i := version; i < len(migrations); i++ {
-		if _, err := s.db.Exec(migrations[i]); err != nil {
-			return fmt.Errorf("migration %d: %w", i+1, err)
+	for _, table := range legacyTables {
+		if _, err := s.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+table); err != nil {
+			return fmt.Errorf("drop legacy table %s: %w", table, err)
 		}
-		if _, err := s.db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, i+1)); err != nil {
-			return fmt.Errorf("set schema version: %w", err)
+	}
+	if err := s.dropLegacyAppliedRules(ctx); err != nil {
+		return fmt.Errorf("reset legacy ledger: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		return fmt.Errorf("enable foreign keys: %w", err)
+	}
+	for _, stmt := range schema {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("create schema: %w", err)
 		}
 	}
 	return nil
 }
 
-func now() string { return time.Now().UTC().Format(time.RFC3339) }
+// Close closes the database.
+func (s *Store) Close() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return s.db.Close()
+}
+
+// now is the RFC3339 UTC timestamp stored in every table.
+func now() string {
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
+// dropLegacyAppliedRules removes an applied_rules table left by the pre-fleet
+// schema, whose profile_id/sandbox_name columns no longer match the code.
+// Unlike the rediscoverable catalog tables it is not dropped unconditionally:
+// a ledger already in the current shape cannot be rebuilt from files and must
+// survive every reopen. The new table is created by the schema pass.
+func (s *Store) dropLegacyAppliedRules(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(applied_rules)`)
+	if err != nil {
+		return err
+	}
+	var columns []string
+	for rows.Next() {
+		var (
+			cid     int
+			name    string
+			ctype   string
+			notNull int
+			dflt    any
+			pk      int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		columns = append(columns, name)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(columns) == 0 {
+		return nil
+	}
+	for _, name := range columns {
+		if name == "sandbox" {
+			return nil
+		}
+	}
+	_, err = s.db.ExecContext(ctx, "DROP TABLE applied_rules")
+	return err
+}

@@ -47,6 +47,77 @@ function templateReference(template: Template): string {
   return `${template.repository}:${template.tag}`;
 }
 
+// Mirrors internal/app/secretguard.go: known credential prefixes first, then
+// a conservative long high-entropy token rule. Keep the two in sync.
+const SECRET_PREFIXES: { prefix: string; reason: string }[] = [
+  { prefix: "sk-", reason: 'API key prefix "sk-"' },
+  { prefix: "github_pat_", reason: 'GitHub token prefix "github_pat_"' },
+  { prefix: "ghp_", reason: 'GitHub token prefix "ghp_"' },
+  { prefix: "gho_", reason: 'GitHub token prefix "gho_"' },
+  { prefix: "ghu_", reason: 'GitHub token prefix "ghu_"' },
+  { prefix: "ghs_", reason: 'GitHub token prefix "ghs_"' },
+  { prefix: "ghr_", reason: 'GitHub token prefix "ghr_"' },
+  { prefix: "xoxa-", reason: 'Slack token prefix "xoxa-"' },
+  { prefix: "xoxb-", reason: 'Slack token prefix "xoxb-"' },
+  { prefix: "xoxp-", reason: 'Slack token prefix "xoxp-"' },
+  { prefix: "xoxr-", reason: 'Slack token prefix "xoxr-"' },
+  { prefix: "xoxs-", reason: 'Slack token prefix "xoxs-"' },
+  { prefix: "xapp-", reason: 'Slack token prefix "xapp-"' },
+  { prefix: "AKIA", reason: 'AWS access key id prefix "AKIA"' },
+  { prefix: "ASIA", reason: 'AWS access key id prefix "ASIA"' },
+  { prefix: "AIza", reason: 'Google API key prefix "AIza"' },
+  { prefix: "glpat-", reason: 'GitLab token prefix "glpat-"' },
+  { prefix: "gldt-", reason: 'GitLab token prefix "gldt-"' },
+  { prefix: "glrt-", reason: 'GitLab token prefix "glrt-"' },
+  { prefix: "npm_", reason: 'npm token prefix "npm_"' },
+  { prefix: "pypi-", reason: 'PyPI token prefix "pypi-"' },
+  { prefix: "dckr_pat_", reason: 'Docker token prefix "dckr_pat_"' },
+];
+
+const SECRET_MIN_TOKEN_LENGTH = 32;
+const SECRET_MIN_ENTROPY = 3.5;
+
+function shannonEntropy(value: string): number {
+  const counts = new Map<string, number>();
+  for (const char of value) counts.set(char, (counts.get(char) ?? 0) + 1);
+  let entropy = 0;
+  for (const count of counts.values()) {
+    const p = count / value.length;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
+export function secretValueReason(value: string): string {
+  let candidate = value.trim();
+  if (candidate.length >= 2 && (candidate[0] === '"' || candidate[0] === "'") && candidate.endsWith(candidate[0])) {
+    candidate = candidate.slice(1, -1);
+  }
+  if (!candidate) return "";
+  const lower = candidate.toLowerCase();
+  if (lower.startsWith("-----begin ") && lower.includes("private key-----")) return "PEM private key block";
+  for (const rule of SECRET_PREFIXES) {
+    if (candidate.startsWith(rule.prefix)) return rule.reason;
+  }
+  if (candidate.length < SECRET_MIN_TOKEN_LENGTH || !/^[A-Za-z0-9_-]+$/.test(candidate)) return "";
+  if (!/[A-Za-z]/.test(candidate) || !/[0-9]/.test(candidate)) return "";
+  return shannonEntropy(candidate) >= SECRET_MIN_ENTROPY ? "long high-entropy token" : "";
+}
+
+export function firstSecretEnvEntry(env: string): { key: string; reason: string } | null {
+  for (const raw of env.split(/[,\n]/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const separator = line.indexOf("=");
+    const key = (separator === -1 ? line : line.slice(0, separator)).trim();
+    if (!key) continue;
+    const value = separator === -1 ? "" : line.slice(separator + 1);
+    const reason = secretValueReason(value);
+    if (reason) return { key, reason };
+  }
+  return null;
+}
+
 export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const toast = useToasts();
   const queryClient = useQueryClient();
@@ -86,6 +157,7 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
   const job = useJob(jobId);
   const created = jobId !== null && job.status === "done";
   const logRef = useStickToBottom<HTMLPreElement>(job.output);
+  const envIssue = useMemo(() => firstSecretEnvEntry(env), [env]);
 
   useEffect(() => {
     if (jobId) setTab("progress");
@@ -193,7 +265,7 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
             <Button variant="ghost" onClick={close} disabled={busy}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={submit} loading={busy} disabled={!agent}>
+            <Button variant="primary" onClick={submit} loading={busy} disabled={!agent || envIssue !== null}>
               Create
             </Button>
           </>
@@ -326,7 +398,7 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
                         <div className="flex flex-col gap-1.5">
                           {items.map((item) => (
                             <Checkbox
-                              key={item.id}
+                              key={item.ref}
                               checked={selectedKits.includes(item.ref)}
                               onChange={() => toggleKit(item.ref)}
                               label={
@@ -391,15 +463,27 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
 
         {tab === "options" ? (
           <div className="flex flex-col gap-4">
-            <Field label="Environment" htmlFor="cs-env" hint="One KEY=VALUE per line.">
+            <Field
+              label="Environment"
+              htmlFor="cs-env"
+              hint="One KEY=VALUE per line. Values are written in clear to spec.yaml: keep secrets in the Secrets page and enter the bare KEY to read them from the host environment."
+            >
               <TextArea
                 id="cs-env"
                 rows={4}
                 value={env}
                 onChange={(event) => setEnv(event.target.value)}
                 placeholder={"NODE_ENV=development"}
+                aria-invalid={envIssue ? true : undefined}
+                className={envIssue ? "border-danger" : undefined}
               />
             </Field>
+            {envIssue ? (
+              <p className="text-xs text-danger">
+                {envIssue.key} looks like a secret ({envIssue.reason}). Store it from the Secrets page and use the bare{" "}
+                {envIssue.key} form instead.
+              </p>
+            ) : null}
             <div className="flex flex-col gap-3">
               <CheckboxField
                 label="Clone the Git repository in-container"

@@ -1,5 +1,10 @@
 import type { MenuSelectGroup, MenuSelectOption } from "@/components/ui";
-import type { KitItemView, SkillItem } from "@/types";
+import type { KitItemView, SkillItem, SkillRef } from "@/types";
+
+/** Stable identity of a catalog item: store slug, kind and name. */
+export function skillRefKey(ref: SkillRef): string {
+  return `${ref.store}\u0000${ref.kind}\u0000${ref.name}`;
+}
 
 function groupByStore<T>(
   items: T[],
@@ -28,7 +33,7 @@ export function skillMenuGroups(items: SkillItem[]): MenuSelectGroup[] {
     items,
     (item) => item.store_name,
     (item) => ({
-      value: String(item.id),
+      value: skillRefKey(item),
       label: item.kind === "command" ? `/${item.name}` : item.name,
       description: item.description || undefined,
       tag: { label: item.kind === "command" ? "command" : "skill", tone: item.kind === "command" ? "accent" : undefined },

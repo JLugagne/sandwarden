@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -116,5 +117,36 @@ func TestSampleStatsIgnoresProbeFailures(t *testing.T) {
 	}
 	if summaries[0].MemoryTotal != 0 || summaries[0].CPUPercent != 0 {
 		t.Fatalf("expected no stats after a failed probe, got %+v", summaries[0])
+	}
+}
+
+// TestSampleStatsBoundsWedgedProbe pins that a sandbox whose sbx exec never
+// returns cannot wedge the stats loop: the probe is cancelled after
+// statsSampleTimeout and the sweep moves on instead of holding the sandbox in
+// use forever.
+func TestSampleStatsBoundsWedgedProbe(t *testing.T) {
+	ctx := context.Background()
+	a, _ := newTestApp(t, "box")
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "sbx")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nif [ \"$1\" = exec ]; then sleep 30; fi\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake sbx: %v", err)
+	}
+	t.Setenv("SBX_BINARY", script)
+
+	restore := statsSampleTimeout
+	statsSampleTimeout = 200 * time.Millisecond
+	defer func() { statsSampleTimeout = restore }()
+
+	done := make(chan struct{})
+	go func() {
+		a.sampleStats(ctx)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sampleStats blocked on a wedged sbx exec")
 	}
 }
