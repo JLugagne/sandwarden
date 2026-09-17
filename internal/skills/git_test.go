@@ -153,7 +153,7 @@ func TestSSHAuthUsesDefaultKey(t *testing.T) {
 	t.Setenv("HOME", home)
 	writeTestRSAKey(t, filepath.Join(home, ".ssh", "id_rsa"))
 
-	method, err := sshAuth()
+	method, err := sshAuth("git@code.example.test:team/repo.git")
 	if err != nil {
 		t.Fatalf("ssh auth: %v", err)
 	}
@@ -177,17 +177,9 @@ func TestAgentAuthFallsBackToXDGRuntimeSocket(t *testing.T) {
 	}
 	serveAgent(t, keyring, filepath.Join(runtimeDir, "ssh-agent.socket"))
 
-	method, err := agentAuth()
+	signers, err := agentSigners()
 	if err != nil {
-		t.Fatalf("agent auth: %v", err)
-	}
-	cb, ok := method.(*ssh.PublicKeysCallback)
-	if !ok {
-		t.Fatalf("expected a PublicKeysCallback auth method, got %T", method)
-	}
-	signers, err := cb.Callback()
-	if err != nil {
-		t.Fatalf("callback: %v", err)
+		t.Fatalf("agent signers: %v", err)
 	}
 	if len(signers) != 1 {
 		t.Fatalf("expected the agent's key to be offered, got %d signers", len(signers))
@@ -198,7 +190,7 @@ func TestAgentAuthNoneAvailable(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "")
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 
-	if _, err := agentAuth(); err == nil {
+	if _, err := agentSigners(); err == nil {
 		t.Fatal("expected an error when no agent socket is reachable")
 	}
 }
@@ -223,9 +215,10 @@ func serveAgent(t *testing.T, keyring agent.Agent, sockPath string) {
 
 func TestSSHAuthWithoutKeysFails(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "")
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 
-	if _, err := sshAuth(); err == nil {
+	if _, err := sshAuth("git@code.example.test:team/repo.git"); err == nil {
 		t.Fatal("expected an error when no key is available")
 	}
 }
@@ -237,7 +230,7 @@ func TestSSHAuthOffersEveryDefaultKey(t *testing.T) {
 	writeTestRSAKey(t, filepath.Join(home, ".ssh", "id_rsa"))
 	writeTestEd25519Key(t, filepath.Join(home, ".ssh", "id_ed25519"))
 
-	method, err := sshAuth()
+	method, err := sshAuth("git@code.example.test:team/repo.git")
 	if err != nil {
 		t.Fatalf("ssh auth: %v", err)
 	}

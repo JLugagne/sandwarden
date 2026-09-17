@@ -7,15 +7,24 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"github.com/kevinburke/ssh_config"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
+
+// defaultSSHUser is the login name git hosts expect when neither the url nor
+// ~/.ssh/config names one.
+const defaultSSHUser = "git"
+
+// defaultSSHKeyNames are the key names ssh loads when no IdentityFile applies.
+var defaultSSHKeyNames = []string{"id_ed25519", "id_ecdsa", "id_rsa"}
 
 // Auth selects how a skill store is fetched.
 type Auth string
@@ -45,7 +54,7 @@ func Checkout(ctx context.Context, dir, url, ref string, auth Auth) error {
 	}
 	options := &git.CloneOptions{URL: url}
 	if auth == AuthSSH {
-		method, err := sshAuth()
+		method, err := sshAuth(url)
 		if err != nil {
 			return err
 		}
@@ -106,11 +115,13 @@ func ValidateAuthURL(url string, auth Auth) error {
 	}
 }
 
-// agentAuth connects to a running ssh-agent, trying SSH_AUTH_SOCK first and
-// falling back to the socket paths a desktop session commonly starts one at:
-// a process launched from a desktop entry (rather than a login shell) often
-// does not inherit SSH_AUTH_SOCK even though an agent is running.
-func agentAuth() (transport.AuthMethod, error) {
+// agentSigners returns the keys held by a running ssh-agent, trying
+// SSH_AUTH_SOCK first and falling back to the socket paths a desktop session
+// commonly starts one at: a process launched from a desktop entry (rather than
+// a login shell) often does not inherit SSH_AUTH_SOCK even though an agent is
+// running. The returned signers keep the agent connection alive for as long as
+// they are used.
+func agentSigners() ([]gossh.Signer, error) {
 	var candidates []string
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		candidates = append(candidates, sock)
@@ -128,11 +139,16 @@ func agentAuth() (transport.AuthMethod, error) {
 			lastErr = err
 			continue
 		}
-		client := agent.NewClient(conn)
-		return &ssh.PublicKeysCallback{User: "git", Callback: client.Signers}, nil
+		signers, err := agent.NewClient(conn).Signers()
+		if err != nil {
+			_ = conn.Close()
+			lastErr = err
+			continue
+		}
+		return signers, nil
 	}
 	if lastErr != nil {
-		return nil, fmt.Errorf("connect to ssh agent: %w", lastErr)
+		return nil, errors.Join(errors.New("connect to ssh agent"), lastErr)
 	}
 	return nil, errors.New("no ssh agent socket found")
 }
@@ -156,42 +172,151 @@ func checkoutRef(repo *git.Repository, ref string) error {
 	return fmt.Errorf("ref %q is neither a branch nor a tag", ref)
 }
 
-// sshAuth resolves an SSH auth method from the user's environment: a running
-// ssh-agent first, otherwise every default private key found in ~/.ssh,
-// offered to the server in one attempt so it can pick whichever it
-// recognizes (a single wrong-but-present key would otherwise be tried alone
-// and rejected, even though a working key sits right next to it). Host keys
-// are verified against ~/.ssh/known_hosts by go-git.
-func sshAuth() (transport.AuthMethod, error) {
-	if method, err := agentAuth(); err == nil {
-		return method, nil
+// sshAuth resolves an SSH auth method for url the way ssh itself would: the
+// identity files ~/.ssh/config names for that host, then the keys held by a
+// running ssh-agent, then the default ~/.ssh keys — all offered in one attempt
+// so the server picks whichever it recognizes (a single wrong-but-present key
+// would otherwise be tried alone and rejected, even though a working key sits
+// right next to it). "IdentitiesOnly yes" drops the agent keys, as in OpenSSH.
+// The login name comes from url, else ~/.ssh/config, else "git". Host keys are
+// verified against ~/.ssh/known_hosts by go-git.
+func sshAuth(url string) (transport.AuthMethod, error) {
+	host, user := sshEndpoint(url)
+	config := sshConfig()
+	if user == "" {
+		user = strings.TrimSpace(config.Get(host, "User"))
 	}
-	home, err := os.UserHomeDir()
+	if user == "" {
+		user = defaultSSHUser
+	}
+	signers, err := sshSigners(host, config)
 	if err != nil {
 		return nil, err
 	}
-	var signers []gossh.Signer
-	var lastErr error
-	for _, name := range []string{"id_ed25519", "id_ecdsa", "id_rsa"} {
-		path := filepath.Join(home, ".ssh", name)
-		if _, err := os.Stat(path); err != nil {
-			continue
-		}
-		key, err := ssh.NewPublicKeysFromFile("git", path, "")
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		signers = append(signers, key.Signer)
-	}
-	if len(signers) == 0 {
-		if lastErr != nil {
-			return nil, fmt.Errorf("load ssh key: %w", lastErr)
-		}
-		return nil, errors.New("no ssh key found in ~/.ssh (looked for id_ed25519, id_ecdsa, id_rsa)")
-	}
 	return &ssh.PublicKeysCallback{
-		User:     "git",
+		User:     user,
 		Callback: func() ([]gossh.Signer, error) { return signers, nil },
 	}, nil
+}
+
+// sshConfig reads ~/.ssh/config relative to the current HOME. The package
+// default resolves the home directory through /etc/passwd instead, which
+// ignores a HOME override.
+func sshConfig() *ssh_config.UserSettings {
+	settings := &ssh_config.UserSettings{IgnoreErrors: true}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	settings.ConfigFinder(func() string { return filepath.Join(home, ".ssh", "config") })
+	return settings
+}
+
+// sshEndpoint extracts the host and the login name url carries, tolerating a
+// url go-git cannot parse: the clone itself will report that failure.
+func sshEndpoint(url string) (host, user string) {
+	endpoint, err := transport.NewEndpoint(url)
+	if err != nil {
+		return "", ""
+	}
+	return endpoint.Host, endpoint.User
+}
+
+// sshSigners collects every key worth offering for host, deduplicated by
+// fingerprint so a key present both on disk and in the agent does not burn two
+// of the server's authentication attempts.
+func sshSigners(host string, config *ssh_config.UserSettings) ([]gossh.Signer, error) {
+	var signers []gossh.Signer
+	seen := make(map[string]bool)
+	add := func(candidates ...gossh.Signer) {
+		for _, signer := range candidates {
+			fingerprint := gossh.FingerprintSHA256(signer.PublicKey())
+			if seen[fingerprint] {
+				continue
+			}
+			seen[fingerprint] = true
+			signers = append(signers, signer)
+		}
+	}
+	var failures []error
+	for _, path := range sshIdentityFiles(host, config) {
+		key, err := ssh.NewPublicKeysFromFile(defaultSSHUser, path, "")
+		if err != nil {
+			failures = append(failures, errors.Join(fmt.Errorf("load %s", path), err))
+			continue
+		}
+		add(key.Signer)
+	}
+	if !strings.EqualFold(strings.TrimSpace(config.Get(host, "IdentitiesOnly")), "yes") {
+		fromAgent, err := agentSigners()
+		if err != nil {
+			failures = append(failures, err)
+		}
+		add(fromAgent...)
+	}
+	if len(signers) == 0 {
+		return nil, errors.Join(append([]error{sshNoKeyError(host)}, failures...)...)
+	}
+	return signers, nil
+}
+
+// sshIdentityFiles lists the existing private keys to offer for host: those
+// ~/.ssh/config declares first, then the default names, so a host-specific key
+// is tried before the generic ones.
+func sshIdentityFiles(host string, config *ssh_config.UserSettings) []string {
+	var paths []string
+	seen := make(map[string]bool)
+	for _, entry := range config.GetAll(host, "IdentityFile") {
+		if path := expandSSHPath(entry); path != "" && !seen[path] {
+			seen[path] = true
+			paths = append(paths, path)
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		for _, name := range defaultSSHKeyNames {
+			path := filepath.Join(home, ".ssh", name)
+			if !seen[path] {
+				seen[path] = true
+				paths = append(paths, path)
+			}
+		}
+	}
+	return slices.DeleteFunc(paths, func(path string) bool {
+		info, err := os.Stat(path)
+		return err != nil || info.IsDir()
+	})
+}
+
+// expandSSHPath resolves the ~ and quoting ssh_config permits in an
+// IdentityFile entry; a path relative to nothing else resolves under ~/.ssh,
+// as ssh does.
+func expandSSHPath(entry string) string {
+	entry = strings.Trim(strings.TrimSpace(entry), `"`)
+	if entry == "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	switch {
+	case entry == "~":
+		return home
+	case strings.HasPrefix(entry, "~/"):
+		return filepath.Join(home, entry[2:])
+	case filepath.IsAbs(entry):
+		return filepath.Clean(entry)
+	default:
+		return filepath.Join(home, ".ssh", entry)
+	}
+}
+
+// sshNoKeyError names the three places a key was looked for, so the message
+// tells the user which one to populate.
+func sshNoKeyError(host string) error {
+	if host == "" {
+		host = "this host"
+	}
+	return fmt.Errorf("no usable ssh key for %s: nothing in ssh-agent, no IdentityFile in ~/.ssh/config for that host, and no %s in ~/.ssh",
+		host, strings.Join(defaultSSHKeyNames, "/"))
 }
