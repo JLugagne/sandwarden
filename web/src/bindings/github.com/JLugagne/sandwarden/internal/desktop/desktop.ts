@@ -500,6 +500,14 @@ export function SetRegistrySecret(req: $models.RegistrySecretRequest): $Cancella
 }
 
 /**
+ * SetSandboxRunArgs stores the custom arguments appended after `--` to the
+ * sandbox's connect run command; an empty value clears it.
+ */
+export function SetSandboxRunArgs(name: string, args: string): $CancellablePromise<void> {
+    return $Call.ByID(2487115425, name, args);
+}
+
+/**
  * SetServiceSecret stores a service credential.
  */
 export function SetServiceSecret(req: $models.ServiceSecretRequest): $CancellablePromise<void> {

@@ -91,6 +91,12 @@ func (d *Desktop) UnassignProfile(name string, profileID int64) error {
 	return d.app.UnapplyProfile(d.root, name, profileID)
 }
 
+// SetSandboxRunArgs stores the custom arguments appended after `--` to the
+// sandbox's connect run command; an empty value clears it.
+func (d *Desktop) SetSandboxRunArgs(name, args string) error {
+	return d.app.SetSandboxRunArgs(d.root, name, args)
+}
+
 // Exec starts a one-shot command in the sandbox, returning the job id whose
 // output streams over hub events.
 func (d *Desktop) Exec(name string, req ExecRequest) (string, error) {

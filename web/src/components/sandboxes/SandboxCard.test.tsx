@@ -26,6 +26,7 @@ function sandbox(overrides: Partial<SandboxSummary> = {}): SandboxSummary {
     workspace: "/w",
     mount_policy_denied: false,
     profiles: [],
+    run_args: "",
     connect: { run: "sbx run box", shell: "sbx exec box bash" },
     cpu_percent: 0,
     memory_used_bytes: 0,

@@ -88,6 +88,7 @@ export const api = {
     Desktop.RemoveMount(name, path, target ?? ""),
   exec: (name: string, command: string, jobId: string) =>
     Desktop.Exec(name, { command, job_id: jobId }).then((jobID) => ({ job_id: jobID })),
+  setSandboxRunArgs: (name: string, args: string) => Desktop.SetSandboxRunArgs(name, args),
   assignProfile: (name: string, profileId: number) => Desktop.AssignProfile(name, profileId),
   unassignProfile: (name: string, profileId: number) => Desktop.UnassignProfile(name, profileId),
   sandboxPolicy: (name: string) =>

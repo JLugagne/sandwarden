@@ -33,6 +33,8 @@ type SandboxSummary struct {
 	MountPolicyDenied bool                `json:"mount_policy_denied"`
 	Profiles          []string            `json:"profiles"`
 	Connect           ConnectInfo         `json:"connect"`
+	// RunArgs is appended after `--` to the connect run command, if set.
+	RunArgs string `json:"run_args"`
 	// CPUPercent is the sampled CPU usage, 0-100 across the sandbox CPUs.
 	CPUPercent float64 `json:"cpu_percent"`
 	// MemoryUsed/MemoryTotal are the sampled memory figures in bytes.
@@ -76,9 +78,13 @@ func (a *App) SandboxSummaries(ctx context.Context) ([]SandboxSummary, error) {
 	for _, p := range profiles {
 		byID[p.ID] = p
 	}
+	runArgs, err := a.Store.AllRunArgs(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]SandboxSummary, 0, len(sandboxes))
 	for _, s := range sandboxes {
-		summary := buildSummary(s, assignments[s.Name], byID)
+		summary := buildSummary(s, assignments[s.Name], byID, runArgs[s.Name])
 		a.stats.apply(&summary)
 		out = append(out, summary)
 	}
@@ -101,7 +107,11 @@ func (a *App) SandboxDetail(ctx context.Context, name string) (SandboxDetail, er
 		byID[p.ID] = p
 		ids = append(ids, p.ID)
 	}
-	summary := buildSummary(info, ids, byID)
+	runArgs, err := a.Store.RunArgsForSandbox(ctx, name)
+	if err != nil {
+		return SandboxDetail{}, err
+	}
+	summary := buildSummary(info, ids, byID, runArgs)
 	a.stats.apply(&summary)
 	detail := SandboxDetail{
 		Sandbox:              summary,
@@ -144,7 +154,7 @@ func (a *App) SandboxDetail(ctx context.Context, name string) (SandboxDetail, er
 	return detail, nil
 }
 
-func buildSummary(s sbx.Sandbox, assigned []int64, byID map[int64]store.Profile) SandboxSummary {
+func buildSummary(s sbx.Sandbox, assigned []int64, byID map[int64]store.Profile, runArgs string) SandboxSummary {
 	sum := SandboxSummary{
 		Name:              s.Name,
 		ID:                s.ID,
@@ -157,7 +167,8 @@ func buildSummary(s sbx.Sandbox, assigned []int64, byID map[int64]store.Profile)
 		Ports:             s.Ports,
 		MountPolicyDenied: s.MountPolicyDenied != nil && *s.MountPolicyDenied,
 		Profiles:          []string{},
-		Connect:           connectInfo(s.Name),
+		RunArgs:           runArgs,
+		Connect:           connectInfo(s.Name, runArgs),
 	}
 	if s.Profile != nil {
 		sum.DaemonProfile = *s.Profile
@@ -170,8 +181,12 @@ func buildSummary(s sbx.Sandbox, assigned []int64, byID map[int64]store.Profile)
 	return sum
 }
 
-func connectInfo(name string) ConnectInfo {
-	return ConnectInfo{Run: "sbx run --name " + name, Shell: "sbx exec -it " + name + " bash"}
+func connectInfo(name, runArgs string) ConnectInfo {
+	run := "sbx run --name " + name
+	if runArgs != "" {
+		run += " -- " + runArgs
+	}
+	return ConnectInfo{Run: run, Shell: "sbx exec -it " + name + " bash"}
 }
 
 // Notify schedules a coalesced push of the topic's current snapshot.

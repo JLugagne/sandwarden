@@ -143,7 +143,7 @@ export function SandboxDetailPage() {
         className="mb-4"
       />
 
-      {tab === "overview" ? <OverviewTab detail={data} /> : null}
+      {tab === "overview" ? <OverviewTab name={sandbox.name} detail={data} /> : null}
       {tab === "mounts" ? <MountsTab name={sandbox.name} detail={data} /> : null}
       {tab === "caches" ? <CachesTab name={sandbox.name} detail={data} /> : null}
       {tab === "skills" ? <SkillsTab name={sandbox.name} detail={data} /> : null}

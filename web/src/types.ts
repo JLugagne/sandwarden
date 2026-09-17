@@ -34,6 +34,7 @@ export interface SandboxSummary {
   ports?: PublishedPort[] | null;
   mount_policy_denied: boolean;
   profiles: string[] | null;
+  run_args: string;
   connect: ConnectInfo;
   cpu_percent: number;
   memory_used_bytes: number;

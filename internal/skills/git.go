@@ -37,17 +37,16 @@ func Checkout(ctx context.Context, dir, url, ref string, auth Auth) error {
 	if dir == "" {
 		return errors.New("checkout directory is required")
 	}
+	if err := ValidateAuthURL(url, auth); err != nil {
+		return err
+	}
 	options := &git.CloneOptions{URL: url}
-	switch auth {
-	case AuthPublic:
-	case AuthSSH:
+	if auth == AuthSSH {
 		method, err := sshAuth()
 		if err != nil {
 			return err
 		}
 		options.Auth = method
-	default:
-		return fmt.Errorf("unsupported auth %q", auth)
 	}
 	parent := filepath.Dir(dir)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
@@ -83,6 +82,25 @@ func Checkout(ctx context.Context, dir, url, ref string, auth Auth) error {
 	}
 	_ = os.RemoveAll(previous)
 	return nil
+}
+
+// ValidateAuthURL rejects auth/url combinations go-git cannot serve: SSH
+// authentication paired with an http(s) URL fails deep inside the HTTP
+// transport with an opaque "invalid auth method" error instead of clearly
+// naming the mismatch, and an unrecognized auth value would otherwise only
+// surface once a clone is attempted.
+func ValidateAuthURL(url string, auth Auth) error {
+	switch auth {
+	case AuthPublic:
+		return nil
+	case AuthSSH:
+		if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+			return fmt.Errorf("ssh authentication requires an ssh:// or git@host:path url, not %s", url)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported auth %q", auth)
+	}
 }
 
 // checkoutRef switches a fresh clone to a branch or, failing that, a tag.

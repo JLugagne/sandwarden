@@ -122,6 +122,19 @@ func commitOptions() *git.CommitOptions {
 	}
 }
 
+func TestCheckoutRejectsSSHAuthOverHTTP(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err := Checkout(ctx, t.TempDir(), "https://example.invalid/repo.git", "", AuthSSH)
+	if err == nil {
+		t.Fatal("expected an error for ssh auth against an http(s) url")
+	}
+	if !strings.Contains(err.Error(), "ssh") || !strings.Contains(err.Error(), "https://") {
+		t.Fatalf("expected a clear ssh/url mismatch error, got %v", err)
+	}
+}
+
 func TestCheckoutRejectsUnknownAuth(t *testing.T) {
 	err := Checkout(context.Background(), t.TempDir(), "file:///nonexistent/repo", "", Auth("token"))
 	if err == nil || !strings.Contains(err.Error(), "unsupported auth") {

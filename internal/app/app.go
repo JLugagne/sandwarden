@@ -78,9 +78,23 @@ func (a *App) DeleteSandbox(ctx context.Context, name string, force bool) error 
 	if err := a.Store.DropSandboxSkillItems(ctx, name); err != nil {
 		return err
 	}
+	if err := a.Store.DropSandboxRunArgs(ctx, name); err != nil {
+		return err
+	}
 	a.Notify(TopicSandboxes)
 	a.Notify(TopicCaches)
 	a.Notify(TopicSkills)
+	return nil
+}
+
+// SetSandboxRunArgs stores the extra arguments appended after `--` to the
+// sandbox's connect run command; an empty value clears it.
+func (a *App) SetSandboxRunArgs(ctx context.Context, name, args string) error {
+	if err := a.Store.SetRunArgs(ctx, name, args); err != nil {
+		return err
+	}
+	a.Notify(TopicSandboxes)
+	a.Notify(TopicSandbox(name))
 	return nil
 }
 

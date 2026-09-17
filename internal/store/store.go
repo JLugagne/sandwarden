@@ -158,6 +158,11 @@ var migrations = []string{
 		opted_out_at TEXT NOT NULL,
 		PRIMARY KEY (sandbox_name, kind, ref_id)
 	);`,
+	`CREATE TABLE sandbox_run_args (
+		sandbox_name TEXT PRIMARY KEY,
+		args         TEXT NOT NULL DEFAULT '',
+		updated_at   TEXT NOT NULL
+	);`,
 }
 
 // Store is the SQLite-backed profile store.

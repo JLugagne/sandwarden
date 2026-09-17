@@ -271,10 +271,8 @@ func normalizeKitStore(input store.KitStore) (store.KitStore, error) {
 	if input.URL == "" {
 		return store.KitStore{}, errors.New("git url is required")
 	}
-	switch skills.Auth(input.Auth) {
-	case skills.AuthPublic, skills.AuthSSH:
-	default:
-		return store.KitStore{}, fmt.Errorf("unsupported auth %q", input.Auth)
+	if err := skills.ValidateAuthURL(input.URL, skills.Auth(input.Auth)); err != nil {
+		return store.KitStore{}, err
 	}
 	return input, nil
 }
