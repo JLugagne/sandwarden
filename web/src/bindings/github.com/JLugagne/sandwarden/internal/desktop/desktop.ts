@@ -582,6 +582,15 @@ export function SandboxTraffic(name: string): $CancellablePromise<sbx$0.PolicyLo
 }
 
 /**
+ * SaveTemplate snapshots a sandbox into a template image tagged tag, so it
+ * can be picked as the --template base of a future create instead of
+ * re-baking its kits.
+ */
+export function SaveTemplate(sandbox: string, tag: string): $CancellablePromise<string> {
+    return $Call.ByID(3027933447, sandbox, tag);
+}
+
+/**
  * Search ranks the fleet sandboxes, profiles and caches together with the
  * skill, command and kit catalogs against a free-text query. Results are
  * best-first and capped server side.

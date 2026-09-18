@@ -59,6 +59,7 @@ export function SandboxDetailPage() {
   const [completing, setCompleting] = useState(false);
   const [recreating, setRecreating] = useState(false);
   const [attachingKit, setAttachingKit] = useState(false);
+  const [savingTemplate, setSavingTemplate] = useState(false);
   const [job, setJob] = useState<{ id: string; kind: "apply" | "recreate" } | null>(null);
   const [jobBusy, setJobBusy] = useState(false);
   const reportedJob = useRef<string | null>(null);
@@ -117,6 +118,12 @@ export function SandboxDetailPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.sandbox(name) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.sandboxes });
     },
+  });
+  const saveTemplate = useApiMutation({
+    mutationFn: (tag: string) => api.saveTemplate(name, tag),
+    success: (_output, tag) => `Template ${tag} saved`,
+    invalidate: [queryKeys.templates],
+    onSuccess: () => setSavingTemplate(false),
   });
 
   async function runJob(kind: "apply" | "recreate") {
@@ -257,6 +264,9 @@ export function SandboxDetailPage() {
             )}
             <Button size="md" variant="ghost" onClick={() => setAttachingKit(true)}>
               <IconPlus className="size-3.5" /> Attach kit
+            </Button>
+            <Button size="md" variant="ghost" onClick={() => setSavingTemplate(true)}>
+              Save as template
             </Button>
             <Button
               size="md"
@@ -419,6 +429,14 @@ export function SandboxDetailPage() {
         onAttach={(ref) => attachKit.mutate(ref, { onSuccess: () => setAttachingKit(false) })}
         onClose={() => setAttachingKit(false)}
       />
+
+      <SaveTemplateDialog
+        name={sandbox.name}
+        open={savingTemplate}
+        busy={saveTemplate.isPending}
+        onSave={(tag) => saveTemplate.mutate(tag)}
+        onClose={() => setSavingTemplate(false)}
+      />
     </>
   );
 }
@@ -489,6 +507,61 @@ function AttachKitDialog({
           Unlike Recreate, this keeps the sandbox: only the container is swapped, so container state is not lost.
         </span>
       </div>
+    </Modal>
+  );
+}
+
+/**
+ * Snapshots the sandbox's container into the runtime's local image store, so
+ * it can be picked as the --template base of a future create instead of
+ * re-baking the same slow kits.
+ */
+function SaveTemplateDialog({
+  name,
+  open,
+  busy,
+  onSave,
+  onClose,
+}: {
+  name: string;
+  open: boolean;
+  busy: boolean;
+  onSave: (tag: string) => void;
+  onClose: () => void;
+}) {
+  const [tag, setTag] = useState("");
+  useEffect(() => {
+    if (open) setTag("");
+  }, [open]);
+  const trimmed = tag.trim();
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Save ${name} as a template`}
+      description="Snapshots the sandbox's current container into the local image store. Pick the resulting template as the base image in the create form to skip re-baking its kits."
+      size="sm"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={trimmed === ""} loading={busy} onClick={() => onSave(trimmed)}>
+            Save template
+          </Button>
+        </>
+      }
+    >
+      <Field label="Template tag" hint="Repository:tag for the saved image.">
+        <Input
+          value={tag}
+          onChange={(event) => setTag(event.target.value)}
+          placeholder="myimage:v1.0"
+          className="font-mono"
+          autoFocus
+        />
+      </Field>
     </Modal>
   );
 }

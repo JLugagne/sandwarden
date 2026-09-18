@@ -153,6 +153,7 @@ export const api = {
     Desktop.RecreateSandbox(name, jobID).then((id) => ({ job_id: id })),
   attachKit: (name: string, ref: string) =>
     Desktop.AttachKit(name, ref).then((result) => result as unknown as KitAddResult),
+  saveTemplate: (name: string, tag: string) => Desktop.SaveTemplate(name, tag),
   validateSandbox: (slug: string) =>
     Desktop.ValidateSandbox(slug).then((result) => result as unknown as KitValidation),
   validateProfile: (slug: string) =>
