@@ -303,27 +303,71 @@ func (a *App) allowKitSource(ctx context.Context, rawURL string) error {
 	return nil
 }
 
-// kitReference builds the `git+…#dir=…&ref=…` reference of a catalog kit.
+// kitReference is the reference sbx receives for a catalog kit: the directory
+// of the local checkout sandwarden already maintains. A `git+…` reference would
+// make sbx clone the repository a second time, on its own, prompting for the
+// ssh key passphrase for a tree that is already on disk.
 func kitReference(reg fleet.StoreReg, relPath string) string {
-	url := strings.TrimSpace(reg.URL)
-	if url == "" {
-		return ""
+	dir := storeCheckoutPath(fleet.StoreKits, reg.Slug)
+	rel := strings.Trim(strings.TrimSpace(filepath.ToSlash(relPath)), "/")
+	if rel == "" || rel == "." {
+		return dir
 	}
-	ref := url
+	return filepath.Join(dir, filepath.FromSlash(rel))
+}
+
+// resolveKitRef maps a `git+…#dir=…` reference to the checkout of the
+// registered kit store that owns the repository, so references recorded before
+// sandwarden kept kits local — or typed by hand — are applied from disk too.
+// The reference is returned unchanged when no store matches or its checkout is
+// gone, which restores the previous remote behaviour rather than handing sbx a
+// path that does not exist.
+func (a *App) resolveKitRef(ref string) string {
+	ref = strings.TrimSpace(ref)
 	if !strings.HasPrefix(ref, "git+") {
-		ref = "git+" + ref
+		return ref
 	}
-	var params []string
-	if rel := strings.Trim(strings.TrimSpace(filepath.ToSlash(relPath)), "/"); rel != "" && rel != "." {
-		params = append(params, "dir="+rel)
+	target, relPath := splitKitRef(ref)
+	source := kitSourcePrefix(target)
+	if source == "" {
+		return ref
 	}
-	if pinned := strings.TrimSpace(reg.Ref); pinned != "" {
-		params = append(params, "ref="+pinned)
-	}
-	if len(params) > 0 {
-		ref += "#" + strings.Join(params, "&")
+	for _, reg := range a.Fleet.Stores(fleet.StoreKits) {
+		if reg == nil || kitSourcePrefix(reg.URL) != source {
+			continue
+		}
+		local := kitReference(*reg, relPath)
+		if info, err := os.Stat(local); err == nil && info.IsDir() {
+			return local
+		}
 	}
 	return ref
+}
+
+// resolveKitRefs applies resolveKitRef to a whole kit list.
+func (a *App) resolveKitRefs(refs []string) []string {
+	if len(refs) == 0 {
+		return refs
+	}
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		out = append(out, a.resolveKitRef(ref))
+	}
+	return out
+}
+
+// splitKitRef separates a `git+<url>#dir=<path>&ref=<rev>` reference into its
+// repository URL and the kit directory inside it.
+func splitKitRef(ref string) (string, string) {
+	raw := strings.TrimPrefix(strings.TrimSpace(ref), "git+")
+	target, fragment, _ := strings.Cut(raw, "#")
+	var relPath string
+	for _, param := range strings.Split(fragment, "&") {
+		if dir, ok := strings.CutPrefix(param, "dir="); ok {
+			relPath = dir
+		}
+	}
+	return target, relPath
 }
 
 // kitSourcePrefix reduces a repository URL to the host and path prefix

@@ -19,7 +19,7 @@ const item = {
   image: "",
   requires_agent: "claude",
   rel_path: "code-server",
-  ref: "git+https://github.com/docker/sbx-kits-contrib#dir=code-server",
+  ref: "/home/dev/.local/share/sandwarden/kit-stores/sbx-kits-contrib/code-server",
   spec: {
     schemaVersion: "2",
     kind: "mixin",
@@ -96,7 +96,7 @@ describe("kits page", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Details" }));
 
-    expect(await screen.findByText(/dir=code-server/)).toBeDefined();
+    expect(await screen.findByText(/kit-stores\/sbx-kits-contrib\/code-server/)).toBeDefined();
     expect(screen.getByText("code-server.dev")).toBeDefined();
     expect(screen.getByText("8080/tcp")).toBeDefined();
     expect(screen.getAllByText("Runs code-server on port 8080.").length).toBeGreaterThan(0);

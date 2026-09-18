@@ -42,7 +42,7 @@ func (r KitAddResult) Print(w io.Writer) {
 // unrecorded.
 func (a *App) AttachKit(ctx context.Context, name, ref string, w io.Writer) (KitAddResult, error) {
 	name = strings.TrimSpace(name)
-	ref = strings.TrimSpace(ref)
+	ref = a.resolveKitRef(ref)
 	result := KitAddResult{Sandbox: name, Ref: ref, Report: ApplyReport{Warnings: []string{}, Errors: []string{}}}
 	if name == "" {
 		return result, errors.New("sandbox name is required")

@@ -218,7 +218,7 @@ func (a *App) recordCreatedSandbox(name string, req CreateRequest) (*fleet.Sandb
 	}
 	sidecar := fleet.SandboxApp{
 		Sandbox:  name,
-		Create:   &fleet.SandboxCreate{CPUs: req.Opts.CPUs, Memory: req.Opts.Memory, Workspaces: cleanStrings(req.Opts.Workspaces), Clone: req.Opts.Clone, Template: req.Opts.Template, DaemonProfile: req.Opts.Profile, Publish: cleanStrings(req.Opts.Publish), Kits: cleanStrings(req.Opts.Kits)},
+		Create:   &fleet.SandboxCreate{CPUs: req.Opts.CPUs, Memory: req.Opts.Memory, Workspaces: cleanStrings(req.Opts.Workspaces), Clone: req.Opts.Clone, Template: req.Opts.Template, DaemonProfile: req.Opts.Profile, Publish: cleanStrings(req.Opts.Publish), Kits: a.resolveKitRefs(cleanStrings(req.Opts.Kits))},
 		Profiles: cleanStrings(req.Profiles),
 		Caches:   cleanStrings(req.Caches),
 		Skills:   req.Skills,
@@ -250,7 +250,7 @@ func (a *App) CreateOptionsFromConfig(s *fleet.Sandbox) sbx.CreateOptions {
 		opts.Template = c.Template
 		opts.Profile = c.DaemonProfile
 		opts.Publish = append([]string(nil), c.Publish...)
-		opts.Kits = append([]string(nil), c.Kits...)
+		opts.Kits = a.resolveKitRefs(c.Kits)
 	}
 	for key, value := range s.Spec.Env() {
 		if value == "" {
@@ -510,7 +510,7 @@ func (a *App) ensureSandboxConfig(ctx context.Context, name string) (*fleet.Sand
 		}
 	}
 	if detail, err := a.Sbx.InspectDetail(ctx, name); err == nil {
-		create.Kits = append(create.Kits, detail.Kits...)
+		create.Kits = append(create.Kits, a.resolveKitRefs(detail.Kits)...)
 		if strings.TrimSpace(spec.Agent()) == "" && strings.TrimSpace(detail.Image) != "" {
 			create.Template = detail.Image
 		}
