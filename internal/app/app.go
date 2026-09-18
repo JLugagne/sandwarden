@@ -23,15 +23,13 @@ var deleteSandboxTimeout = 2 * time.Minute
 // App coordinates the sandboxd client, the filesystem fleet, the derived
 // store index, the event hub and background jobs.
 type App struct {
-	Sbx   *sbx.Client
-	Store *store.Store
-	Fleet *fleet.Fleet
-	Hub   *Hub
-	Jobs  *JobBroker
-
-	notifier *notifier
-	stats    *statsTracker
-
+	Sbx         *sbx.Client
+	Store       *store.Store
+	Fleet       *fleet.Fleet
+	Hub         *Hub
+	Jobs        *JobBroker
+	notifier    *notifier
+	stats       *statsTracker
 	mu          sync.Mutex
 	rootCtx     context.Context
 	seenBlocked map[string]bool
@@ -40,7 +38,11 @@ type App struct {
 	// lastState tracks the daemon status seen per sandbox so a stopped →
 	// running transition converges the sidecar exactly once.
 	lastState map[string]string
-
+	// stopping tracks sandboxes with an in-flight stop. Background convergence
+	// and the stats sampler must not touch them: `sbx exec` starts a stopped
+	// sandbox, and the daemon keeps reporting a stopping sandbox as running until
+	// the stop completes, so any probe would boot it right back up.
+	stopping map[string]bool
 	// searchMu guards the lazily built search index.
 	searchMu sync.Mutex
 	// searchIdx caches the BM25 index over the skill and kit catalogs.
@@ -59,6 +61,7 @@ func New(client *sbx.Client, st *store.Store, fl *fleet.Fleet) *App {
 		Jobs:        NewJobBroker(nil),
 		seenBlocked: map[string]bool{},
 		lastState:   map[string]string{},
+		stopping:    map[string]bool{},
 		reconcileCh: make(chan struct{}, 1),
 	}
 	a.Jobs = NewJobBroker(a.Hub)
@@ -132,14 +135,43 @@ func (a *App) StartSandbox(ctx context.Context, name string) error {
 	return nil
 }
 
-// StopSandbox stops a sandbox's VM.
+// StopSandbox stops a sandbox's VM. The sandbox is flagged as stopping for the
+// duration so background convergence and the stats sampler do not exec into it:
+// `sbx exec` would start it again, and the daemon reports a stopping sandbox as
+// running until the stop completes.
 func (a *App) StopSandbox(ctx context.Context, name string) error {
+	a.markStopping(name)
+	defer a.clearStopping(name)
 	if err := a.Sbx.StopSandbox(ctx, name); err != nil {
 		return err
 	}
 	a.Notify(TopicSandboxes)
 	a.Notify(TopicSandbox(name))
 	return nil
+}
+
+// markStopping records that a stop is in flight for name.
+func (a *App) markStopping(name string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.stopping == nil {
+		a.stopping = map[string]bool{}
+	}
+	a.stopping[name] = true
+}
+
+// clearStopping forgets an in-flight stop.
+func (a *App) clearStopping(name string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.stopping, name)
+}
+
+// isStopping reports whether a stop is in flight for name.
+func (a *App) isStopping(name string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.stopping[name]
 }
 
 // CreateRequest is everything needed to create a sandbox and record its

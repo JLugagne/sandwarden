@@ -281,6 +281,9 @@ func (a *App) Reconcile(ctx context.Context) error {
 		exists[s.Name] = true
 	}
 	for _, s := range sandboxes {
+		if a.isStopping(s.Name) {
+			continue
+		}
 		cfg, hasConfig := a.Fleet.SandboxByName(s.Name)
 		if hasConfig && s.Running() {
 			if _, err := a.Apply(ctx, s.Name); err != nil {

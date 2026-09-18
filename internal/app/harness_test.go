@@ -25,6 +25,12 @@ type fakeDaemon struct {
 	scopes        map[string]string
 	existingRules map[string]string
 	deleteDelay   time.Duration
+	// statuses overrides the reported status per sandbox; absent means running.
+	statuses map[string]string
+	// stopDelay stalls a stop request so tests can observe the in-flight window.
+	stopDelay time.Duration
+	// stopEntered receives the name of each sandbox whose stop request arrived.
+	stopEntered chan string
 }
 
 func (f *fakeDaemon) handler() http.HandlerFunc {
@@ -33,14 +39,18 @@ func (f *fakeDaemon) handler() http.HandlerFunc {
 		case r.Method == http.MethodGet && r.URL.Path == "/sandbox":
 			var out []map[string]string
 			for _, name := range f.sandboxes {
-				out = append(out, map[string]string{"id": name, "name": name, "status": "running", "workspace": "/w"})
+				out = append(out, map[string]string{"id": name, "name": name, "status": f.statusOf(name), "workspace": "/w"})
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/sandbox/"):
 			name := strings.TrimPrefix(r.URL.Path, "/sandbox/")
-			_ = json.NewEncoder(w).Encode(map[string]string{"id": name, "name": name, "status": "running", "workspace": "/w"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": name, "name": name, "status": f.statusOf(name), "workspace": "/w"})
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/sandbox/"):
 			f.handleDelete(w, r)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/stop"):
+			f.handleStop(w, r)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/start"):
+			f.handleStart(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/policy/network/rules":
 			f.handlePolicy(w, r)
 		default:
@@ -125,7 +135,7 @@ func (f *fakeDaemon) setExistingRules(rules map[string]string) {
 // newTestApp starts a fake sandboxd socket and a fresh config directory.
 func newTestApp(t *testing.T, sandboxes ...string) (*App, *fakeDaemon) {
 	t.Helper()
-	fake := &fakeDaemon{sandboxes: sandboxes, scopes: map[string]string{}, existingRules: map[string]string{}}
+	fake := &fakeDaemon{sandboxes: sandboxes, statuses: map[string]string{}, scopes: map[string]string{}, existingRules: map[string]string{}}
 	socket := filepath.Join(t.TempDir(), "sandboxd.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
@@ -288,4 +298,51 @@ func (f *fakeDaemon) hasSandbox(name string) bool {
 		}
 	}
 	return false
+}
+
+// statusOf returns the overridden status of a sandbox, defaulting to running.
+func (f *fakeDaemon) statusOf(name string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if status, ok := f.statuses[name]; ok {
+		return status
+	}
+	return "running"
+}
+
+// handleStop models the real daemon: the sandbox keeps reporting running for
+// the whole stop, then flips to stopped. The optional delay widens that window
+// so tests can exercise operations that run while a stop is in flight.
+func (f *fakeDaemon) handleStop(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/sandbox/"), "/stop")
+	f.mu.Lock()
+	entered := f.stopEntered
+	delay := f.stopDelay
+	f.mu.Unlock()
+	if entered != nil {
+		select {
+		case entered <- name:
+		default:
+		}
+	}
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-r.Context().Done():
+			return
+		}
+	}
+	f.mu.Lock()
+	f.statuses[name] = "stopped"
+	f.mu.Unlock()
+	_ = json.NewEncoder(w).Encode(map[string]string{"name": name, "status": "stopped"})
+}
+
+// handleStart clears the stopped override, mirroring a real boot.
+func (f *fakeDaemon) handleStart(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/sandbox/"), "/start")
+	f.mu.Lock()
+	f.statuses[name] = "running"
+	f.mu.Unlock()
+	_ = json.NewEncoder(w).Encode(map[string]string{"name": name, "status": "running"})
 }

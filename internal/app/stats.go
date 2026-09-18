@@ -114,6 +114,12 @@ func (a *App) sampleStats(ctx context.Context) {
 		if !sandbox.Running() {
 			continue
 		}
+		// A stop in flight still reports the sandbox as running, and the probe
+		// below execs into it: `sbx exec` starts a stopped sandbox, so probing
+		// a stopping one would boot it right back up.
+		if a.isStopping(sandbox.Name) {
+			continue
+		}
 		seen[sandbox.Name] = true
 		probeCtx, cancel := context.WithTimeout(ctx, statsSampleTimeout)
 		sample, err := a.Sbx.Stats(probeCtx, sandbox.Name)
