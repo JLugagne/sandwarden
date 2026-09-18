@@ -46,18 +46,29 @@ vi.mock("@/api/client", () => ({
   },
 }));
 
-function renderDialog(onClose: () => void = () => {}) {
+function renderDialog(onClose: () => void = () => {}, initialTemplate?: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
         <ToastProvider>
-          <CreateSandboxDialog open onClose={onClose} />
+          <CreateSandboxDialog open onClose={onClose} initialTemplate={initialTemplate} />
         </ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
+
+const localTemplates = [
+  {
+    id: "tpl-1",
+    repository: "docker.io/docker/sandbox-templates",
+    tag: "opencode-docker",
+    flavor: "opencode-docker",
+    created_at: "2026-09-15T22:07:00Z",
+    size: 1839288240,
+  },
+];
 
 describe("new sandbox dialog", () => {
   it("splits the options across tabs instead of one long form", async () => {
@@ -84,6 +95,26 @@ describe("new sandbox dialog", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Options/ }));
     expect(screen.getByLabelText(/^Environment/)).toBeDefined();
     expect(screen.getByText("Attach shared caches")).toBeDefined();
+  });
+
+  it("lists the local templates as base images and fills the field when one is picked", async () => {
+    vi.mocked(api.templates).mockResolvedValue(localTemplates);
+    renderDialog();
+
+    const pick = await screen.findByRole("button", {
+      name: "docker.io/docker/sandbox-templates:opencode-docker",
+    });
+    fireEvent.click(pick);
+
+    expect((screen.getByLabelText(/^Template \(optional\)/) as HTMLInputElement).value).toBe(
+      "docker.io/docker/sandbox-templates:opencode-docker",
+    );
+  });
+
+  it("starts with the base image handed by the caller", () => {
+    renderDialog(undefined, "myimage:v1");
+
+    expect((screen.getByLabelText(/^Template \(optional\)/) as HTMLInputElement).value).toBe("myimage:v1");
   });
 
   it("offers the sandbox kits of the repositories as agents", async () => {

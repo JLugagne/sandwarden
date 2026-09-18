@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApiMutation } from "@/hooks/useApiMutation";
+import { CreateSandboxDialog } from "@/components/sandboxes/CreateSandboxDialog";
 import { queryKeys } from "@/store/realtime";
 import { formatTime } from "@/lib/format";
 import { useToasts } from "@/components/Toaster";
@@ -40,6 +41,7 @@ export function KitsPage() {
   const [deleting, setDeleting] = useState<KitStore | null>(null);
   const [inspecting, setInspecting] = useState<KitItemView | null>(null);
   const [removingTemplate, setRemovingTemplate] = useState<Template | null>(null);
+  const [creatingTemplate, setCreatingTemplate] = useState<Template | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const [pendingItem, setPendingItem] = useState<{ store: string; name: string } | null>(null);
 
@@ -173,7 +175,7 @@ export function KitsPage() {
                   <TH>Flavor</TH>
                   <TH>Size</TH>
                   <TH>Created</TH>
-                  <TH className="w-24" />
+                  <TH className="w-44" />
                 </tr>
               </thead>
               <tbody>
@@ -185,6 +187,14 @@ export function KitsPage() {
                     <TD className="text-xs text-muted">{formatSize(template.size)}</TD>
                     <TD className="text-xs text-muted">{formatTime(template.created_at)}</TD>
                     <TD className="text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Create sandbox from ${templateRef(template)}`}
+                        onClick={() => setCreatingTemplate(template)}
+                      >
+                        <IconPlus className="size-3.5" /> Create
+                      </Button>
                       <Button size="sm" variant="ghost" onClick={() => setRemovingTemplate(template)}>
                         <span className="text-danger">Remove</span>
                       </Button>
@@ -229,6 +239,12 @@ export function KitsPage() {
       />
 
       <KitDialog item={inspecting} onClose={() => setInspecting(null)} />
+
+      <CreateSandboxDialog
+        open={creatingTemplate !== null}
+        initialTemplate={creatingTemplate ? templateRef(creatingTemplate) : ""}
+        onClose={() => setCreatingTemplate(null)}
+      />
     </>
   );
 }

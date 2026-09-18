@@ -67,6 +67,8 @@ vi.mock("@/api/client", () => ({
     refreshKitStore: vi.fn(),
     validateKit: vi.fn(async () => ({ ok: true, output: "VALID: . (directory)" })),
     removeTemplate: vi.fn(),
+    fsPick: vi.fn(async () => ({ path: "/picked/folder" })),
+    createSandbox: vi.fn(async () => ({ job_id: "job-1" })),
   },
 }));
 
@@ -102,8 +104,21 @@ describe("kits page", () => {
     expect(screen.getAllByText("Runs code-server on port 8080.").length).toBeGreaterThan(0);
   });
 
-  it("reports the validation verdict", async () => {
-    const { api } = await import("@/api/client");
+  it("opens the create form with the picked template as its base image", async () => {
+    renderPage();
+
+    const create = await screen.findByRole("button", {
+      name: "Create sandbox from docker.io/docker/sandbox-templates:opencode-docker",
+    });
+    fireEvent.click(create);
+
+    expect(await screen.findByRole("dialog")).toBeDefined();
+    expect((screen.getByLabelText(/^Template \(optional\)/) as HTMLInputElement).value).toBe(
+      "docker.io/docker/sandbox-templates:opencode-docker",
+    );
+  });
+
+  it("reports the validation verdict", async () => {    const { api } = await import("@/api/client");
     renderPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "Validate" }));

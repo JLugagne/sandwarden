@@ -22,6 +22,7 @@ import {
   Tabs,
   TextArea,
 } from "@/components/ui";
+import { cn } from "@/lib/cn";
 import { splitList } from "@/lib/format";
 import { agentMenuGroups } from "@/lib/catalog";
 import type { KitItemView, Template, WorkspaceInput } from "@/types";
@@ -118,7 +119,15 @@ export function firstSecretEnvEntry(env: string): { key: string; reason: string 
   return null;
 }
 
-export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function CreateSandboxDialog({
+  open,
+  onClose,
+  initialTemplate = "",
+}: {
+  open: boolean;
+  onClose: () => void;
+  initialTemplate?: string;
+}) {
   const toast = useToasts();
   const queryClient = useQueryClient();
 
@@ -129,7 +138,7 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
   const [cpus, setCPUs] = useState("");
   const [memory, setMemory] = useState("");
   const [profile, setProfile] = useState("");
-  const [template, setTemplate] = useState("");
+  const [template, setTemplate] = useState(initialTemplate);
   const [kits, setKits] = useState("");
   const [publish, setPublish] = useState("");
   const [env, setEnv] = useState("");
@@ -162,6 +171,20 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
   useEffect(() => {
     if (jobId) setTab("progress");
   }, [jobId]);
+
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      seeded.current = false;
+      return;
+    }
+    if (seeded.current) return;
+    seeded.current = true;
+    if (initialTemplate) {
+      setTemplate(initialTemplate);
+      setTab("general");
+    }
+  }, [open, initialTemplate]);
 
   useEffect(() => {
     if (!jobId || job.status === "running" || reported.current === jobId) return;
@@ -302,24 +325,46 @@ export function CreateSandboxDialog({ open, onClose }: { open: boolean; onClose:
               <Field label="Name (optional)" htmlFor="cs-name" hint="Auto-generated when left empty.">
                 <Input id="cs-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="my-sandbox" />
               </Field>
-              <Field label="Template (optional)" htmlFor="cs-template" hint="Base image for the sandbox; local templates are suggested.">
+              <Field label="Template (optional)" htmlFor="cs-template" hint="Base image for the sandbox; pick a local template or type any reference.">
                 <Input
                   id="cs-template"
-                  list="cs-templates"
                   value={template}
                   onChange={(event) => setTemplate(event.target.value)}
                   placeholder="myimage:v1.0"
                 />
-                <datalist id="cs-templates">
-                  {(templates.data ?? []).map((item) => (
-                    <option key={item.id} value={templateReference(item)} />
-                  ))}
-                </datalist>
               </Field>
               <Field label="Policy profile (optional)" htmlFor="cs-profile" hint="sbx --profile name, not the UI profiles.">
                 <Input id="cs-profile" value={profile} onChange={(event) => setProfile(event.target.value)} />
               </Field>
             </div>
+
+            {(templates.data ?? []).length > 0 ? (
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-medium text-muted">Local templates</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {(templates.data ?? []).map((item) => {
+                    const reference = templateReference(item);
+                    const selected = template === reference;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => setTemplate(selected ? "" : reference)}
+                        className={cn(
+                          "rounded-sm border px-2 py-1 font-mono text-xs transition-colors",
+                          selected
+                            ? "border-accent/40 bg-accent-soft text-accent"
+                            : "border-border bg-canvas text-muted hover:border-accent hover:text-accent",
+                        )}
+                      >
+                        {reference}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
 
             <div className="flex flex-col gap-2">
               <span className="text-xs font-medium text-muted">Workspaces</span>
