@@ -159,3 +159,28 @@ func (c *Client) runCLI(ctx context.Context, stdin io.Reader, stream io.Writer, 
 	}
 	return captured, nil
 }
+
+// decodeCLIJSON unmarshals into v the JSON value embedded in the combined sbx
+// output raw. runCLI merges stderr into stdout, so CLI diagnostics (keychain
+// fallbacks, WARN lines) usually precede the payload. It returns an error when
+// raw holds no decodable JSON value.
+func decodeCLIJSON(raw string, v any) error {
+	for offset := 0; offset < len(raw); {
+		line := raw[offset:]
+		end := strings.IndexByte(line, '\n')
+		if end >= 0 {
+			line = line[:end]
+		}
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+			var value json.RawMessage
+			if err := json.NewDecoder(strings.NewReader(raw[offset:])).Decode(&value); err == nil {
+				return json.Unmarshal(value, v)
+			}
+		}
+		if end < 0 {
+			break
+		}
+		offset += end + 1
+	}
+	return errors.New("no JSON value in output")
+}

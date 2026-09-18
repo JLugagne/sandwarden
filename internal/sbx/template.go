@@ -2,9 +2,7 @@ package sbx
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 )
 
@@ -37,8 +35,8 @@ func (c *Client) ListTemplates(ctx context.Context) ([]Template, error) {
 	var payload struct {
 		Images *[]Template `json:"images"`
 	}
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return nil, fmt.Errorf("decode template list: %w", err)
+	if err := decodeCLIJSON(raw, &payload); err != nil {
+		return nil, errors.Join(errors.New("decode template list"), err)
 	}
 	if payload.Images == nil {
 		return nil, errors.New("unexpected template list output")

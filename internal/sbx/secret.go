@@ -2,7 +2,6 @@ package sbx
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -88,8 +87,8 @@ func (c *Client) ListSecrets(ctx context.Context) (SecretList, error) {
 		Secrets       *[]secretJSON `json:"secrets"`
 		CustomSecrets *[]secretJSON `json:"custom_secrets"`
 	}
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return SecretList{}, fmt.Errorf("decode secret list: %w", err)
+	if err := decodeCLIJSON(raw, &payload); err != nil {
+		return SecretList{}, errors.Join(errors.New("decode secret list"), err)
 	}
 	if payload.Secrets == nil || payload.CustomSecrets == nil {
 		return SecretList{}, errors.New("unexpected secret list output")

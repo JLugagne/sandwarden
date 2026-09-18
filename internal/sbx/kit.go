@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 )
@@ -136,8 +135,8 @@ func (c *Client) KitInspect(ctx context.Context, ref string) (KitSpec, error) {
 		return KitSpec{}, err
 	}
 	var spec KitSpec
-	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
-		return KitSpec{}, fmt.Errorf("decode kit inspect output: %w", err)
+	if err := decodeCLIJSON(raw, &spec); err != nil {
+		return KitSpec{}, errors.Join(errors.New("decode kit inspect output"), err)
 	}
 	return spec, nil
 }

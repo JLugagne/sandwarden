@@ -2,8 +2,7 @@ package sbx
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
@@ -181,8 +180,8 @@ func (c *Client) InspectDetail(ctx context.Context, sandbox string) (InspectDeta
 		return InspectDetail{}, err
 	}
 	var detail InspectDetail
-	if err := json.Unmarshal([]byte(raw), &detail); err != nil {
-		return InspectDetail{}, fmt.Errorf("decode inspect output: %w", err)
+	if err := decodeCLIJSON(raw, &detail); err != nil {
+		return InspectDetail{}, errors.Join(errors.New("decode inspect output"), err)
 	}
 	return detail, nil
 }
