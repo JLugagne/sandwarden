@@ -60,11 +60,45 @@ describe("applyEvent", () => {
     applyEvent(qc, { topic: "profiles", data: [{ slug: "p", name: "p" }], ts: "t" });
     applyEvent(qc, { topic: "secrets", data: { stored: [], custom: [] }, ts: "t" });
     applyEvent(qc, { topic: "traffic", data: { blocked_hosts: [], allowed_hosts: [] }, ts: "t" });
-    applyEvent(qc, { topic: "caches", data: [{ Slug: "go-mod", App: { name: "go-mod" } }], ts: "t" });
     expect(qc.getQueryData(queryKeys.profiles)).toEqual([{ slug: "p", name: "p" }]);
     expect(qc.getQueryData(queryKeys.secrets)).toEqual({ stored: [], custom: [] });
     expect(qc.getQueryData(queryKeys.traffic)).toEqual({ blocked_hosts: [], allowed_hosts: [] });
-    expect(qc.getQueryData(queryKeys.caches)).toEqual([{ Slug: "go-mod", App: { name: "go-mod" } }]);
+  });
+
+  it("flattens the raw fleet.Cache shape into CacheView before storing a caches snapshot", () => {
+    const qc = client();
+    applyEvent(qc, {
+      topic: "caches",
+      data: [
+        {
+          Slug: "go-mod",
+          Dir: "go-mod",
+          App: {
+            name: "go-mod",
+            description: "",
+            host_path: "/home/jlugagne/go/pkg/mod",
+            target_path: "/home/agent/go/pkg/mod",
+            read_only: false,
+            auto_attach: true,
+            enabled: true,
+          },
+        },
+      ],
+      ts: "t",
+    });
+    expect(qc.getQueryData(queryKeys.caches)).toEqual([
+      {
+        slug: "go-mod",
+        dir: "go-mod",
+        name: "go-mod",
+        description: "",
+        host_path: "/home/jlugagne/go/pkg/mod",
+        target_path: "/home/agent/go/pkg/mod",
+        read_only: false,
+        auto_attach: true,
+        enabled: true,
+      },
+    ]);
   });
 
   it("ignores blocked and job topics", () => {

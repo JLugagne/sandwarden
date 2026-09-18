@@ -46,9 +46,9 @@ import type {
 
 const asArray = <T>(value: T[] | null | undefined): T[] => value ?? [];
 
-type FleetCache = Awaited<ReturnType<typeof Desktop.ListCaches>> extends (infer T)[] | null ? T : never;
+export type FleetCache = Awaited<ReturnType<typeof Desktop.ListCaches>> extends (infer T)[] | null ? T : never;
 
-const cacheView = (cache: FleetCache): CacheView => ({
+export const cacheView = (cache: FleetCache): CacheView => ({
   slug: cache.Slug,
   dir: cache.Dir,
   name: cache.App.name,

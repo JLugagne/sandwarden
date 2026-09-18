@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import { cacheView, type FleetCache } from "@/api/client";
 import type { EventEnvelope, SandboxSummary } from "@/types";
 
 export const queryKeys = {
@@ -70,7 +71,8 @@ export function applyEvent(client: QueryClient, event: EventEnvelope): void {
       client.invalidateQueries({ queryKey: ["sandbox-policy"] });
       return;
     case "caches":
-      client.setQueryData(queryKeys.caches, data);
+      if (!Array.isArray(data)) return;
+      client.setQueryData(queryKeys.caches, (data as FleetCache[]).map(cacheView));
       return;
     case "skills":
       client.setQueryData(queryKeys.skillStores, data);
