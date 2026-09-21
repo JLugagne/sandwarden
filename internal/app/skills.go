@@ -268,6 +268,7 @@ func (a *App) ReconcileSkills(ctx context.Context, name string) (SkillReconcileR
 			want[d.target] = d
 		}
 	}
+	declared := a.declaredMountKeys(ctx, name)
 	for _, mount := range mounts {
 		target := mount.Target
 		if target == "" || !managedSkillTarget(target) {
@@ -275,6 +276,9 @@ func (a *App) ReconcileSkills(ctx context.Context, name string) (SkillReconcileR
 		}
 		if d, ok := want[target]; ok && d.host == mount.HostPath {
 			delete(want, target)
+			continue
+		}
+		if declared[mountKey(mount.HostPath, target)] {
 			continue
 		}
 		if strings.TrimSpace(mount.HostPath) == "" {
@@ -541,4 +545,34 @@ func validateStoreInput(input StoreInput) error {
 		return errors.New("store url is required")
 	}
 	return nil
+}
+
+// declaredMountKeys collects the host:target pairs the sandbox, its profiles
+// and its caches declare, so the skills reconcile never tears down a mount it
+// does not own just because that mount lives under .agents.
+func (a *App) declaredMountKeys(ctx context.Context, name string) map[string]bool {
+	keys := map[string]bool{}
+	s, ok := a.Fleet.SandboxByName(name)
+	if !ok {
+		return keys
+	}
+	for _, m := range s.App.Mounts {
+		keys[mountKey(m.HostPath, m.EffectiveTarget())] = true
+	}
+	for _, p := range a.profilesForSandbox(s) {
+		for _, m := range p.App.Mounts {
+			keys[mountKey(m.HostPath, m.EffectiveTarget())] = true
+		}
+	}
+	if caches, err := a.desiredCaches(ctx, name); err == nil {
+		for _, c := range caches {
+			keys[mountKey(c.App.HostPath, c.App.EffectiveTarget())] = true
+		}
+	}
+	return keys
+}
+
+// mountKey identifies a mount by its host and container target paths.
+func mountKey(host, target string) string {
+	return host + "\x00" + target
 }
