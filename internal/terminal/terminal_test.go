@@ -32,7 +32,7 @@ func TestBuildArgsForCLITerminals(t *testing.T) {
 		{"kitty", "kitty", []string{"kitty", "--directory", testWorkspace, "/bin/bash", "-l", "-c", snippet}},
 		{"alacritty", "alacritty", []string{"alacritty", "--working-directory", testWorkspace, "-e", "/bin/bash", "-l", "-c", snippet}},
 		{"wezterm", "wezterm", []string{"wezterm", "start", "--cwd", testWorkspace, "--", "/bin/bash", "-l", "-c", snippet}},
-		{"ghostty", "ghostty", []string{"ghostty", "--working-directory=" + testWorkspace, "-e", "/bin/bash", "-l", "-c", snippet}},
+		{"ghostty", "ghostty", []string{"ghostty", "--window-save-state=never", "--working-directory=" + testWorkspace, "-e", "/bin/bash", "-l", "-c", snippet}},
 		{"foot", "foot", []string{"foot", "--working-directory=" + testWorkspace, "/bin/bash", "-l", "-c", snippet}},
 		{"xterm", "xterm", []string{"xterm", "-e", "/bin/bash", "-l", "-c", snippet}},
 		{"uxterm", "uxterm", []string{"uxterm", "-e", "/bin/bash", "-l", "-c", snippet}},
