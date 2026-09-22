@@ -153,6 +153,8 @@ var specs = []spec{
 			"~/Applications/Ghostty.app/Contents/MacOS/ghostty",
 			"ghostty",
 		},
+		// A restored session would open a second, unrelated window.
+		fixed:    []string{"--window-save-state=never"},
 		workdir:  []string{"--working-directory=%s"},
 		execFlag: []string{"-e"},
 	},
@@ -233,8 +235,9 @@ func Launch(id, dir, command string) error {
 	if !ok {
 		return fmt.Errorf("%s is not installed anymore", sp.name)
 	}
+	bin, argv := bundleLaunch(bin, buildArgs(sp, bin, dir, command))
 	cmd := exec.Command(bin)
-	cmd.Args = buildArgs(sp, bin, dir, command)
+	cmd.Args = argv
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("launch %s: %w", sp.name, err)

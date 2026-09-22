@@ -132,11 +132,22 @@ func (f *fakeDaemon) setExistingRules(rules map[string]string) {
 	f.existingRules = rules
 }
 
+// shortTempDir keeps unix socket paths inside the 104-byte limit macOS enforces.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sw")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 // newTestApp starts a fake sandboxd socket and a fresh config directory.
 func newTestApp(t *testing.T, sandboxes ...string) (*App, *fakeDaemon) {
 	t.Helper()
 	fake := &fakeDaemon{sandboxes: sandboxes, statuses: map[string]string{}, scopes: map[string]string{}, existingRules: map[string]string{}}
-	socket := filepath.Join(t.TempDir(), "sandboxd.sock")
+	socket := filepath.Join(shortTempDir(t), "sandboxd.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatalf("listen: %v", err)

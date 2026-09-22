@@ -19,7 +19,8 @@ bindings: ## Regenerate the TypeScript bindings from the Go services
 	$(WAILS) generate bindings -ts -i -clean=true -d web/src/bindings -f "-tags $(TAGS)" .
 
 .PHONY: web-deps
-web-deps: bindings ## Install frontend dependencies
+web-deps: ## Install frontend dependencies, regenerating bindings when wails3 is installed
+	@if command -v $(WAILS) >/dev/null 2>&1; then $(MAKE) bindings; else echo "$(WAILS) not installed: using the committed bindings"; fi
 	cd web && $(NPM) install --no-audit --no-fund
 
 .PHONY: web

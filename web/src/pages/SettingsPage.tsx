@@ -43,6 +43,8 @@ import {
 } from "@/components/ui";
 import type { CacheInput, CacheView } from "@/types";
 
+const GO_BUILD_CACHE = navigator.userAgent.includes("Mac") ? "~/Library/Caches/go-build" : "~/.cache/go-build";
+
 const PRESETS: Array<{ label: string; input: CacheInput }> = [
   {
     label: "Go modules",
@@ -61,7 +63,7 @@ const PRESETS: Array<{ label: string; input: CacheInput }> = [
     input: {
       name: "go-build",
       description: "Go build cache (GOCACHE)",
-      host_path: "~/.cache/go-build",
+      host_path: GO_BUILD_CACHE,
       target_path: "/home/agent/.cache/go-build",
       read_only: false,
       auto_attach: true,
@@ -676,7 +678,7 @@ function CacheDialog({
             <Input
               value={input.host_path}
               onChange={(event) => update("host_path", event.target.value)}
-              placeholder="~/.cache/go-build"
+              placeholder={GO_BUILD_CACHE}
               className="font-mono text-xs"
             />
           </Field>

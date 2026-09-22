@@ -6,13 +6,25 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 )
 
+// shortTempDir keeps unix socket paths inside the 104-byte limit macOS enforces.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sw")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func newUnixServer(t *testing.T, handler http.HandlerFunc) string {
 	t.Helper()
-	socket := filepath.Join(t.TempDir(), "sandboxd.sock")
+	socket := filepath.Join(shortTempDir(t), "sandboxd.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatalf("listen unix: %v", err)
