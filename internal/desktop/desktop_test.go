@@ -94,12 +94,23 @@ func (f *fakeDaemon) appliedActions() []sbx.PolicyAction {
 	return append([]sbx.PolicyAction(nil), f.actions...)
 }
 
+// shortTempDir keeps unix socket paths inside the 104-byte limit macOS enforces.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sw")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 // newTestDesktop wires the binding service against a fake daemon over a unix
 // socket, mirroring the old HTTP handler tests.
 func newTestDesktop(t *testing.T, sandboxes ...string) (*Desktop, *app.App, *fakeDaemon) {
 	t.Helper()
 	fake := &fakeDaemon{sandboxes: sandboxes}
-	socket := filepath.Join(t.TempDir(), "sandboxd.sock")
+	socket := filepath.Join(shortTempDir(t), "sandboxd.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatalf("listen: %v", err)

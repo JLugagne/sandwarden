@@ -99,7 +99,7 @@ func callbackSigners(t *testing.T, method transport.AuthMethod) ([]gossh.Signer,
 
 func newSSHHome(t *testing.T) string {
 	t.Helper()
-	home := t.TempDir()
+	home := shortTempDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("SSH_AUTH_SOCK", "")
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())

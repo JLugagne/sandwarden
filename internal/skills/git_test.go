@@ -164,7 +164,7 @@ func TestSSHAuthUsesDefaultKey(t *testing.T) {
 
 func TestAgentAuthFallsBackToXDGRuntimeSocket(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "")
-	runtimeDir := t.TempDir()
+	runtimeDir := shortTempDir(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 
 	keyring := agent.NewKeyring()
@@ -193,6 +193,17 @@ func TestAgentAuthNoneAvailable(t *testing.T) {
 	if _, err := agentSigners(); err == nil {
 		t.Fatal("expected an error when no agent socket is reachable")
 	}
+}
+
+// shortTempDir keeps unix socket paths inside the 104-byte limit macOS enforces.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sw")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
 
 func serveAgent(t *testing.T, keyring agent.Agent, sockPath string) {

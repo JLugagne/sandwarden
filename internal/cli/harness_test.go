@@ -32,13 +32,24 @@ type fakeDaemon struct {
 	scopes    map[string]string
 }
 
+// shortTempDir keeps unix socket paths inside the 104-byte limit macOS enforces.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sw")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func newFakeDaemon(t *testing.T, running ...string) *fakeDaemon {
 	t.Helper()
 	f := &fakeDaemon{sandboxes: map[string]bool{}, scopes: map[string]string{}}
 	for _, name := range running {
 		f.sandboxes[name] = true
 	}
-	f.socket = filepath.Join(t.TempDir(), "sandboxd.sock")
+	f.socket = filepath.Join(shortTempDir(t), "sandboxd.sock")
 	listener, err := net.Listen("unix", f.socket)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
