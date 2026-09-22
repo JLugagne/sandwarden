@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -11,11 +12,19 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 )
 
+// notificationBackend is the part of the Wails notification service used here.
+type notificationBackend interface {
+	ServiceStartup(ctx context.Context, options application.ServiceOptions) error
+	ServiceShutdown() error
+	SendNotification(options notifications.NotificationOptions) error
+}
+
 // Notifier is the Wails service that owns the platform notification backend
-// and exposes a single Notify operation to the frontend. Wails starts it with
-// the application, which connects the platform notifier (D-Bus on Linux).
+// and exposes a single Notify operation to the frontend. A backend that fails
+// to start disables notifications instead of the application.
 type Notifier struct {
-	service *notifications.NotificationService
+	service notificationBackend
+	startup error
 }
 
 // NewNotifier builds the notification service wrapper.
@@ -28,7 +37,11 @@ func (n *Notifier) ServiceName() string { return "Notifier" }
 
 // ServiceStartup connects the platform notification backend.
 func (n *Notifier) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
-	return n.service.ServiceStartup(ctx, options)
+	n.startup = n.service.ServiceStartup(ctx, options)
+	if n.startup != nil {
+		log.Printf("desktop notifications disabled: %v", n.startup)
+	}
+	return nil
 }
 
 // ServiceShutdown releases the platform notification backend.
@@ -42,6 +55,9 @@ func (n *Notifier) Notify(title, body string) error {
 	body = strings.TrimSpace(body)
 	if title == "" && body == "" {
 		return errors.New("notification title or body is required")
+	}
+	if n.startup != nil {
+		return fmt.Errorf("desktop notifications are unavailable: %w", n.startup)
 	}
 	return n.service.SendNotification(notifications.NotificationOptions{
 		ID:    fmt.Sprintf("sandwarden-%d", time.Now().UnixNano()),

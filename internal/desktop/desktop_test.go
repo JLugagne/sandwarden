@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,8 @@ import (
 	"github.com/JLugagne/sandwarden/internal/fleet"
 	"github.com/JLugagne/sandwarden/internal/sbx"
 	"github.com/JLugagne/sandwarden/internal/store"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 )
 
 type fakeDaemon struct {
@@ -327,5 +330,52 @@ func TestNotifierRejectsEmpty(t *testing.T) {
 	notifier := NewNotifier()
 	if err := notifier.Notify("  ", " "); err == nil {
 		t.Fatal("expected an error for an empty notification")
+	}
+}
+
+type fakeNotifications struct {
+	startup error
+	sent    int
+}
+
+func (f *fakeNotifications) ServiceStartup(context.Context, application.ServiceOptions) error {
+	return f.startup
+}
+
+func (f *fakeNotifications) ServiceShutdown() error { return nil }
+
+func (f *fakeNotifications) SendNotification(notifications.NotificationOptions) error {
+	f.sent++
+	return nil
+}
+
+func TestNotifierStartupNeverFailsTheApp(t *testing.T) {
+	backend := &fakeNotifications{startup: errors.New("no backend")}
+	notifier := &Notifier{service: backend}
+
+	if err := notifier.ServiceStartup(context.Background(), application.ServiceOptions{}); err != nil {
+		t.Fatalf("startup must not abort the application: %v", err)
+	}
+	err := notifier.Notify("Blocked", "example.test")
+	if err == nil || !strings.Contains(err.Error(), "no backend") {
+		t.Fatalf("expected the startup failure, got %v", err)
+	}
+	if backend.sent != 0 {
+		t.Fatalf("expected nothing to be sent, got %d", backend.sent)
+	}
+}
+
+func TestNotifierSendsOnceStarted(t *testing.T) {
+	backend := &fakeNotifications{}
+	notifier := &Notifier{service: backend}
+
+	if err := notifier.ServiceStartup(context.Background(), application.ServiceOptions{}); err != nil {
+		t.Fatalf("startup: %v", err)
+	}
+	if err := notifier.Notify("Blocked", "example.test"); err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+	if backend.sent != 1 {
+		t.Fatalf("expected one notification, got %d", backend.sent)
 	}
 }
