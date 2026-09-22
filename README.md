@@ -69,7 +69,9 @@ web/                 React 19 + Vite + TanStack Query UI (web/src/bindings is ge
 
 **Runtime**
 
-- A Linux desktop with GTK3 / WebKitGTK (Debian/Ubuntu: `libgtk-3-0 libwebkit2gtk-4.1-0`).
+- A Linux desktop with GTK3 / WebKitGTK (Debian/Ubuntu: `libgtk-3-0 libwebkit2gtk-4.1-0`), or macOS.
+  Native notifications need an `.app` bundle, so the standalone macOS binary logs that they are
+  disabled and runs without them.
 - Docker Sandboxes installed on the host: the `sandboxd` daemon (unix socket) and the `sbx` CLI on
   `PATH` (or `SBX_BINARY` pointing at it).
 
@@ -77,13 +79,14 @@ web/                 React 19 + Vite + TanStack Query UI (web/src/bindings is ge
 
 - Go 1.26+
 - Node.js 24+ and npm
-- GTK3 / WebKitGTK development headers, `pkg-config` and a C toolchain:
+- On Linux, GTK3 / WebKitGTK development headers, `pkg-config` and a C toolchain:
 
   ```sh
   sudo apt install build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libx11-dev
   ```
 
-- The Wails v3 CLI, used to regenerate the TypeScript bindings:
+- On macOS, the Xcode command line tools (`xcode-select --install`).
+- Optional: the Wails v3 CLI, needed only to regenerate the committed TypeScript bindings:
 
   ```sh
   go install github.com/wailsapp/wails/v3/cmd/wails3@latest
@@ -190,7 +193,7 @@ regenerated with `make bindings`.
 
 | Flag | Environment variable | Default |
 | --- | --- | --- |
-| `-socket` | `DOCKER_SANDBOXES_API` | `~/.local/state/sandboxes/sandboxes/sandboxd/sandboxd.sock` |
+| `-socket` | `DOCKER_SANDBOXES_API` | Linux: `~/.local/state/sandboxes/sandboxes/sandboxd/sandboxd.sock`<br>macOS: `~/Library/Application Support/com.docker.sandboxes/sandboxes/sandboxd/sandboxd.sock` |
 | `-config` | `SANDWARDEN_CONFIG_DIR` | `~/.config/sandwarden` (or `$XDG_CONFIG_HOME/sandwarden`) |
 | `-db` | `XDG_STATE_HOME` | `~/.local/state/sandwarden/sandwarden.db` |
 | | `SBX_BINARY` | `sbx` found on `PATH` |
