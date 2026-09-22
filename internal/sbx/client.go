@@ -17,8 +17,7 @@ import (
 )
 
 const (
-	defaultSocketPath = ".local/state/sandboxes/sandboxes/sandboxd/sandboxd.sock"
-	envSocketPath     = "DOCKER_SANDBOXES_API"
+	envSocketPath = "DOCKER_SANDBOXES_API"
 
 	// childWaitDelay bounds how long a cancelled or exited sbx child may keep
 	// its captured stdout/stderr pipes open (grandchildren inherit them).
@@ -33,7 +32,7 @@ type Client struct {
 }
 
 // SocketPath resolves the sandboxd unix socket path. Precedence: DOCKER_SANDBOXES_API,
-// then the XDG default under the user's home directory.
+// then the platform default under the user's home directory.
 func SocketPath() string {
 	if p := os.Getenv(envSocketPath); p != "" {
 		return p
