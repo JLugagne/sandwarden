@@ -3,7 +3,8 @@ import { NavLink, Outlet } from "react-router-dom";
 import { api } from "@/api/client";
 import { cn } from "@/lib/cn";
 import { useConnectionStatus } from "@/app/RealtimeProvider";
-import { useApiMutation } from "@/hooks/useApiMutation";
+import { errorMessage, useApiMutation } from "@/hooks/useApiMutation";
+import { useToasts } from "@/components/Toaster";
 import { useConfigStaleness } from "@/hooks/useConfigStaleness";
 import { stalenessKey } from "@/lib/config";
 import {
@@ -35,6 +36,7 @@ export function Layout() {
   const status = useConnectionStatus();
   const meta = STATUS_META[status];
   const [notificationsOn, setNotificationsOn] = useState(notificationsEnabled());
+  const toast = useToasts();
 
   const staleness = useConfigStaleness();
   const changedFiles = staleness.data?.changed ?? [];
@@ -113,7 +115,10 @@ export function Layout() {
             onClick={() => {
               const next = !notificationsOn;
               setNotificationsOn(next);
-              void setNotificationsEnabled(next);
+              setNotificationsEnabled(next).catch((error) => {
+                setNotificationsOn(!next);
+                toast.push({ tone: "danger", title: "Settings not saved", body: errorMessage(error) });
+              });
             }}
           >
             Notifications {notificationsOn ? "on" : "off"}

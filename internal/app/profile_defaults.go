@@ -320,7 +320,15 @@ func (a *App) syncProfileMounts(ctx context.Context, name string, stale []fleet.
 	var errs []string
 	for i := range targets {
 		targets[i].Attached = mountPresent(live, targets[i].HostPath, targets[i].TargetPath)
-		if targets[i].OptedOut || targets[i].Attached {
+		if targets[i].OptedOut {
+			continue
+		}
+		current, err := a.releaseDriftedMount(ctx, name, live, targets[i].HostPath, targets[i].TargetPath, targets[i].ReadOnly)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", targets[i].HostPath, err))
+			continue
+		}
+		if current {
 			continue
 		}
 		if err := a.mountRef(ctx, name, fleet.MountRef{HostPath: targets[i].HostPath, TargetPath: targets[i].TargetPath, ReadOnly: targets[i].ReadOnly}); err != nil {
@@ -361,7 +369,12 @@ func (a *App) syncDirectMounts(ctx context.Context, name string) (int, []string)
 	applied := 0
 	var errs []string
 	for _, m := range s.App.Mounts {
-		if mountPresent(live, m.HostPath, m.TargetPath) {
+		current, err := a.releaseDriftedMount(ctx, name, live, m.HostPath, m.TargetPath, m.ReadOnly)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", m.HostPath, err))
+			continue
+		}
+		if current {
 			continue
 		}
 		if err := a.mountRef(ctx, name, m); err != nil {
@@ -434,6 +447,23 @@ func mountPresent(mounts []sbx.MountInfo, hostPath, targetPath string) bool {
 		}
 	}
 	return false
+}
+
+// releaseDriftedMount reports whether the live bind of hostPath already
+// matches the declared mode. A bind present with the other read-only mode is
+// unmounted so the caller re-binds it.
+func (a *App) releaseDriftedMount(ctx context.Context, name string, live []sbx.MountInfo, hostPath, targetPath string, readOnly bool) (bool, error) {
+	want := mountTarget(hostPath, targetPath)
+	for _, m := range live {
+		if m.HostPath != hostPath || mountTarget(m.HostPath, m.Target) != want {
+			continue
+		}
+		if m.ReadOnly == readOnly {
+			return true, nil
+		}
+		return false, a.Sbx.UnmountFolderAt(ctx, name, hostPath, targetPath)
+	}
+	return false, nil
 }
 
 // targetStillDesired reports whether merged targets still want a mount.

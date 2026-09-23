@@ -12,8 +12,8 @@ export async function fetchNotificationsEnabled(): Promise<boolean> {
 }
 
 /** Persists the desktop notification preference to the backend config file. */
-export async function setNotificationsEnabled(enabled: boolean): Promise<void> {
-  await updateConfig({ notifications: enabled });
+export function setNotificationsEnabled(enabled: boolean) {
+  return updateConfig({ notifications: enabled });
 }
 
 /** Sends a native desktop notification when the preference is enabled. */

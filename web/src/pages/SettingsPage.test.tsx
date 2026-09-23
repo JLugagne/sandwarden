@@ -65,8 +65,7 @@ function LocationProbe() {
   return <output data-testid="location-search">{location.search}</output>;
 }
 
-function renderPage(entry = "/settings") {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderPage(entry = "/settings", queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[entry]}>
@@ -164,6 +163,45 @@ describe("terminal panel", () => {
         notifications: false,
       });
     });
+  });
+});
+
+describe("terminal preferences", () => {
+  function kittyCheckbox() {
+    const row = screen.getByText("kitty").closest("tr") as HTMLTableRowElement;
+    return within(row).getByRole("checkbox") as HTMLInputElement;
+  }
+
+  it("keeps a disabled terminal unchecked after leaving and reopening the page", async () => {
+    let saved = { terminals: { enabled: null as string[] | null, default: "" }, notifications: false };
+    vi.mocked(api.getConfig).mockImplementation(async () => saved);
+    vi.mocked(api.setConfig).mockImplementation(async (next) => {
+      saved = next;
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const first = renderPage("/settings", queryClient);
+    await screen.findByText("kitty");
+    fireEvent.click(kittyCheckbox());
+    await waitFor(() => expect(api.setConfig).toHaveBeenCalled());
+    first.unmount();
+
+    renderPage("/settings", queryClient);
+    await screen.findByText("kitty");
+
+    await waitFor(() => expect(kittyCheckbox().checked).toBe(false), { timeout: 2000 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(kittyCheckbox().checked).toBe(false);
+  });
+
+  it("reverts and reports a terminal change the backend refused to save", async () => {
+    vi.mocked(api.setConfig).mockRejectedValueOnce(new Error("another sandwarden instance is applying changes, retry"));
+    renderPage();
+    await screen.findByText("kitty");
+
+    fireEvent.click(kittyCheckbox());
+
+    await waitFor(() => expect(kittyCheckbox().checked).toBe(true), { timeout: 2000 });
+    expect(await screen.findByText(/another sandwarden instance is applying changes/, {}, { timeout: 2000 })).toBeDefined();
   });
 });
 

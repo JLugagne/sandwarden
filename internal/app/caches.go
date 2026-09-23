@@ -224,7 +224,12 @@ func (a *App) ReapplyCaches(ctx context.Context, name string) (int, []string) {
 	applied := 0
 	var errs []string
 	for _, c := range caches {
-		if cacheMounted(mounts, c) {
+		current, err := a.releaseDriftedMount(ctx, name, mounts, c.App.HostPath, c.App.EffectiveTarget(), c.App.ReadOnly)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", c.App.Name, err))
+			continue
+		}
+		if current {
 			continue
 		}
 		if err := a.mountCache(ctx, name, c); err != nil {

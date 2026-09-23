@@ -19,8 +19,8 @@ export async function fetchTerminalPrefs(): Promise<TerminalPrefs> {
 }
 
 /** Persists the terminal preferences to the backend config file. */
-export async function saveTerminalPrefs(prefs: TerminalPrefs): Promise<void> {
-  await updateConfig({ terminals: prefs });
+export function saveTerminalPrefs(prefs: TerminalPrefs) {
+  return updateConfig({ terminals: prefs });
 }
 
 export function enabledTerminals(terminals: Terminal[], prefs: TerminalPrefs): Terminal[] {

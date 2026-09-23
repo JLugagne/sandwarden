@@ -51,13 +51,25 @@ export function primeConfig(config: AppConfig): void {
   emit();
 }
 
-/** Merges a patch into the config and persists the whole file. */
-export async function updateConfig(patch: Partial<AppConfig>): Promise<void> {
-  const base = cache ?? (await loadConfig());
+/**
+ * Merges a patch into the config and persists the whole file. It rejects
+ * without writing when the saved config cannot be read, so the fallback never
+ * overwrites real preferences, and restores the previous value when the save
+ * fails. Resolves to the persisted configuration.
+ */
+export async function updateConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
+  const base = cache ?? normalize(await api.getConfig());
   const next = { ...base, ...patch };
   cache = next;
   emit();
-  await api.setConfig(next);
+  try {
+    await api.setConfig(next);
+  } catch (error) {
+    cache = base;
+    emit();
+    throw error;
+  }
+  return next;
 }
 
 export function subscribeConfig(listener: (config: AppConfig) => void): () => void {

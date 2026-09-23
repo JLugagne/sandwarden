@@ -273,61 +273,72 @@ func (a *App) AddMountAt(ctx context.Context, name, hostPath, target string, rea
 	if target != "" && !filepath.IsAbs(target) {
 		return errors.New("target path must be absolute")
 	}
-	s, err := a.ensureSandboxConfig(ctx, name)
-	if err != nil {
-		return err
-	}
-	mount := fleet.MountRef{HostPath: hostPath, TargetPath: target, ReadOnly: readOnly}
-	replaced := false
-	for i, m := range s.App.Mounts {
-		if m.HostPath == mount.HostPath && m.TargetPath == mount.TargetPath {
-			s.App.Mounts[i] = mount
-			replaced = true
-			break
-		}
-	}
-	if !replaced {
-		s.App.Mounts = append(s.App.Mounts, mount)
-	}
-	if err := a.Fleet.SaveSandbox(s); err != nil {
-		return err
-	}
-	if info, err := a.Sbx.InspectSandbox(ctx, name); err == nil && info.Running() {
-		if target != "" {
-			_ = a.Sbx.MkdirAll(ctx, name, target)
-		}
-		if err := a.Sbx.MountFolderAt(ctx, name, hostPath, target, readOnly); err != nil {
+	return a.withFleetLock(func() error {
+		s, err := a.ensureSandboxConfig(ctx, name)
+		if err != nil {
 			return err
 		}
-	}
-	a.Notify(TopicSandbox(name))
-	return nil
+		mount := fleet.MountRef{HostPath: hostPath, TargetPath: target, ReadOnly: readOnly}
+		replaced := false
+		for i, m := range s.App.Mounts {
+			if m.HostPath == mount.HostPath && m.TargetPath == mount.TargetPath {
+				s.App.Mounts[i] = mount
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			s.App.Mounts = append(s.App.Mounts, mount)
+		}
+		if err := a.Fleet.SaveSandbox(s); err != nil {
+			return err
+		}
+		if info, err := a.Sbx.InspectSandbox(ctx, name); err == nil && info.Running() {
+			live, err := a.Sbx.Mounts(ctx, name)
+			if err != nil {
+				return err
+			}
+			current, err := a.releaseDriftedMount(ctx, name, live, hostPath, target, readOnly)
+			if err != nil {
+				return err
+			}
+			if !current {
+				if err := a.mountRef(ctx, name, mount); err != nil {
+					return err
+				}
+			}
+		}
+		a.Notify(TopicSandbox(name))
+		return nil
+	})
 }
 
 // RemoveMountAt removes a declared bind mount and detaches it if attached.
 func (a *App) RemoveMountAt(ctx context.Context, name, hostPath, target string) error {
-	s, err := a.ensureSandboxConfig(ctx, name)
-	if err != nil {
-		return err
-	}
-	kept := s.App.Mounts[:0]
-	for _, m := range s.App.Mounts {
-		if m.HostPath == hostPath && m.TargetPath == target {
-			continue
-		}
-		kept = append(kept, m)
-	}
-	s.App.Mounts = kept
-	if err := a.Fleet.SaveSandbox(s); err != nil {
-		return err
-	}
-	if info, err := a.Sbx.InspectSandbox(ctx, name); err == nil && info.Running() {
-		if err := a.Sbx.UnmountFolderAt(ctx, name, hostPath, target); err != nil {
+	return a.withFleetLock(func() error {
+		s, err := a.ensureSandboxConfig(ctx, name)
+		if err != nil {
 			return err
 		}
-	}
-	a.Notify(TopicSandbox(name))
-	return nil
+		kept := s.App.Mounts[:0]
+		for _, m := range s.App.Mounts {
+			if m.HostPath == hostPath && m.TargetPath == target {
+				continue
+			}
+			kept = append(kept, m)
+		}
+		s.App.Mounts = kept
+		if err := a.Fleet.SaveSandbox(s); err != nil {
+			return err
+		}
+		if info, err := a.Sbx.InspectSandbox(ctx, name); err == nil && info.Running() {
+			if err := a.Sbx.UnmountFolderAt(ctx, name, hostPath, target); err != nil {
+				return err
+			}
+		}
+		a.Notify(TopicSandbox(name))
+		return nil
+	})
 }
 
 func (a *App) jobContext() context.Context {

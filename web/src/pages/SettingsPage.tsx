@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { useApiMutation } from "@/hooks/useApiMutation";
+import { errorMessage, useApiMutation } from "@/hooks/useApiMutation";
+import { useToasts } from "@/components/Toaster";
 import { useConfigStaleness } from "@/hooks/useConfigStaleness";
 import { queryKeys } from "@/store/realtime";
 import { useConnectionStatus } from "@/app/RealtimeProvider";
@@ -151,16 +152,19 @@ export function SettingsPage() {
     onSuccess: (errors) => setReloadErrors(errors),
   });
 
+  const toast = useToasts();
   const terminals = useQuery({ queryKey: queryKeys.terminals, queryFn: api.terminals, staleTime: 60_000 });
   const [terminalPrefs, setTerminalPrefs] = useState<TerminalPrefs>(loadTerminalPrefs);
-  const config = useQuery({ queryKey: queryKeys.config, queryFn: api.getConfig, staleTime: Infinity });
+  const config = useQuery({ queryKey: queryKeys.config, queryFn: api.getConfig, staleTime: 0, refetchOnMount: "always" });
 
-  // The backend config file is the source of truth for both preferences.
+  // The backend config file is the source of truth for both preferences. Cached
+  // query data can predate a save made since, so only a fresh read is applied.
   useEffect(() => {
-    if (!config.data) return;
+    if (!config.data || config.isFetching) return;
     primeConfig(config.data);
     setTerminalPrefs(config.data.terminals);
-  }, [config.data]);
+    setNotificationsOn(config.data.notifications);
+  }, [config.data, config.isFetching]);
 
   useEffect(() => {
     let active = true;
@@ -176,9 +180,17 @@ export function SettingsPage() {
   const enabledIds = new Set(enabledTerminals(terminalRows, terminalPrefs).map((terminal) => terminal.id));
   const currentDefault = defaultTerminal(terminalRows, terminalPrefs);
 
+  function persistConfig(save: Promise<unknown>, revert: () => void) {
+    save.catch((error) => {
+      revert();
+      toast.push({ tone: "danger", title: "Settings not saved", body: errorMessage(error) });
+    });
+  }
+
   function updateTerminalPrefs(next: TerminalPrefs) {
+    const previous = terminalPrefs;
     setTerminalPrefs(next);
-    void saveTerminalPrefs(next);
+    persistConfig(saveTerminalPrefs(next), () => setTerminalPrefs(previous));
   }
 
   function toggleTerminal(id: string, enabled: boolean) {
@@ -504,7 +516,7 @@ export function SettingsPage() {
               checked={notificationsOn}
               onChange={(value) => {
                 setNotificationsOn(value);
-                void setNotificationsEnabled(value);
+                persistConfig(setNotificationsEnabled(value), () => setNotificationsOn(!value));
               }}
             />
             <span className="text-xs text-muted">
