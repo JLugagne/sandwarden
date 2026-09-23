@@ -70,6 +70,7 @@ jobs:
           build/darwin/bundle.sh sandwarden "$VERSION" .
           codesign --verify --verbose sandwarden.app
           plutil -lint sandwarden.app/Contents/Info.plist
+          ditto -c -k --sequesterRsrc --keepParent sandwarden.app "sandwarden_${{ matrix.goos }}_${{ matrix.goarch }}.app.zip"
       - name: Package
         run: |
           ARCHIVE="sandwarden_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
@@ -78,16 +79,20 @@ jobs:
           else
             tar -czf "$ARCHIVE" sandwarden README.md
           fi
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
-          else
-            shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
-          fi
+          for asset in "$ARCHIVE" sandwarden_*.app.zip; do
+            [ -f "$asset" ] || continue
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$asset" > "$asset.sha256"
+            else
+              shasum -a 256 "$asset" > "$asset.sha256"
+            fi
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: sandwarden_${{ matrix.goos }}_${{ matrix.goarch }}
           path: |
             sandwarden_*.tar.gz
+            sandwarden_*.app.zip
             sandwarden_*.sha256
           if-no-files-found: error
 
@@ -110,13 +115,28 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/*.tar.gz dist/checksums.txt --clobber
+            gh release upload "$TAG" dist/*.tar.gz dist/*.app.zip dist/checksums.txt --clobber
           else
             gh release create "$TAG" \
-              dist/*.tar.gz dist/checksums.txt \
+              dist/*.tar.gz dist/*.app.zip dist/checksums.txt \
               --title "$TAG" \
               --generate-notes
           fi
+      - name: Verify release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          published="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          missing=0
+          for asset in dist/*; do
+            name="$(basename "$asset")"
+            if ! printf '%s\n' "$published" | grep -qx "$name"; then
+              echo "::error::$name is missing from release $TAG"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
   publish-unstable:
     name: publish unstable pre-release
@@ -138,7 +158,7 @@ jobs:
         run: |
           gh release delete unstable --yes --cleanup-tag 2>/dev/null || true
           gh release create unstable \
-            dist/*.tar.gz dist/checksums.txt \
+            dist/*.tar.gz dist/*.app.zip dist/checksums.txt \
             --title "Unstable (main)" \
             --target main \
             --prerelease \
@@ -149,3 +169,18 @@ jobs:
           \`\`\`sh
           curl -fsSL https://raw.githubusercontent.com/JLugagne/sandwarden/main/install-unstable.sh | bash
           \`\`\`"
+      - name: Verify release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: unstable
+        run: |
+          published="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          missing=0
+          for asset in dist/*; do
+            name="$(basename "$asset")"
+            if ! printf '%s\n' "$published" | grep -qx "$name"; then
+              echo "::error::$name is missing from release $TAG"
+              missing=1
+            fi
+          done
+          exit "$missing"
