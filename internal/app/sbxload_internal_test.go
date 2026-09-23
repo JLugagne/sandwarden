@@ -34,14 +34,16 @@ func newLoadStub(t *testing.T, failMount bool) string {
 	return logPath
 }
 
-func seedMountedSandbox(t *testing.T, a *App) {
+func seedMountedSandbox(t *testing.T, a *App) string {
 	t.Helper()
+	host := t.TempDir()
 	spec := fleet.NewMixin("")
 	spec.DisplayName = "box"
-	app := fleet.SandboxApp{Sandbox: "box", Mounts: []fleet.MountRef{{HostPath: t.TempDir()}}}
+	app := fleet.SandboxApp{Sandbox: "box", Mounts: []fleet.MountRef{{HostPath: host}}}
 	if _, err := a.Fleet.CreateSandbox("box", spec, app); err != nil {
 		t.Fatalf("create sandbox: %v", err)
 	}
+	return "mount box " + host
 }
 
 func waitForCalls(t *testing.T, logPath, prefix string, want int) {
@@ -75,17 +77,17 @@ func TestApplyInspectsSandboxOncePerPass(t *testing.T) {
 func TestReconcileLoopBacksOffFailingSandbox(t *testing.T) {
 	a, _ := newTestApp(t, "box")
 	logPath := newLoadStub(t, true)
-	seedMountedSandbox(t, a)
+	mountCall := seedMountedSandbox(t, a)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go a.reconcileLoop(ctx)
 
 	a.requestReconcile()
-	waitForCalls(t, logPath, "mount ", 1)
+	waitForCalls(t, logPath, mountCall, 1)
 	a.requestReconcile()
 	time.Sleep(reconcileDebounce + time.Second)
 
-	if got := countCalls(skillCalls(t, logPath), "mount "); got != 1 {
+	if got := countCalls(skillCalls(t, logPath), mountCall); got != 1 {
 		t.Fatalf("failing mount retried %d times, want 1 before the backoff expires", got)
 	}
 }
@@ -95,13 +97,13 @@ func TestReconcileLoopBacksOffFailingSandbox(t *testing.T) {
 func TestManualReconcileIgnoresBackoff(t *testing.T) {
 	a, _ := newTestApp(t, "box")
 	logPath := newLoadStub(t, true)
-	seedMountedSandbox(t, a)
+	mountCall := seedMountedSandbox(t, a)
 	ctx := context.Background()
 
 	_ = a.Reconcile(ctx)
 	_ = a.Reconcile(ctx)
 
-	if got := countCalls(skillCalls(t, logPath), "mount "); got != 2 {
+	if got := countCalls(skillCalls(t, logPath), mountCall); got != 2 {
 		t.Fatalf("manual reconcile mounted %d times, want 2", got)
 	}
 }

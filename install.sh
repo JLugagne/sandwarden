@@ -93,7 +93,18 @@ fi
 tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
 
 mkdir -p "$INSTALL_DIR"
-if command -v install >/dev/null 2>&1; then
+if [ "$OS" = "darwin" ]; then
+  # The binary lives inside sandwarden.app so macOS gives it the bundle
+  # identifier notifications need; the PATH entry only forwards to it.
+  APP_DIR="${SANDWARDEN_APP_DIR:-$HOME/Applications}"
+  mkdir -p "$APP_DIR"
+  rm -rf "$APP_DIR/sandwarden.app"
+  mv "$TMP/sandwarden.app" "$APP_DIR/sandwarden.app"
+  rm -f "$INSTALL_DIR/$BINARY"
+  printf '#!/bin/sh\nexec "%s/sandwarden.app/Contents/MacOS/sandwarden" "$@"\n' "$APP_DIR" > "$INSTALL_DIR/$BINARY"
+  chmod 0755 "$INSTALL_DIR/$BINARY"
+  echo "sandwarden.app installed to $APP_DIR"
+elif command -v install >/dev/null 2>&1; then
   install -m 0755 "$TMP/$BINARY" "$INSTALL_DIR/$BINARY"
 else
   mv "$TMP/$BINARY" "$INSTALL_DIR/$BINARY"

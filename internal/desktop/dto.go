@@ -62,6 +62,12 @@ type RuleRequest struct {
 	Pattern  string `json:"pattern"`
 }
 
+// RulesRequest carries several patterns sharing one allow/deny decision.
+type RulesRequest struct {
+	Decision string   `json:"decision"`
+	Patterns []string `json:"patterns"`
+}
+
 // ServiceSecretRequest is the service secret payload.
 type ServiceSecretRequest struct {
 	Service   string `json:"service"`

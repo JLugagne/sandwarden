@@ -87,8 +87,13 @@ func TestApplyFixesReadOnlyDrift(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 
-	mounts := fake.mounts(t, "box")
-	if len(mounts) != 1 || !mounts[0].readOn {
-		t.Fatalf("live mounts %+v, want one read-only bind of %s", mounts, host)
+	var binds []fakeMount
+	for _, m := range fake.mounts(t, "box") {
+		if m.host == host {
+			binds = append(binds, m)
+		}
+	}
+	if len(binds) != 1 || !binds[0].readOn {
+		t.Fatalf("live binds of %s: %+v, want one read-only bind", host, binds)
 	}
 }

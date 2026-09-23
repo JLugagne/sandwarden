@@ -9,6 +9,18 @@ import * as fleet$0 from "../fleet/models.js";
 import * as sbx$0 from "../sbx/models.js";
 
 /**
+ * AgentsDoc is the instructions file mounted read-only at
+ * /home/agent/.agents/AGENTS.md in every running sandbox. Default reports
+ * whether Content still matches the built-in template.
+ */
+export interface AgentsDoc {
+    "path": string;
+    "target": string;
+    "content": string;
+    "default": boolean;
+}
+
+/**
  * ApplyReport summarises one convergence pass over a sandbox's files.
  */
 export interface ApplyReport {

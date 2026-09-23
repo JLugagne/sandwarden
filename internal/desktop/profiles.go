@@ -41,6 +41,12 @@ func (d *Desktop) AddRule(slug string, req RuleRequest) error {
 	return d.app.AddRuleToProfile(d.root, slug, req.Decision, req.Pattern)
 }
 
+// AddRules appends several allow/deny patterns to a profile in one pass, for
+// the Traffic page's bulk actions.
+func (d *Desktop) AddRules(slug string, req RulesRequest) error {
+	return d.app.AddRulesToProfile(d.root, slug, req.Decision, req.Patterns)
+}
+
 // RemoveRule drops an allow/deny pattern from a profile.
 func (d *Desktop) RemoveRule(slug string, req RuleRequest) error {
 	return d.app.RemoveRuleFromProfile(d.root, slug, req.Decision, req.Pattern)

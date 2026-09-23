@@ -70,6 +70,22 @@ export function AddRule(slug: string, req: $models.RuleRequest): $CancellablePro
 }
 
 /**
+ * AddRules appends several allow/deny patterns to a profile in one pass, for
+ * the Traffic page's bulk actions.
+ */
+export function AddRules(slug: string, req: $models.RulesRequest): $CancellablePromise<void> {
+    return $Call.ByID(830208374, slug, req);
+}
+
+/**
+ * AgentsFile returns the shared AGENTS.md mounted into every sandbox,
+ * creating it from the built-in template on first use.
+ */
+export function AgentsFile(): $CancellablePromise<app$0.AgentsDoc> {
+    return $Call.ByID(1172792300);
+}
+
+/**
  * ApplyProfileCache clears the opt-out and attaches the cache.
  */
 export function ApplyProfileCache(name: string, cacheSlug: string): $CancellablePromise<void> {
@@ -547,6 +563,13 @@ export function RemoveTemplate(ref: string): $CancellablePromise<void> {
 }
 
 /**
+ * ResetAgentsFile restores the built-in AGENTS.md template.
+ */
+export function ResetAgentsFile(): $CancellablePromise<app$0.AgentsDoc> {
+    return $Call.ByID(40512703);
+}
+
+/**
  * SandboxConfigDir returns the config directory of a sandbox.
  */
 export function SandboxConfigDir(slug: string): $CancellablePromise<string> {
@@ -579,6 +602,14 @@ export function SandboxPolicyAction(name: string, action: string, resources: str
  */
 export function SandboxTraffic(name: string): $CancellablePromise<sbx$0.PolicyLog> {
     return $Call.ByID(1358447664, name);
+}
+
+/**
+ * SaveAgentsFile replaces the shared AGENTS.md; running sandboxes see the new
+ * content immediately.
+ */
+export function SaveAgentsFile(content: string): $CancellablePromise<app$0.AgentsDoc> {
+    return $Call.ByID(3057077285, content);
 }
 
 /**

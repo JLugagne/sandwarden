@@ -151,29 +151,45 @@ func (a *App) DeleteProfile(ctx context.Context, slug string) error {
 	})
 }
 
-// AddRuleToProfile appends an allow or deny pattern to a profile and
-// converges every sandbox it covers.
+// AddRuleToProfile appends one allow/deny pattern to a profile.
 func (a *App) AddRuleToProfile(ctx context.Context, slug, decision, pattern string) error {
+	return a.AddRulesToProfile(ctx, slug, decision, []string{pattern})
+}
+
+// AddRulesToProfile appends several allow/deny patterns to a profile with a
+// single save and convergence pass. A pattern already in the opposite list is
+// moved, so a profile never both allows and denies the same host. It returns
+// store.ErrNotFound for an unknown profile and an error when no pattern is
+// left after trimming.
+func (a *App) AddRulesToProfile(ctx context.Context, slug, decision string, patterns []string) error {
+	decision = strings.ToLower(strings.TrimSpace(decision))
+	if decision != "allow" && decision != "deny" {
+		return fmt.Errorf("unknown rule decision %q", decision)
+	}
+	var cleaned []string
+	for _, pattern := range patterns {
+		if pattern = strings.TrimSpace(pattern); pattern != "" && !slices.Contains(cleaned, pattern) {
+			cleaned = append(cleaned, pattern)
+		}
+	}
+	if len(cleaned) == 0 {
+		return errors.New("rule pattern is required")
+	}
 	return a.withFleetLock(func() error {
 		p, ok := a.Fleet.Profile(slug)
 		if !ok {
 			return store.ErrNotFound
 		}
-		decision = strings.ToLower(strings.TrimSpace(decision))
-		pattern = strings.TrimSpace(pattern)
-		if decision != "allow" && decision != "deny" {
-			return fmt.Errorf("unknown rule decision %q", decision)
-		}
-		if pattern == "" {
-			return errors.New("rule pattern is required")
-		}
 		network := ensureNetwork(&p.Spec)
-		if decision == "allow" {
-			if !slices.Contains(network.Allow, pattern) {
-				network.Allow = append(network.Allow, pattern)
+		add, opposite := &network.Allow, &network.Deny
+		if decision == "deny" {
+			add, opposite = opposite, add
+		}
+		for _, pattern := range cleaned {
+			if !slices.Contains(*add, pattern) {
+				*add = append(*add, pattern)
 			}
-		} else if !slices.Contains(network.Deny, pattern) {
-			network.Deny = append(network.Deny, pattern)
+			*opposite = slices.DeleteFunc(*opposite, func(existing string) bool { return existing == pattern })
 		}
 		if err := a.Fleet.SaveProfile(p); err != nil {
 			return err

@@ -10,6 +10,8 @@ export const queryKeys = {
   sandboxPolicy: (name: string) => ["sandbox-policy", name] as const,
   sandboxConfigDir: (slug: string) => ["sandbox-config-dir", slug] as const,
   fleetDir: ["fleet-dir"] as const,
+  agentsFile: ["agents-file"] as const,
+  notificationStatus: ["notification-status"] as const,
   profiles: ["profiles"] as const,
   secrets: ["secrets"] as const,
   traffic: ["traffic"] as const,

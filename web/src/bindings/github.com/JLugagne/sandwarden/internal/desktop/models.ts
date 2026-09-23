@@ -123,6 +123,18 @@ export interface MountRequest {
 }
 
 /**
+ * NotificationStatus tells the settings page whether notifications can be
+ * delivered. Available is false when the platform backend did not start (on
+ * macOS: the binary runs outside sandwarden.app, which has no bundle
+ * identifier); Reason then carries the backend's error.
+ */
+export interface NotificationStatus {
+    "available": boolean;
+    "authorized": boolean;
+    "reason"?: string;
+}
+
+/**
  * PolicyActionRequest is the policy action payload.
  */
 export interface PolicyActionRequest {
@@ -176,6 +188,14 @@ export interface RegistrySecretRequest {
 export interface RuleRequest {
     "decision": string;
     "pattern": string;
+}
+
+/**
+ * RulesRequest carries several patterns sharing one allow/deny decision.
+ */
+export interface RulesRequest {
+    "decision": string;
+    "patterns": string[] | null;
 }
 
 /**

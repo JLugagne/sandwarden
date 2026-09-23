@@ -3,8 +3,9 @@
 
 /**
  * Notifier is the Wails service that owns the platform notification backend
- * and exposes a single Notify operation to the frontend. Wails starts it with
- * the application, which connects the platform notifier (D-Bus on Linux).
+ * and exposes Notify, Status and RequestAuthorization to the frontend. A
+ * backend that fails to start disables notifications instead of the
+ * application.
  * @module
  */
 
@@ -12,9 +13,31 @@
 // @ts-ignore: Unused imports
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
 /**
  * Notify sends one native desktop notification.
  */
 export function Notify(title: string, body: string): $CancellablePromise<void> {
     return $Call.ByID(2747205003, title, body);
+}
+
+/**
+ * RequestAuthorization asks the platform for permission to notify, showing the
+ * system prompt on macOS the first time. It returns an error when the backend
+ * did not start or the request itself failed; a refusal is reported through
+ * the returned status, not as an error.
+ */
+export function RequestAuthorization(): $CancellablePromise<$models.NotificationStatus> {
+    return $Call.ByID(1553052372);
+}
+
+/**
+ * Status reports whether notifications can be delivered right now. It never
+ * prompts the user.
+ */
+export function Status(): $CancellablePromise<$models.NotificationStatus> {
+    return $Call.ByID(2796381344);
 }

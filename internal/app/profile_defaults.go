@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -391,8 +393,11 @@ func (a *App) syncDirectMounts(ctx context.Context, name string) (int, []string)
 
 // mountRef binds a host path into a running sandbox, creating the target.
 func (a *App) mountRef(ctx context.Context, name string, m fleet.MountRef) error {
-	if m.EffectiveTarget() != "" {
-		_ = a.Sbx.MkdirAll(ctx, name, m.EffectiveTarget())
+	if target := m.EffectiveTarget(); target != "" {
+		if info, err := os.Stat(m.HostPath); err == nil && !info.IsDir() {
+			target = path.Dir(target)
+		}
+		_ = a.Sbx.MkdirAll(ctx, name, target)
 	}
 	return a.Sbx.MountFolderAt(ctx, name, m.HostPath, m.EffectiveTarget(), m.ReadOnly)
 }
@@ -485,4 +490,8 @@ func mountTarget(hostPath, targetPath string) string {
 		return hostPath
 	}
 	return targetPath
+}
+
+func mountRefFor(hostPath, targetPath string, readOnly bool) fleet.MountRef {
+	return fleet.MountRef{HostPath: hostPath, TargetPath: targetPath, ReadOnly: readOnly}
 }

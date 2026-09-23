@@ -345,8 +345,21 @@ func TestNotifierRejectsEmpty(t *testing.T) {
 }
 
 type fakeNotifications struct {
-	startup error
-	sent    int
+	startup    error
+	sent       int
+	denied     bool
+	grantOnAsk bool
+	requested  int
+}
+
+func (f *fakeNotifications) CheckNotificationAuthorization() (bool, error) { return !f.denied, nil }
+
+func (f *fakeNotifications) RequestNotificationAuthorization() (bool, error) {
+	f.requested++
+	if f.grantOnAsk {
+		f.denied = false
+	}
+	return !f.denied, nil
 }
 
 func (f *fakeNotifications) ServiceStartup(context.Context, application.ServiceOptions) error {
@@ -388,5 +401,52 @@ func TestNotifierSendsOnceStarted(t *testing.T) {
 	}
 	if backend.sent != 1 {
 		t.Fatalf("expected one notification, got %d", backend.sent)
+	}
+}
+
+func TestNotifierRefusesWhenNotAuthorized(t *testing.T) {
+	backend := &fakeNotifications{denied: true}
+	notifier := &Notifier{service: backend}
+	_ = notifier.ServiceStartup(context.Background(), application.ServiceOptions{})
+
+	err := notifier.Notify("Blocked", "example.test")
+	if err == nil || !strings.Contains(err.Error(), "not authorized") {
+		t.Fatalf("expected an authorization error, got %v", err)
+	}
+	if backend.sent != 0 {
+		t.Fatalf("expected nothing to be sent, got %d", backend.sent)
+	}
+	if status := notifier.Status(); !status.Available || status.Authorized {
+		t.Fatalf("unexpected status %+v", status)
+	}
+}
+
+func TestNotifierRequestsAuthorization(t *testing.T) {
+	backend := &fakeNotifications{denied: true, grantOnAsk: true}
+	notifier := &Notifier{service: backend}
+	_ = notifier.ServiceStartup(context.Background(), application.ServiceOptions{})
+
+	status, err := notifier.RequestAuthorization()
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if !status.Authorized || backend.requested != 1 {
+		t.Fatalf("authorization not requested: %+v, requested %d", status, backend.requested)
+	}
+	if err := notifier.Notify("Blocked", "example.test"); err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+}
+
+func TestNotifierStatusReportsStartupFailure(t *testing.T) {
+	notifier := &Notifier{service: &fakeNotifications{startup: errors.New("notifications require a valid bundle identifier")}}
+	_ = notifier.ServiceStartup(context.Background(), application.ServiceOptions{})
+
+	status := notifier.Status()
+	if status.Available || !strings.Contains(status.Reason, "bundle identifier") {
+		t.Fatalf("unexpected status %+v", status)
+	}
+	if _, err := notifier.RequestAuthorization(); err == nil {
+		t.Fatal("expected authorization to fail without a backend")
 	}
 }

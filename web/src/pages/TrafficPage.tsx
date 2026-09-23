@@ -1,15 +1,15 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { queryKeys } from "@/store/realtime";
-import { formatTime } from "@/lib/format";
+import { classifyTraffic } from "@/lib/traffic";
+import { TrafficReview } from "@/components/TrafficReview";
 import {
   Badge,
   Button,
   DecisionBadge,
-  EmptyState,
   Input,
   PageHeader,
   Panel,
@@ -32,14 +32,6 @@ export function TrafficPage() {
   const traffic = useQuery({ queryKey: queryKeys.traffic, queryFn: api.traffic });
   const rules = useQuery({ queryKey: queryKeys.policyRules, queryFn: () => api.policyRules() });
 
-  const allow = useApiMutation({
-    mutationFn: (entry: LogEntry) => api.policyAction({ action: "allow", resources: [entry.host], sandbox_id: entry.vm_name }),
-    success: (_, entry) => `Allowed ${entry.host} for ${entry.vm_name}`,
-  });
-  const deny = useApiMutation({
-    mutationFn: (entry: LogEntry) => api.policyAction({ action: "deny", resources: [entry.host], sandbox_id: entry.vm_name }),
-    success: (_, entry) => `Denied ${entry.host} for ${entry.vm_name}`,
-  });
   const removeRule = useApiMutation({
     mutationFn: (rule: PolicyRule) =>
       api.policyAction({ action: "remove-id", id: rule.id, sandbox_id: rule.sandbox_id || undefined }),
@@ -48,12 +40,14 @@ export function TrafficPage() {
   });
 
   const log = useMemo(() => {
-    const matches = (entry: LogEntry) => !sandboxFilter || entry.vm_name === sandboxFilter;
+    if (!sandboxFilter) return traffic.data;
+    const matches = (entry: LogEntry) => entry.vm_name === sandboxFilter;
     return {
-      blocked: (traffic.data?.blocked_hosts ?? []).filter(matches),
-      allowed: (traffic.data?.allowed_hosts ?? []).filter(matches),
+      blocked_hosts: (traffic.data?.blocked_hosts ?? []).filter(matches),
+      allowed_hosts: (traffic.data?.allowed_hosts ?? []).filter(matches),
     };
   }, [traffic.data, sandboxFilter]);
+  const pendingCount = useMemo(() => classifyTraffic(traffic.data, rules.data ?? []).pending.length, [traffic.data, rules.data]);
 
   return (
     <>
@@ -64,7 +58,7 @@ export function TrafficPage() {
 
       <Tabs
         tabs={[
-          { id: "log", label: "Log", count: (traffic.data?.blocked_hosts?.length ?? 0) + (traffic.data?.allowed_hosts?.length ?? 0) },
+          { id: "log", label: "Review", count: pendingCount },
           { id: "rules", label: "Rules", count: rules.data?.length ?? 0 },
         ]}
         active={view}
@@ -74,115 +68,27 @@ export function TrafficPage() {
 
       {view === "log" ? (
         <div className="flex flex-col gap-4">
-          <Panel
-            title="Proxy log"
-            actions={
-              <>
-                <Select
-                  value={sandboxFilter}
-                  onChange={(event) => setSandboxFilter(event.target.value)}
-                  className="w-48"
-                >
-                  <option value="">All sandboxes</option>
-                  {(sandboxes.data ?? []).map((sandbox) => (
-                    <option key={sandbox.name} value={sandbox.name}>
-                      {sandbox.name}
-                    </option>
-                  ))}
-                </Select>
-                <Button size="sm" variant="ghost" onClick={() => void traffic.refetch()} loading={traffic.isFetching}>
-                  Refresh
-                </Button>
-              </>
-            }
-            bodyClassName="p-0"
-          >
-            <div className="border-b border-border p-4">
-              <h3 className="mb-2 text-xs font-semibold tracking-wide text-faint uppercase">Blocked</h3>
-              <LogTable
-                entries={log.blocked}
-                busy={allow.isPending || deny.isPending}
-                busyHost={allow.variables?.host ?? deny.variables?.host}
-                onAllow={(entry) => allow.mutate(entry)}
-                onDeny={(entry) => deny.mutate(entry)}
-              />
-            </div>
-            <div className="p-4">
-              <h3 className="mb-2 text-xs font-semibold tracking-wide text-faint uppercase">Allowed</h3>
-              <LogTable entries={log.allowed} />
-            </div>
-          </Panel>
+          <div className="flex items-center justify-end">
+            <Select value={sandboxFilter} onChange={(event) => setSandboxFilter(event.target.value)} className="w-48" aria-label="Sandbox">
+              <option value="">All sandboxes</option>
+              {(sandboxes.data ?? []).map((sandbox) => (
+                <option key={sandbox.name} value={sandbox.name}>
+                  {sandbox.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <TrafficReview
+            log={log}
+            rules={rules.data ?? []}
+            onRefresh={() => void traffic.refetch()}
+            refreshing={traffic.isFetching}
+          />
         </div>
       ) : (
         <RulesView rules={rules.data ?? []} loading={rules.isLoading} onRemove={(rule) => removeRule.mutate(rule)} busyRule={removeRule.variables?.id} />
       )}
     </>
-  );
-}
-
-function LogTable({
-  entries,
-  onAllow,
-  onDeny,
-  busy,
-  busyHost,
-}: {
-  entries: LogEntry[];
-  onAllow?: (entry: LogEntry) => void;
-  onDeny?: (entry: LogEntry) => void;
-  busy?: boolean;
-  busyHost?: string;
-}) {
-  if (entries.length === 0) {
-    return <EmptyState title="Nothing recorded." className="py-6" />;
-  }
-  return (
-    <TableWrap className="border-0">
-      <thead>
-        <tr>
-          <TH>Host</TH>
-          <TH>Sandbox</TH>
-          <TH>Proxy</TH>
-          <TH>Rule</TH>
-          <TH>Count</TH>
-          <TH>Last seen</TH>
-          {onAllow ? <TH className="w-36" /> : null}
-        </tr>
-      </thead>
-      <tbody>
-        {entries.map((entry) => (
-          <TRow key={`${entry.vm_name}:${entry.host}`}>
-            <TD className="font-mono text-xs">{entry.host}</TD>
-            <TD>
-              <Link
-                to={`/sandboxes/${encodeURIComponent(entry.vm_name)}?tab=traffic`}
-                className="font-mono text-xs hover:text-accent"
-              >
-                {entry.vm_name}
-              </Link>
-            </TD>
-            <TD className="text-xs text-muted">{entry.proxy_type}</TD>
-            <TD className="font-mono text-xs text-muted">{entry.rule}</TD>
-            <TD className="text-xs">{entry.count_since}</TD>
-            <TD className="text-xs text-muted">{formatTime(entry.last_seen)}</TD>
-            {onAllow ? (
-              <TD className="text-right">
-                <span className="inline-flex gap-1">
-                  <Button size="sm" variant="ghost" disabled={busy} loading={busyHost === entry.host} onClick={() => onAllow(entry)}>
-                    Allow
-                  </Button>
-                  {onDeny ? (
-                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => onDeny(entry)}>
-                      Deny
-                    </Button>
-                  ) : null}
-                </span>
-              </TD>
-            ) : null}
-          </TRow>
-        ))}
-      </tbody>
-    </TableWrap>
   );
 }
 

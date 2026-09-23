@@ -593,3 +593,18 @@ export interface AppConfig {
   terminals: TerminalPrefs;
   notifications: boolean;
 }
+
+/** Shared instructions file mounted read-only in every sandbox. */
+export interface AgentsDoc {
+  path: string;
+  target: string;
+  content: string;
+  default: boolean;
+}
+
+/** Whether native notifications can be delivered, and why not. */
+export interface NotificationStatus {
+  available: boolean;
+  authorized: boolean;
+  reason?: string;
+}

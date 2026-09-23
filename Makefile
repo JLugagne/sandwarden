@@ -35,6 +35,11 @@ web-test: web-deps ## Run frontend unit tests
 build: web ## Compile the desktop binary into bin/sandwarden (frontend embedded)
 	$(GO) build -tags "$(TAGS),production" -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BINARY) .
 
+.PHONY: app-darwin
+app-darwin: ## Build bin/sandwarden.app on macOS (native notifications need the bundle)
+	$(MAKE) build TAGS=
+	build/darwin/bundle.sh $(BINARY) $(VERSION) bin
+
 .PHONY: image
 image: ## Build the Docker image (runtime stage)
 	$(DOCKER) build -t sandwarden:local .

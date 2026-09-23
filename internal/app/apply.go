@@ -127,6 +127,8 @@ func (a *App) applyLocked(ctx context.Context, name string) (ApplyReport, error)
 		report.Errors = append(report.Errors, result.Errors...)
 	}
 	report.Warnings = append(report.Warnings, a.createDrift(ctx, s)...)
+	_, agentErrs := a.syncAgentsFile(ctx, name)
+	report.Errors = append(report.Errors, agentErrs...)
 	if len(report.Errors) > 0 {
 		a.Notify(TopicSandbox(name))
 	}

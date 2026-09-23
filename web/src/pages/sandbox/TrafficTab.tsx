@@ -1,14 +1,13 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { queryKeys } from "@/store/realtime";
-import { formatTime } from "@/lib/format";
+import { TrafficReview } from "@/components/TrafficReview";
 import {
   Badge,
   Button,
   DecisionBadge,
-  EmptyState,
   Input,
   Panel,
   Select,
@@ -18,7 +17,7 @@ import {
   TH,
   TRow,
 } from "@/components/ui";
-import type { LogEntry, PolicyRule } from "@/types";
+import type { PolicyRule } from "@/types";
 
 export function TrafficTab({ name }: { name: string }) {
   const rules = useQuery({ queryKey: queryKeys.sandboxPolicy(name), queryFn: () => api.sandboxPolicy(name) });
@@ -38,23 +37,20 @@ export function TrafficTab({ name }: { name: string }) {
     success: "Rule removed",
     invalidate: [queryKeys.sandboxPolicy(name), queryKeys.policyRules],
   });
-  const allowHost = useApiMutation({
-    mutationFn: (entry: LogEntry) => api.sandboxPolicyAction(name, "allow", [entry.host]),
-    success: (_, entry) => `Allowed ${entry.host} in ${name}`,
-  });
 
-  const log = useMemo(
-    () => ({
-      blocked: (traffic.data?.blocked_hosts ?? []).filter((entry) => entry.vm_name === name),
-      allowed: (traffic.data?.allowed_hosts ?? []).filter((entry) => entry.vm_name === name),
-    }),
-    [traffic.data, name],
-  );
 
   const ruleRows = rules.data ?? [];
 
   return (
     <div className="flex flex-col gap-4">
+      <TrafficReview
+        log={traffic.data}
+        rules={ruleRows}
+        sandbox={name}
+        onRefresh={() => void traffic.refetch()}
+        refreshing={traffic.isFetching}
+      />
+
       <Panel
         title="Add a rule for this sandbox"
         description="Scoped rules only affect this sandbox; they cannot widen global policy."
@@ -136,76 +132,7 @@ export function TrafficTab({ name }: { name: string }) {
         )}
       </Panel>
 
-      <Panel
-        title="Proxy log"
-        description="Traffic seen by the egress proxy for this sandbox."
-        actions={
-          <Button size="sm" variant="ghost" onClick={() => void traffic.refetch()} loading={traffic.isFetching}>
-            Refresh
-          </Button>
-        }
-        bodyClassName="p-0"
-      >
-        <div className="border-b border-border p-4">
-          <h3 className="mb-2 text-xs font-semibold tracking-wide text-faint uppercase">Blocked</h3>
-          <LogTable entries={log.blocked} onAllow={(entry) => allowHost.mutate(entry)} busyHost={allowHost.variables?.host} />
-        </div>
-        <div className="p-4">
-          <h3 className="mb-2 text-xs font-semibold tracking-wide text-faint uppercase">Allowed</h3>
-          <LogTable entries={log.allowed} />
-        </div>
-      </Panel>
     </div>
   );
 }
 
-function LogTable({
-  entries,
-  onAllow,
-  busyHost,
-}: {
-  entries: LogEntry[];
-  onAllow?: (entry: LogEntry) => void;
-  busyHost?: string;
-}) {
-  if (entries.length === 0) {
-    return <EmptyState title="Nothing recorded." className="py-6" />;
-  }
-  return (
-    <TableWrap className="border-0">
-      <thead>
-        <tr>
-          <TH>Host</TH>
-          <TH>Proxy</TH>
-          <TH>Rule</TH>
-          <TH>Count</TH>
-          <TH>Last seen</TH>
-          {onAllow ? <TH className="w-20" /> : null}
-        </tr>
-      </thead>
-      <tbody>
-        {entries.map((entry) => (
-          <TRow key={entry.host}>
-            <TD className="font-mono text-xs">{entry.host}</TD>
-            <TD className="text-xs text-muted">{entry.proxy_type}</TD>
-            <TD className="font-mono text-xs text-muted">{entry.rule}</TD>
-            <TD className="text-xs">{entry.count_since}</TD>
-            <TD className="text-xs text-muted">{formatTime(entry.last_seen)}</TD>
-            {onAllow ? (
-              <TD className="text-right">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  loading={busyHost === entry.host}
-                  onClick={() => onAllow(entry)}
-                >
-                  Allow
-                </Button>
-              </TD>
-            ) : null}
-          </TRow>
-        ))}
-      </tbody>
-    </TableWrap>
-  );
-}

@@ -55,3 +55,20 @@ func (d *Desktop) ReadSandboxConfig(name string) ([]app.ConfigFile, error) {
 func (d *Desktop) ReadProfileConfig(slug string) ([]app.ConfigFile, error) {
 	return d.app.ReadProfileConfig(d.root, slug)
 }
+
+// AgentsFile returns the shared AGENTS.md mounted into every sandbox,
+// creating it from the built-in template on first use.
+func (d *Desktop) AgentsFile() (app.AgentsDoc, error) {
+	return d.app.AgentsFile(d.root)
+}
+
+// SaveAgentsFile replaces the shared AGENTS.md; running sandboxes see the new
+// content immediately.
+func (d *Desktop) SaveAgentsFile(content string) (app.AgentsDoc, error) {
+	return d.app.SaveAgentsFile(d.root, content)
+}
+
+// ResetAgentsFile restores the built-in AGENTS.md template.
+func (d *Desktop) ResetAgentsFile() (app.AgentsDoc, error) {
+	return d.app.ResetAgentsFile(d.root)
+}

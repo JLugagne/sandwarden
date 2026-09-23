@@ -1,8 +1,10 @@
 import { Desktop } from "@/bindings/github.com/JLugagne/sandwarden/internal/desktop";
-import { Notify } from "@/bindings/github.com/JLugagne/sandwarden/internal/desktop/notifier";
+import { Notify, RequestAuthorization, Status } from "@/bindings/github.com/JLugagne/sandwarden/internal/desktop/notifier";
 import type { ConfigStaleness, StaleKind } from "@/lib/config";
 import type {
+  AgentsDoc,
   AppConfig,
+  NotificationStatus,
   CacheInput,
   CacheView,
   CompleteSandboxRequest,
@@ -76,6 +78,12 @@ export const api = {
   checkUpdates: (force = false) => Desktop.CheckUpdates(force) as Promise<VersionInfo>,
   startDaemon: () => Desktop.StartDaemon(),
   notify: (title: string, body: string) => Notify(title, body),
+  notificationStatus: () => Status().then((status) => status as NotificationStatus),
+  requestNotificationAuthorization: () =>
+    RequestAuthorization().then((status) => status as NotificationStatus),
+  agentsFile: () => Desktop.AgentsFile().then((doc) => doc as AgentsDoc),
+  saveAgentsFile: (content: string) => Desktop.SaveAgentsFile(content).then((doc) => doc as AgentsDoc),
+  resetAgentsFile: () => Desktop.ResetAgentsFile().then((doc) => doc as AgentsDoc),
 
   getConfig: () => Desktop.GetConfig().then((config) => config as unknown as AppConfig),
   setConfig: (config: AppConfig) =>
@@ -205,6 +213,8 @@ export const api = {
   applyProfileCache: (name: string, cacheSlug: string) => Desktop.ApplyProfileCache(name, cacheSlug),
   addRule: (slug: string, body: { decision: string; pattern: string }) =>
     Desktop.AddRule(slug, body).then(() => undefined),
+  addRules: (slug: string, body: { decision: string; patterns: string[] }) =>
+    Desktop.AddRules(slug, body).then(() => undefined),
   removeRule: (slug: string, body: { decision: string; pattern: string }) =>
     Desktop.RemoveRule(slug, body),
 

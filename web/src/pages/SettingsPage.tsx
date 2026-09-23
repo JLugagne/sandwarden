@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { errorMessage, useApiMutation } from "@/hooks/useApiMutation";
 import { useToasts } from "@/components/Toaster";
@@ -38,11 +38,13 @@ import {
   Panel,
   Spinner,
   TableWrap,
+  Tabs,
   TD,
+  TextArea,
   TH,
   TRow,
 } from "@/components/ui";
-import type { CacheInput, CacheView } from "@/types";
+import type { CacheInput, CacheView, NotificationStatus } from "@/types";
 
 const GO_BUILD_CACHE = navigator.userAgent.includes("Mac") ? "~/Library/Caches/go-build" : "~/.cache/go-build";
 
@@ -131,6 +133,18 @@ export function SettingsPage() {
   const [deleting, setDeleting] = useState<CacheView | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const [highlight, setHighlight] = useState<string | null>(null);
+  const tab = settingsTab(searchParams.get("tab"), searchParams.has("cache"));
+  function setTab(next: string) {
+    setSearchParams(
+      (current) => {
+        const params = new URLSearchParams(current);
+        if (next === "general") params.delete("tab");
+        else params.set("tab", next);
+        return params;
+      },
+      { replace: true },
+    );
+  }
 
   const fleetDir = useQuery({ queryKey: queryKeys.fleetDir, queryFn: api.fleetDir, retry: 0 });
   const [reloadErrors, setReloadErrors] = useState<string[]>([]);
@@ -186,6 +200,31 @@ export function SettingsPage() {
       toast.push({ tone: "danger", title: "Settings not saved", body: errorMessage(error) });
     });
   }
+
+  const notificationStatus = useQuery({
+    queryKey: queryKeys.notificationStatus,
+    queryFn: api.notificationStatus,
+    retry: 0,
+  });
+  const queryClient = useQueryClient();
+
+  async function toggleNotifications(value: boolean) {
+    setNotificationsOn(value);
+    if (value) {
+      try {
+        queryClient.setQueryData(queryKeys.notificationStatus, await api.requestNotificationAuthorization());
+      } catch (error) {
+        void notificationStatus.refetch();
+        toast.push({ tone: "warning", title: "Notifications unavailable", body: errorMessage(error) });
+      }
+    }
+    persistConfig(setNotificationsEnabled(value), () => setNotificationsOn(!value));
+  }
+
+  const testNotification = useApiMutation({
+    mutationFn: () => api.notify("sandwarden", "Desktop notifications are working."),
+    success: "Test notification sent",
+  });
 
   function updateTerminalPrefs(next: TerminalPrefs) {
     const previous = terminalPrefs;
@@ -257,6 +296,7 @@ export function SettingsPage() {
       (current) => {
         const next = new URLSearchParams(current);
         next.delete("cache");
+        next.set("tab", "caches");
         return next;
       },
       { replace: true },
@@ -275,10 +315,14 @@ export function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        subtitle="Connection, shared cache directories, terminals and notifications."
+        subtitle="Connection, agent instructions, shared caches, terminals and configuration files."
       />
 
+      <Tabs tabs={SETTINGS_TABS} active={tab} onChange={setTab} className="mb-4" />
+
       <div className="flex flex-col gap-4">
+        {tab === "general" ? (
+          <>
         <Panel title="Connection">
           {health.isLoading ? (
             <Spinner />
@@ -322,44 +366,76 @@ export function SettingsPage() {
           ) : null}
         </Panel>
 
-        <Panel
-          title="Configuration files"
-          description="Sandbox, profile, cache, skill and kit definitions live as files under this directory. Reloading re-reads every file from disk and reports the ones that failed."
-          actions={
-            <Button loading={reload.isPending} onClick={() => reload.mutate()}>
-              <IconRefresh /> Reload from disk
-            </Button>
-          }
-        >
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-faint">Directory</span>
-              {fleetDir.isLoading ? (
-                <Spinner />
-              ) : fleetDir.data ? (
-                <>
-                  <code className="font-mono text-xs">{fleetDir.data}</code>
-                  <CopyButton value={fleetDir.data} />
-                </>
-              ) : (
-                <span className="text-sm text-danger">
-                  {fleetDir.error instanceof Error ? fleetDir.error.message : "configuration directory unavailable"}
-                </span>
-              )}
-            </div>
-            {reloadErrors.length > 0 ? (
-              <div className="flex flex-col gap-1 rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-sm text-danger">
-                <span>Some files could not be reloaded:</span>
-                <ul className="list-disc pl-5 font-mono text-xs">
-                  {reloadErrors.map((error) => (
-                    <li key={error}>{error}</li>
-                  ))}
-                </ul>
-              </div>
+        <Panel title="Notifications" description="Native desktop notifications for newly blocked hosts.">
+          <div className="flex items-center gap-3">
+            <CheckboxField
+              label="enable desktop notifications"
+              checked={notificationsOn}
+              onChange={(value) => toggleNotifications(value)}
+            />
+            <span className="text-xs text-muted">{notificationSummary(notificationsOn, notificationStatus.data)}</span>
+            {notificationsOn && notificationStatus.data?.authorized ? (
+              <Button size="sm" variant="ghost" loading={testNotification.isPending} onClick={() => testNotification.mutate()}>
+                Send a test
+              </Button>
             ) : null}
           </div>
         </Panel>
 
+        <Panel
+          title="About"
+          description="Version and update channel. Stable releases are published for Linux (amd64) and macOS (Apple silicon); the unstable pre-release follows the main branch."
+        >
+          {version.isLoading ? (
+            <Spinner />
+          ) : version.data ? (
+            <div className="flex flex-col gap-3">
+              <DescriptionList>
+                <Description label="Version">
+                  <span className="font-mono text-xs">{version.data.version}</span>
+                </Description>
+                <Description label="Latest stable">
+                  {updates.isLoading ? (
+                    <span className="text-xs text-muted">checking…</span>
+                  ) : updates.error ? (
+                    <span className="text-xs text-muted">unknown</span>
+                  ) : updates.data?.latest_version ? (
+                    <span className="font-mono text-xs">{updates.data.latest_version}</span>
+                  ) : (
+                    <span className="text-xs text-muted">none published yet</span>
+                  )}
+                </Description>
+              </DescriptionList>
+              {updates.data?.update_available ? (
+                <div className="flex flex-col gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-2 text-sm">
+                  <span>sandwarden {updates.data.latest_version} is available.</span>
+                  <CommandLine command="curl -fsSL https://raw.githubusercontent.com/JLugagne/sandwarden/main/install.sh | bash" />
+                  {updates.data.release_url ? (
+                    <a href={updates.data.release_url} className="text-xs text-accent hover:underline">
+                      Release notes
+                    </a>
+                  ) : null}
+                </div>
+              ) : null}
+              {updates.error ? (
+                <p className="text-xs text-muted">
+                  Update check failed: {updates.error instanceof Error ? updates.error.message : String(updates.error)}
+                </p>
+              ) : null}
+              <div>
+                <Button loading={checkUpdates.isPending} onClick={() => checkUpdates.mutate()}>
+                  Check for updates
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </Panel>
+          </>
+        ) : null}
+
+        {tab === "agents" ? <AgentsFilePanel /> : null}
+
+        {tab === "caches" ? (
         <div id="shared-caches">
           <Panel
             title="Shared caches"
@@ -436,7 +512,9 @@ export function SettingsPage() {
             )}
           </Panel>
         </div>
+        ) : null}
 
+        {tab === "terminals" ? (
         <Panel
           title="Terminals"
           description="Terminal emulators found on this host. The Open buttons next to sandbox commands launch the default one in the sandbox workspace."
@@ -508,71 +586,47 @@ export function SettingsPage() {
             </TableWrap>
           )}
         </Panel>
+        ) : null}
 
-        <Panel title="Notifications" description="Native desktop notifications for newly blocked hosts.">
-          <div className="flex items-center gap-3">
-            <CheckboxField
-              label="enable desktop notifications"
-              checked={notificationsOn}
-              onChange={(value) => {
-                setNotificationsOn(value);
-                persistConfig(setNotificationsEnabled(value), () => setNotificationsOn(!value));
-              }}
-            />
-            <span className="text-xs text-muted">
-              {notificationsOn ? "Sent by the desktop app." : "Not enabled."}
-            </span>
+        {tab === "files" ? (
+        <Panel
+          title="Configuration files"
+          description="Sandbox, profile, cache, skill and kit definitions live as files under this directory. Reloading re-reads every file from disk and reports the ones that failed."
+          actions={
+            <Button loading={reload.isPending} onClick={() => reload.mutate()}>
+              <IconRefresh /> Reload from disk
+            </Button>
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-faint">Directory</span>
+              {fleetDir.isLoading ? (
+                <Spinner />
+              ) : fleetDir.data ? (
+                <>
+                  <code className="font-mono text-xs">{fleetDir.data}</code>
+                  <CopyButton value={fleetDir.data} />
+                </>
+              ) : (
+                <span className="text-sm text-danger">
+                  {fleetDir.error instanceof Error ? fleetDir.error.message : "configuration directory unavailable"}
+                </span>
+              )}
+            </div>
+            {reloadErrors.length > 0 ? (
+              <div className="flex flex-col gap-1 rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-sm text-danger">
+                <span>Some files could not be reloaded:</span>
+                <ul className="list-disc pl-5 font-mono text-xs">
+                  {reloadErrors.map((error) => (
+                    <li key={error}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         </Panel>
-
-        <Panel
-          title="About"
-          description="Version and update channel. Stable releases are published for Linux (amd64) and macOS (Apple silicon); the unstable pre-release follows the main branch."
-        >
-          {version.isLoading ? (
-            <Spinner />
-          ) : version.data ? (
-            <div className="flex flex-col gap-3">
-              <DescriptionList>
-                <Description label="Version">
-                  <span className="font-mono text-xs">{version.data.version}</span>
-                </Description>
-                <Description label="Latest stable">
-                  {updates.isLoading ? (
-                    <span className="text-xs text-muted">checking…</span>
-                  ) : updates.error ? (
-                    <span className="text-xs text-muted">unknown</span>
-                  ) : updates.data?.latest_version ? (
-                    <span className="font-mono text-xs">{updates.data.latest_version}</span>
-                  ) : (
-                    <span className="text-xs text-muted">none published yet</span>
-                  )}
-                </Description>
-              </DescriptionList>
-              {updates.data?.update_available ? (
-                <div className="flex flex-col gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-2 text-sm">
-                  <span>sandwarden {updates.data.latest_version} is available.</span>
-                  <CommandLine command="curl -fsSL https://raw.githubusercontent.com/JLugagne/sandwarden/main/install.sh | bash" />
-                  {updates.data.release_url ? (
-                    <a href={updates.data.release_url} className="text-xs text-accent hover:underline">
-                      Release notes
-                    </a>
-                  ) : null}
-                </div>
-              ) : null}
-              {updates.error ? (
-                <p className="text-xs text-muted">
-                  Update check failed: {updates.error instanceof Error ? updates.error.message : String(updates.error)}
-                </p>
-              ) : null}
-              <div>
-                <Button loading={checkUpdates.isPending} onClick={() => checkUpdates.mutate()}>
-                  Check for updates
-                </Button>
-              </div>
-            </div>
-          ) : null}
-        </Panel>
+        ) : null}
       </div>
 
       <CacheDialog
@@ -725,5 +779,108 @@ function CacheDialog({
         </div>
       </div>
     </Modal>
+  );
+}
+
+const SETTINGS_TABS = [
+  { id: "general", label: "General" },
+  { id: "agents", label: "Agents" },
+  { id: "caches", label: "Caches" },
+  { id: "terminals", label: "Terminals" },
+  { id: "files", label: "Files" },
+];
+
+function settingsTab(requested: string | null, cacheLink: boolean): string {
+  if (cacheLink) return "caches";
+  return SETTINGS_TABS.some((item) => item.id === requested) ? (requested as string) : "general";
+}
+
+function notificationSummary(enabled: boolean, status: NotificationStatus | undefined): string {
+  if (!enabled) return "Not enabled.";
+  if (!status) return "Checking…";
+  if (!status.available) return `Unavailable: ${status.reason ?? "the platform backend did not start"}.`;
+  if (!status.authorized) return status.reason ?? "Not authorized by the system.";
+  return "Sent by the desktop app.";
+}
+
+function AgentsFilePanel() {
+  const queryClient = useQueryClient();
+  const doc = useQuery({ queryKey: queryKeys.agentsFile, queryFn: api.agentsFile });
+  const [draft, setDraft] = useState<string | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+
+  const content = draft ?? doc.data?.content ?? "";
+  const dirty = draft !== null && draft !== doc.data?.content;
+
+  const save = useApiMutation({
+    mutationFn: (next: string) => api.saveAgentsFile(next),
+    success: "AGENTS.md saved",
+    onSuccess: (saved) => {
+      queryClient.setQueryData(queryKeys.agentsFile, saved);
+      setDraft(null);
+    },
+  });
+  const reset = useApiMutation({
+    mutationFn: () => api.resetAgentsFile(),
+    success: "AGENTS.md reset to the default",
+    onSuccess: (saved) => {
+      queryClient.setQueryData(queryKeys.agentsFile, saved);
+      setDraft(null);
+      setConfirmReset(false);
+    },
+  });
+
+  return (
+    <Panel
+      title="Agent instructions"
+      description="One AGENTS.md shared by every sandbox, mounted read-only. Saving updates running sandboxes immediately."
+      actions={
+        doc.data ? <Badge tone={doc.data.default && !dirty ? "neutral" : "accent"}>{doc.data.default && !dirty ? "default" : "customized"}</Badge> : null
+      }
+    >
+      {doc.isLoading ? (
+        <Spinner />
+      ) : doc.error ? (
+        <p className="text-sm text-danger">{errorMessage(doc.error)}</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <DescriptionList>
+            <Description label="Host file">
+              <span className="font-mono text-xs">{doc.data?.path}</span>
+            </Description>
+            <Description label="In sandboxes">
+              <span className="font-mono text-xs">{doc.data?.target}</span>
+            </Description>
+          </DescriptionList>
+          <TextArea
+            aria-label="AGENTS.md content"
+            value={content}
+            onChange={(event) => setDraft(event.target.value)}
+            spellCheck={false}
+            className="min-h-96 font-mono text-xs"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="primary" disabled={!dirty} loading={save.isPending} onClick={() => save.mutate(content)}>
+              Save
+            </Button>
+            <Button variant="ghost" disabled={!dirty} onClick={() => setDraft(null)}>
+              Discard changes
+            </Button>
+            <Button variant="ghost" disabled={doc.data?.default && !dirty} onClick={() => setConfirmReset(true)}>
+              Reset to default
+            </Button>
+          </div>
+        </div>
+      )}
+      <ConfirmDialog
+        open={confirmReset}
+        title="Reset AGENTS.md?"
+        body="Your edits are replaced by the built-in template in every sandbox."
+        confirmLabel="Reset"
+        busy={reset.isPending}
+        onConfirm={() => reset.mutate()}
+        onClose={() => setConfirmReset(false)}
+      />
+    </Panel>
   );
 }
