@@ -66,7 +66,7 @@ test: web ## Run Go and frontend tests
 	cd web && $(NPM) test
 
 .PHONY: test-go
-test-go: ## Run Go tests only (uses the committed dist placeholder)
+test-go: ## Run Go tests only (no frontend build needed)
 	$(GO) test -tags $(TAGS) $(PKG)
 
 .PHONY: test-race

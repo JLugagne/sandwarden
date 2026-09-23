@@ -138,7 +138,7 @@ Other targets:
 | --- | --- |
 | `make check` | `fmt` + `vet` + Go tests + frontend tests |
 | `make test` | Go and frontend tests |
-| `make test-go` | Go tests only (uses the committed `web/dist` placeholder) |
+| `make test-go` | Go tests only (no frontend build needed) |
 | `make test-race` | Go tests with the race detector |
 | `make typecheck` | TypeScript typecheck |
 | `make bindings` | Regenerate `web/src/bindings` from the Go services |

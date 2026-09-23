@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"embed"
 	"fmt"
 	"log"
 	"os"
@@ -19,9 +18,6 @@ import (
 	"github.com/JLugagne/sandwarden/internal/store"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
-
-//go:embed all:web/dist
-var assets embed.FS
 
 var version = "dev"
 
