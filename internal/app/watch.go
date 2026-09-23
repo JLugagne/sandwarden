@@ -92,56 +92,110 @@ func (a *App) checkBlocked(ctx context.Context, seed bool) {
 
 func (a *App) watchEvents(ctx context.Context) {
 	types := []string{sbx.EventTypeLifecycle, sbx.EventTypePorts, sbx.EventTypePolicy}
+	failures := 0
 	for ctx.Err() == nil {
+		received := false
 		err := a.Sbx.StreamEvents(ctx, types, func(ev sbx.Event) error {
-			if strings.HasPrefix(ev.Type, "policy.") {
-				a.checkBlocked(ctx, false)
-				a.Notify(TopicPolicyRules)
-				if ev.SandboxName != "" {
-					a.Notify(TopicSandbox(ev.SandboxName))
-				}
-				return nil
-			}
-			if strings.HasPrefix(ev.Type, "sandbox.") {
-				a.Notify(TopicSandboxes)
-				if ev.SandboxName != "" {
-					a.Notify(TopicSandbox(ev.SandboxName))
-					if a.stateTransitioned(ctx, ev.SandboxName) {
-						go a.applyWhenReady(a.jobContext(), ev.SandboxName)
-					}
-				}
-				a.requestReconcile()
-			}
+			received = true
+			a.handleDaemonEvent(ctx, ev)
 			return nil
 		})
 		if ctx.Err() != nil {
 			return
 		}
-		_ = err
+		if err == nil || received {
+			failures = 0
+		} else {
+			failures++
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(2 * time.Second):
+		case <-time.After(eventRetryDelay(failures)):
 		}
 	}
 }
 
+func (a *App) handleDaemonEvent(ctx context.Context, ev sbx.Event) {
+	if strings.HasPrefix(ev.Type, "policy.") {
+		a.checkBlocked(ctx, false)
+		a.Notify(TopicPolicyRules)
+		if ev.SandboxName != "" {
+			a.Notify(TopicSandbox(ev.SandboxName))
+		}
+		return
+	}
+	if !strings.HasPrefix(ev.Type, "sandbox.") {
+		return
+	}
+	a.Notify(TopicSandboxes)
+	if ev.SandboxName != "" {
+		a.Notify(TopicSandbox(ev.SandboxName))
+	}
+	if ev.Type == sbx.EventTypePorts || strings.HasPrefix(ev.Type, sbx.EventTypePorts+".") {
+		return
+	}
+	if ev.SandboxName != "" && a.stateTransitioned(ctx, ev.SandboxName) && a.tryLead() {
+		go a.applyWhenReady(a.jobContext(), ev.SandboxName)
+	}
+	a.requestReconcile()
+}
+
+const (
+	eventRetryBase = 2 * time.Second
+	eventRetryMax  = 30 * time.Second
+)
+
+func eventRetryDelay(failures int) time.Duration {
+	if failures >= 5 {
+		return eventRetryMax
+	}
+	return min(eventRetryBase<<failures, eventRetryMax)
+}
+
+var reconcileDebounce = 2 * time.Second
+
 // reconcileLoop coalesces lifecycle bursts into single reconcile passes.
 func (a *App) reconcileLoop(ctx context.Context) {
+	defer a.stepDown()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-a.reconcileCh:
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(reconcileDebounce)
 			drain(a.reconcileCh)
 			if ctx.Err() != nil {
 				return
 			}
-			_ = a.Reconcile(ctx)
+			if !a.tryLead() {
+				continue
+			}
+			_ = a.reconcile(ctx, true)
 			a.Notify(TopicSandboxes)
 		}
 	}
+}
+
+func (a *App) tryLead() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.leader != nil {
+		return true
+	}
+	lock, err := fleet.AcquireLeaderLock(a.Fleet.Dir())
+	if err != nil {
+		return false
+	}
+	a.leader = lock
+	return true
+}
+
+func (a *App) stepDown() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_ = a.leader.Release()
+	a.leader = nil
 }
 
 // trafficSignature fingerprints the proxy log so unchanged polls do not push

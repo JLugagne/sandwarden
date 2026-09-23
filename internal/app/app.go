@@ -42,7 +42,9 @@ type App struct {
 	// and the stats sampler must not touch them: `sbx exec` starts a stopped
 	// sandbox, and the daemon keeps reporting a stopping sandbox as running until
 	// the stop completes, so any probe would boot it right back up.
-	stopping map[string]bool
+	stopping     map[string]bool
+	leader       *fleet.Lock
+	applyBackoff *backoff
 	// searchMu guards the lazily built search index.
 	searchMu sync.Mutex
 	// searchIdx caches the BM25 index over the skill and kit catalogs.
@@ -67,6 +69,7 @@ func New(client *sbx.Client, st *store.Store, fl *fleet.Fleet) *App {
 	a.Jobs = NewJobBroker(a.Hub)
 	a.notifier = newNotifier(a.publishTopic)
 	a.stats = newStatsTracker()
+	a.applyBackoff = newBackoff(reconcileRetryBase, reconcileRetryMax)
 	return a
 }
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -95,7 +94,7 @@ func (c *Client) CreateSandbox(ctx context.Context, opts CreateOptions, out io.W
 	if out == nil {
 		out = io.Discard
 	}
-	cmd := exec.CommandContext(ctx, BinaryPath(), args...)
+	cmd := cliCommand(ctx, args...)
 	cmd.Stdout = out
 	cmd.Stderr = out
 	if err := cmd.Run(); err != nil {

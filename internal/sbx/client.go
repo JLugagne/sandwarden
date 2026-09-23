@@ -13,6 +13,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -22,13 +24,19 @@ const (
 	// childWaitDelay bounds how long a cancelled or exited sbx child may keep
 	// its captured stdout/stderr pipes open (grandchildren inherit them).
 	childWaitDelay = 2 * time.Second
+
+	// MaxConcurrentCLI caps the short sbx CLI calls one Client runs at once, so
+	// background sweeps cannot flood the daemon with parallel sessions.
+	// Streaming commands (Exec, CreateSandbox, RunCLI) are not counted.
+	MaxConcurrentCLI = 3
 )
 
 // Client talks to the local sandboxd daemon over its unix socket using the
 // daemon's HTTP (REST) API.
 type Client struct {
-	http *http.Client
-	base string
+	http     *http.Client
+	base     string
+	cliSlots chan struct{}
 }
 
 // SocketPath resolves the sandboxd unix socket path. Precedence: DOCKER_SANDBOXES_API,
@@ -55,7 +63,11 @@ func New(socketPath string) *Client {
 			return d.DialContext(ctx, "unix", socketPath)
 		},
 	}
-	return &Client{http: &http.Client{Transport: tr}, base: "http://sandboxd"}
+	return &Client{
+		http:     &http.Client{Transport: tr},
+		base:     "http://sandboxd",
+		cliSlots: make(chan struct{}, MaxConcurrentCLI),
+	}
 }
 
 // APIError is a non-2xx response from the daemon, carrying its JSON message.
@@ -130,10 +142,12 @@ func decodeError(resp *http.Response) error {
 // output to a stream. It returns the captured output; on a non-zero exit the
 // error carries the CLI's own message so callers can surface it directly.
 func (c *Client) runCLI(ctx context.Context, stdin io.Reader, stream io.Writer, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, BinaryPath(), args...)
-	// A cancelled context kills the sbx process; helpers it spawned can keep
-	// the captured pipes open, so bound how long Wait lingers on them.
-	cmd.WaitDelay = childWaitDelay
+	release, err := c.acquireCLI(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	cmd := cliCommand(ctx, args...)
 	var buf bytes.Buffer
 	var out io.Writer = &buf
 	if stream != nil {
@@ -182,4 +196,68 @@ func decodeCLIJSON(raw string, v any) error {
 		offset += end + 1
 	}
 	return errors.New("no JSON value in output")
+}
+
+func (c *Client) acquireCLI(ctx context.Context) (func(), error) {
+	if c.cliSlots == nil {
+		return func() {}, nil
+	}
+	select {
+	case c.cliSlots <- struct{}{}:
+		return func() { <-c.cliSlots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func cliCommand(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, BinaryPath(), args...)
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = childWaitDelay
+	return cmd
+}
+
+type inspectCacheKey struct{}
+
+type inspectCache struct {
+	mu      sync.Mutex
+	details map[string]InspectDetail
+}
+
+// WithInspectCache returns a context under which InspectDetail and Mounts
+// reuse one `sbx inspect` per sandbox. Mount changes made through the Client
+// with that context drop the sandbox's entry; changes made elsewhere are not
+// seen, so scope it to one short pass.
+func WithInspectCache(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(inspectCacheKey{}).(*inspectCache); ok {
+		return ctx
+	}
+	return context.WithValue(ctx, inspectCacheKey{}, &inspectCache{details: map[string]InspectDetail{}})
+}
+
+func cachedInspect(ctx context.Context, sandbox string) (InspectDetail, bool) {
+	cache, ok := ctx.Value(inspectCacheKey{}).(*inspectCache)
+	if !ok {
+		return InspectDetail{}, false
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	detail, ok := cache.details[sandbox]
+	return detail, ok
+}
+
+func storeInspect(ctx context.Context, sandbox string, detail InspectDetail) {
+	if cache, ok := ctx.Value(inspectCacheKey{}).(*inspectCache); ok {
+		cache.mu.Lock()
+		cache.details[sandbox] = detail
+		cache.mu.Unlock()
+	}
+}
+
+func forgetInspect(ctx context.Context, sandbox string) {
+	if cache, ok := ctx.Value(inspectCacheKey{}).(*inspectCache); ok {
+		cache.mu.Lock()
+		delete(cache.details, sandbox)
+		cache.mu.Unlock()
+	}
 }

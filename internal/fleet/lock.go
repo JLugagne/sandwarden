@@ -20,6 +20,8 @@ var ErrLocked = errors.New("another sandwarden instance is applying changes, ret
 // so one lock covers sandboxes, profiles, caches, stores and config.yaml.
 const lockFile = ".lock"
 
+const leaderFile = ".leader"
+
 // lockPollInterval is how often a competing flock is retried before the
 // bounded wait expires.
 const lockPollInterval = 10 * time.Millisecond
@@ -45,6 +47,19 @@ type Lock struct {
 // the same goroutine would wait on its own holder, so locked entry points call
 // unlocked internals (see docs/locking.md).
 func AcquireLock(dir string, wait time.Duration) (*Lock, error) {
+	return acquire(dir, lockFile, wait)
+}
+
+// AcquireLeaderLock makes a single non-blocking attempt at the leader lock of
+// dir, which elects the one process allowed to run background reconciles. It
+// is independent of AcquireLock, so the leader can still take the fleet lock.
+// On contention the returned error matches ErrLocked; the lock is released by
+// Release or when the process exits.
+func AcquireLeaderLock(dir string) (*Lock, error) {
+	return acquire(dir, leaderFile, 0)
+}
+
+func acquire(dir, name string, wait time.Duration) (*Lock, error) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
 		dir = DefaultDir()
@@ -52,7 +67,7 @@ func AcquireLock(dir string, wait time.Duration) (*Lock, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create config dir: %w", err)
 	}
-	path := filepath.Join(dir, lockFile)
+	path := filepath.Join(dir, name)
 	key, err := filepath.Abs(path)
 	if err != nil {
 		key = path

@@ -88,6 +88,14 @@ func (h *Hub) Subscribe() (<-chan Event, func()) {
 	}
 }
 
+// Subscribers reports how many subscribers are registered, so producers can
+// skip building snapshots nobody receives.
+func (h *Hub) Subscribers() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.subs)
+}
+
 // Publish sends an event to all subscribers. A subscriber with a full buffer
 // is dropped rather than blocking the publisher.
 func (h *Hub) Publish(ev Event) {

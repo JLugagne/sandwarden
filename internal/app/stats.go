@@ -8,9 +8,12 @@ import (
 	"github.com/JLugagne/sandwarden/internal/sbx"
 )
 
-// statsInterval is how often running sandboxes are sampled. The probe execs
-// inside each sandbox, so keep it well above the daemon's own polling.
-const statsInterval = 5 * time.Second
+// statsInterval is how often running sandboxes are sampled while someone is
+// watching. The probe execs inside each sandbox, so keep it well above the
+// daemon's own polling.
+const statsInterval = 15 * time.Second
+
+const statsRetryMax = 5 * time.Minute
 
 // statsSampleTimeout bounds one resource probe. A sandbox whose sbx exec
 // wedges (its SSH layer hangs, the agent is unresponsive) must not keep the
@@ -29,13 +32,18 @@ type SandboxStats struct {
 // sandbox. CPU usage is a delta, so the first sample only seeds the counters
 // while memory is available immediately.
 type statsTracker struct {
-	mu    sync.Mutex
-	prev  map[string]sbx.StatsSample
-	usage map[string]SandboxStats
+	mu     sync.Mutex
+	prev   map[string]sbx.StatsSample
+	usage  map[string]SandboxStats
+	probes *backoff
 }
 
 func newStatsTracker() *statsTracker {
-	return &statsTracker{prev: map[string]sbx.StatsSample{}, usage: map[string]SandboxStats{}}
+	return &statsTracker{
+		prev:   map[string]sbx.StatsSample{},
+		usage:  map[string]SandboxStats{},
+		probes: newBackoff(statsInterval, statsRetryMax),
+	}
 }
 
 // record folds one sample in and returns the derived usage.
@@ -77,6 +85,7 @@ func (t *statsTracker) get(sandbox string) (SandboxStats, bool) {
 
 // retain forgets every sandbox that is no longer being sampled.
 func (t *statsTracker) retain(seen map[string]bool) {
+	t.probes.retain(seen)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for name := range t.prev {
@@ -121,12 +130,17 @@ func (a *App) sampleStats(ctx context.Context) {
 			continue
 		}
 		seen[sandbox.Name] = true
+		if !a.stats.probes.ready(sandbox.Name, time.Now()) {
+			continue
+		}
 		probeCtx, cancel := context.WithTimeout(ctx, statsSampleTimeout)
 		sample, err := a.Sbx.Stats(probeCtx, sandbox.Name)
 		cancel()
 		if err != nil {
+			a.stats.probes.fail(sandbox.Name, time.Now())
 			continue
 		}
+		a.stats.probes.succeed(sandbox.Name)
 		a.stats.record(sandbox.Name, sample, time.Now())
 		sampled = true
 	}
@@ -136,17 +150,24 @@ func (a *App) sampleStats(ctx context.Context) {
 	}
 }
 
-// watchStats samples running sandboxes on a timer until ctx is cancelled.
+// watchStats samples running sandboxes on a timer until ctx is cancelled,
+// skipping every tick nobody is subscribed to the hub.
 func (a *App) watchStats(ctx context.Context) {
 	ticker := time.NewTicker(statsInterval)
 	defer ticker.Stop()
-	a.sampleStats(ctx)
+	a.sampleStatsIfWatched(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			a.sampleStats(ctx)
+			a.sampleStatsIfWatched(ctx)
 		}
+	}
+}
+
+func (a *App) sampleStatsIfWatched(ctx context.Context) {
+	if a.Hub.Subscribers() > 0 {
+		a.sampleStats(ctx)
 	}
 }

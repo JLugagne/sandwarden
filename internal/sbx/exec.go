@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"strings"
 )
 
@@ -23,8 +22,7 @@ func (c *Client) Exec(ctx context.Context, sandbox string, command []string, out
 		out = io.Discard
 	}
 	args := append([]string{"exec", sandbox}, command...)
-	cmd := exec.CommandContext(ctx, BinaryPath(), args...)
-	cmd.WaitDelay = childWaitDelay
+	cmd := cliCommand(ctx, args...)
 	cmd.Stdout = out
 	cmd.Stderr = out
 	if err := cmd.Run(); err != nil {

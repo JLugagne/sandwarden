@@ -82,6 +82,7 @@ func (a *App) Apply(ctx context.Context, name string) (ApplyReport, error) {
 // applyLocked is the convergence pass itself; the caller holds the fleet lock,
 // so every helper it calls must stay lock-free.
 func (a *App) applyLocked(ctx context.Context, name string) (ApplyReport, error) {
+	ctx = sbx.WithInspectCache(ctx)
 	report := ApplyReport{Warnings: []string{}, Errors: []string{}}
 	s, ok := a.Fleet.SandboxByName(name)
 	if !ok {

@@ -50,6 +50,7 @@ func (c *Client) StopSandbox(ctx context.Context, name string) error {
 // the sbx CLI. The daemon's REST mounts endpoint only allow-lists the path; the
 // actual bind is performed by `sbx mount`. The sandbox must be running.
 func (c *Client) MountFolder(ctx context.Context, sandbox, hostPath string, readOnly bool) error {
+	defer forgetInspect(ctx, sandbox)
 	spec := hostPath
 	if readOnly {
 		// HOST:ro would parse as HOST:CTR_TARGET; the empty target selects the
@@ -84,6 +85,7 @@ func (c *Client) MountFolder(ctx context.Context, sandbox, hostPath string, read
 //  2. re-create the bind with `sbx mount` using the entry's own read-only mode,
 //     then revoke it.
 func (c *Client) UnmountFolder(ctx context.Context, sandbox, hostPath string, readOnly bool) error {
+	defer forgetInspect(ctx, sandbox)
 	_, umountErr := c.runCLI(ctx, nil, nil, "umount", sandbox, hostPath)
 	if umountErr == nil {
 		return nil
@@ -123,6 +125,7 @@ func (c *Client) Mounts(ctx context.Context, sandbox string) ([]MountInfo, error
 // MountFolderAt bind-mounts hostPath inside the sandbox at target. An empty
 // target uses the same-path convention. The sandbox must be running.
 func (c *Client) MountFolderAt(ctx context.Context, sandbox, hostPath, target string, readOnly bool) error {
+	defer forgetInspect(ctx, sandbox)
 	spec := hostPath
 	if target != "" {
 		spec += ":" + target
@@ -143,6 +146,7 @@ func (c *Client) MountFolderAt(ctx context.Context, sandbox, hostPath, target st
 // to re-creating and revoking the bind (matching UnmountFolder's deadlock
 // breaking).
 func (c *Client) UnmountFolderAt(ctx context.Context, sandbox, hostPath, target string) error {
+	defer forgetInspect(ctx, sandbox)
 	spec := hostPath
 	if target != "" {
 		spec += ":" + target
@@ -175,6 +179,9 @@ func (c *Client) MkdirAll(ctx context.Context, sandbox, path string) error {
 // InspectDetail parses `sbx inspect --json`, the only source of runtime mounts,
 // kit references and image metadata. The daemon exposes no REST equivalent.
 func (c *Client) InspectDetail(ctx context.Context, sandbox string) (InspectDetail, error) {
+	if detail, ok := cachedInspect(ctx, sandbox); ok {
+		return detail, nil
+	}
 	raw, err := c.runCLI(ctx, nil, nil, "inspect", sandbox, "--json")
 	if err != nil {
 		return InspectDetail{}, err
@@ -183,6 +190,7 @@ func (c *Client) InspectDetail(ctx context.Context, sandbox string) (InspectDeta
 	if err := decodeCLIJSON(raw, &detail); err != nil {
 		return InspectDetail{}, errors.Join(errors.New("decode inspect output"), err)
 	}
+	storeInspect(ctx, sandbox, detail)
 	return detail, nil
 }
 

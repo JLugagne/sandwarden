@@ -179,6 +179,9 @@ func (a *App) Notify(topic Topic) {
 // publishTopic builds and broadcasts the snapshot for one topic.
 // publishTopic builds and broadcasts the snapshot for one topic.
 func (a *App) publishTopic(topic Topic) {
+	if a.Hub.Subscribers() == 0 {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if name, ok := sandboxNameFromTopic(topic); ok {

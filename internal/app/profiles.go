@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/JLugagne/sandwarden/internal/fleet"
 	"github.com/JLugagne/sandwarden/internal/sbx"
@@ -272,6 +273,10 @@ func (a *App) UnapplyProfile(ctx context.Context, name, slug string) error {
 // Reconcile converges every sandbox onto its files and the global profiles,
 // and prunes ledger rows whose sandbox or profile is gone.
 func (a *App) Reconcile(ctx context.Context) error {
+	return a.reconcile(ctx, false)
+}
+
+func (a *App) reconcile(ctx context.Context, honourBackoff bool) error {
 	sandboxes, err := a.Sbx.ListSandboxes(ctx)
 	if err != nil {
 		return err
@@ -286,7 +291,18 @@ func (a *App) Reconcile(ctx context.Context) error {
 		}
 		cfg, hasConfig := a.Fleet.SandboxByName(s.Name)
 		if hasConfig && s.Running() {
-			if _, err := a.Apply(ctx, s.Name); err != nil {
+			if honourBackoff && !a.applyBackoff.ready(s.Name, time.Now()) {
+				continue
+			}
+			report, err := a.Apply(ctx, s.Name)
+			switch {
+			case errors.Is(err, fleet.ErrLocked):
+			case err != nil || len(report.Errors) > 0:
+				a.applyBackoff.fail(s.Name, time.Now())
+			default:
+				a.applyBackoff.succeed(s.Name)
+			}
+			if err != nil {
 				return err
 			}
 			continue
@@ -307,6 +323,7 @@ func (a *App) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+	a.applyBackoff.retain(exists)
 	return a.pruneLedger(ctx, exists)
 }
 

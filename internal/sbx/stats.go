@@ -26,8 +26,14 @@ awk '/^MemTotal/{print "mem_total", $2} /^MemAvailable/{print "mem_available", $
 awk '/^cpu /{print "cpu", $2, $3, $4, $5, $6, $7, $8, $9}' /proc/stat 2>/dev/null`
 
 // Stats samples CPU and memory usage of a running sandbox. The sandbox must be
-// running; the exec runs inside it, so it costs one child process per call.
+// running; the exec runs inside it, so it costs one child process per call and
+// counts against MaxConcurrentCLI.
 func (c *Client) Stats(ctx context.Context, sandbox string) (StatsSample, error) {
+	release, err := c.acquireCLI(ctx)
+	if err != nil {
+		return StatsSample{}, err
+	}
+	defer release()
 	var buf bytes.Buffer
 	if err := c.Exec(ctx, sandbox, []string{"sh", "-c", statsScript}, &buf); err != nil {
 		return StatsSample{}, err

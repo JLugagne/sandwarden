@@ -30,12 +30,16 @@ type fakeDaemon struct {
 	// stopDelay stalls a stop request so tests can observe the in-flight window.
 	stopDelay time.Duration
 	// stopEntered receives the name of each sandbox whose stop request arrived.
-	stopEntered chan string
+	stopEntered  chan string
+	events       []string
+	eventsServed chan struct{}
 }
 
 func (f *fakeDaemon) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/events":
+			f.handleEvents(w, r)
 		case r.Method == http.MethodGet && r.URL.Path == "/sandbox":
 			var out []map[string]string
 			for _, name := range f.sandboxes {
@@ -356,4 +360,43 @@ func (f *fakeDaemon) handleStart(w http.ResponseWriter, r *http.Request) {
 	f.statuses[name] = "running"
 	f.mu.Unlock()
 	_ = json.NewEncoder(w).Encode(map[string]string{"name": name, "status": "running"})
+}
+
+func (f *fakeDaemon) setEvents(lines ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = lines
+	f.eventsServed = make(chan struct{})
+}
+
+func (f *fakeDaemon) handleEvents(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	lines, served := f.events, f.eventsServed
+	f.eventsServed = nil
+	f.mu.Unlock()
+	for _, line := range lines {
+		_, _ = w.Write([]byte(line + "\n"))
+	}
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	if served != nil {
+		close(served)
+	}
+	<-r.Context().Done()
+}
+
+func (f *fakeDaemon) waitEventsServed(t *testing.T) {
+	t.Helper()
+	f.mu.Lock()
+	served := f.eventsServed
+	f.mu.Unlock()
+	if served == nil {
+		return
+	}
+	select {
+	case <-served:
+	case <-time.After(3 * time.Second):
+		t.Fatal("events were never streamed")
+	}
 }
