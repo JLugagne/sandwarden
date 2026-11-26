@@ -42,7 +42,7 @@ export function TrafficReview({
           allowed_hosts: (log?.allowed_hosts ?? []).filter((entry) => sandboxMatches(entry.vm_name, sandbox)),
         }
       : log;
-    return classifyTraffic(scoped, rules);
+    return classifyTraffic(scoped, rules, sandbox);
   }, [log, rules, sandbox]);
 
   const profiles = useQuery({ queryKey: queryKeys.profiles, queryFn: api.profiles });

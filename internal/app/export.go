@@ -50,6 +50,14 @@ type sbxenvKitEntry struct {
 	Args   yaml.MapSlice `yaml:"args,omitempty"`
 }
 
+// sbxenvKitArgValue is one resolved argument of a kit. scoped records whether
+// it names its kit, because a scoped value wins over a bare one for the same
+// key regardless of declaration order.
+type sbxenvKitArgValue struct {
+	value  string
+	scoped bool
+}
+
 // sbxenvAdditionalWorkspace is one extra workspace. The primary workspace is
 // the single workspace: block; additionalWorkspaces carries the rest.
 type sbxenvAdditionalWorkspace struct {
@@ -219,21 +227,17 @@ func sbxenvWorkspacesFrom(s *fleet.Sandbox, report *[]string) (*sbxenvWorkspace,
 		}
 		return nil, nil
 	}
-	primaryIdx := 0
-	for i, item := range writable {
-		if item.target == "" {
-			primaryIdx = i
-			break
-		}
-	}
-	primary := writable[primaryIdx]
+	// `sbx create` mounts the first workspace as the primary one, so the
+	// document's workspace block must mirror writable[0] even when it carries a
+	// custom target. A different choice would move clone and the primary mount.
+	primary := writable[0]
 	if primary.target != "" {
 		sbxenvUnsupported(report, fmt.Sprintf("create.workspaces[%d].target", primary.index), primary.target)
 	}
 	workspace := &sbxenvWorkspace{Path: primary.path, Clone: c.Clone}
 	var additional []sbxenvAdditionalWorkspace
 	for i, item := range writable {
-		if i == primaryIdx {
+		if i == 0 {
 			continue
 		}
 		additional = append(additional, sbxenvAdditionalWorkspace{Path: item.path, Target: item.target})
@@ -266,12 +270,29 @@ func sbxenvSplitWorkspace(raw string) (string, string, bool) {
 func sbxenvKits(c *fleet.SandboxCreate, report *[]string) []any {
 	refs := cleanStrings(c.Kits)
 	entries := make([]sbxenvKitEntry, len(refs))
-	argsByIndex := make([]yaml.MapSlice, len(refs))
+	argsByIndex := make([]map[string]sbxenvKitArgValue, len(refs))
+	for i := range argsByIndex {
+		argsByIndex[i] = map[string]sbxenvKitArgValue{}
+	}
 	for i, ref := range refs {
 		entries[i] = sbxenvKitEntry{Source: ref}
 		if sbxenvRelativeSource(ref) {
 			*report = append(*report, fmt.Sprintf("create.kits[%d] (%s): sbxenv resolves a relative kit source against the sbxenv.yaml file", i, ref))
 		}
+	}
+	// setArgs merges one argument into a kit, letting a scoped value win over a
+	// bare one and a later value win over an earlier one in the same scope. A
+	// duplicate collapses to one key; the report names the key but never the
+	// value, which may look like a secret.
+	setArg := func(argIndex, kitIndex int, name, value string, scoped bool) {
+		current, exists := argsByIndex[kitIndex][name]
+		if exists {
+			*report = append(*report, fmt.Sprintf("create.kitArgs[%d]: argument %s for kit %s overrides an earlier value", argIndex, name, refs[kitIndex]))
+			if current.scoped && !scoped {
+				return
+			}
+		}
+		argsByIndex[kitIndex][name] = sbxenvKitArgValue{value: value, scoped: scoped}
 	}
 	for i, raw := range c.KitArgs {
 		raw = strings.TrimSpace(raw)
@@ -294,7 +315,7 @@ func sbxenvKits(c *fleet.SandboxCreate, report *[]string) []any {
 				continue
 			}
 			for j := range entries {
-				argsByIndex[j] = append(argsByIndex[j], yaml.MapItem{Key: name, Value: value})
+				setArg(i, j, name, value, false)
 			}
 			continue
 		}
@@ -303,7 +324,7 @@ func sbxenvKits(c *fleet.SandboxCreate, report *[]string) []any {
 			sbxenvUnsupported(report, fmt.Sprintf("create.kitArgs[%d] (%s)", i, raw), fmt.Sprintf("no kit matching %q", selector))
 			continue
 		}
-		argsByIndex[index] = append(argsByIndex[index], yaml.MapItem{Key: name, Value: value})
+		setArg(i, index, name, value, true)
 	}
 	out := make([]any, len(entries))
 	for i := range entries {
@@ -311,7 +332,11 @@ func sbxenvKits(c *fleet.SandboxCreate, report *[]string) []any {
 			out[i] = entries[i].Source
 			continue
 		}
-		entries[i].Args = sortMapSlice(argsByIndex[i])
+		items := make(yaml.MapSlice, 0, len(argsByIndex[i]))
+		for name, arg := range argsByIndex[i] {
+			items = append(items, yaml.MapItem{Key: name, Value: arg.value})
+		}
+		entries[i].Args = sortMapSlice(items)
 		out[i] = entries[i]
 	}
 	return out

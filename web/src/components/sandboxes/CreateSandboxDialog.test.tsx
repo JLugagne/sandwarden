@@ -310,6 +310,106 @@ describe("new sandbox dialog", () => {
     expect(screen.getByText("Repository to sync")).toBeDefined();
   });
 
+  const argumentKit = kitItem({
+    kind: "mixin",
+    name: "postgres",
+    display_name: "Postgres",
+    ref: "git+https://github.com/acme/kits#dir=postgres",
+    spec: {
+      schemaVersion: "1",
+      kind: "mixin",
+      name: "postgres",
+      arguments: {
+        repo: { required: true, description: "Repository to sync" },
+        version: { default: "1.0" },
+      },
+    },
+  });
+
+  it("submits only kit arguments the user actually filled or changed", async () => {
+    vi.mocked(api.kitItems).mockResolvedValue([argumentKit]);
+    vi.mocked(api.createSandbox).mockClear();
+    renderDialog();
+
+    fireEvent.click(await screen.findByLabelText("Postgres"));
+    fireEvent.click(screen.getByRole("tab", { name: /Advanced/ }));
+
+    // The required argument starts empty and the optional one at its default.
+    fireEvent.change(screen.getByLabelText("Kit argument 1 value"), { target: { value: "acme/app" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => {
+      expect(api.createSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({ kit_args: ["postgres.repo=acme/app"] }),
+      );
+    });
+  });
+
+  it("blocks create while a required kit argument is empty", async () => {
+    vi.mocked(api.kitItems).mockResolvedValue([argumentKit]);
+    renderDialog();
+
+    fireEvent.click(await screen.findByLabelText("Postgres"));
+    fireEvent.click(screen.getByRole("tab", { name: /Advanced/ }));
+
+    expect(await screen.findByText(/Fill the required kit argument/)).toBeDefined();
+    expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("drops a manually added kit argument left without a value", async () => {
+    vi.mocked(api.createSandbox).mockClear();
+    renderDialog();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Advanced/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Add argument/ }));
+    fireEvent.change(screen.getByLabelText("Kit argument 1 name"), { target: { value: "repo" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(api.createSandbox).toHaveBeenCalled());
+    const payload = vi.mocked(api.createSandbox).mock.calls.at(-1)?.[0];
+    expect(payload?.kit_args).toEqual([]);
+  });
+
+  it("omits create fields whose features the installed sbx does not support", async () => {
+    vi.mocked(api.sbxCompatibility).mockResolvedValueOnce({
+      version: "v0.40.0",
+      known: true,
+      features: [
+        { id: "create.workspaces", label: "workspace mount target", min_version: "v0.40.0", supported: true },
+        { id: "create.kitArgs", label: "kit arguments", min_version: "v0.99.0", supported: false },
+        { id: "create.envFiles", label: "environment files", min_version: "v0.99.0", supported: false },
+        { id: "create.skills", label: "skills mode", min_version: "v0.99.0", supported: false },
+        { id: "create.staticMcp", label: "static MCP servers", min_version: "v0.99.0", supported: false },
+      ],
+    });
+    vi.mocked(api.kitItems).mockResolvedValue([argumentKit]);
+    vi.mocked(api.createSandbox).mockClear();
+    renderDialog();
+
+    fireEvent.click(await screen.findByLabelText("Postgres"));
+    fireEvent.click(await screen.findByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(api.createSandbox).toHaveBeenCalled());
+    const payload = vi.mocked(api.createSandbox).mock.calls.at(-1)?.[0];
+    expect(payload?.kit_args).toBeUndefined();
+    expect(payload?.env_files).toBeUndefined();
+    expect(payload?.skills_mode).toBeUndefined();
+    expect(payload?.static_mcp).toBeUndefined();
+  });
+
+  it("lays out the workspace host path as the flexible field before the container target", () => {
+    renderDialog();
+
+    const host = screen.getByLabelText("Host path");
+    const target = screen.getByLabelText("Container target");
+    expect(host.getAttribute("placeholder")).toBe("/absolute/host/path");
+    expect(target.getAttribute("placeholder")).toBe("container target (optional)");
+    expect(host.className).toContain("flex-1");
+    expect(host.className).toContain("min-w-0");
+    expect(target.className).toContain("w-56");
+    expect(host.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("passes a workspace container target", async () => {
     vi.mocked(api.createSandbox).mockClear();
     renderDialog();

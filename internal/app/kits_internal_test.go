@@ -7,9 +7,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JLugagne/sandwarden/internal/fleet"
 	"github.com/JLugagne/sandwarden/internal/store"
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 // registerKitStore registers a git-hosted kit store holding one discovered kit
@@ -158,6 +161,112 @@ func TestResolveKitRefMatchesAcrossURLSchemes(t *testing.T) {
 		if got := a.resolveKitRef(ref); got != local {
 			t.Fatalf("resolveKitRef(%q) = %q, want %q", ref, got, local)
 		}
+	}
+}
+
+// newKitRepoWithSpecs builds a local git repository holding one kit directory
+// per spec, keyed by relative path.
+func newKitRepoWithSpecs(t *testing.T, specs map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+	for rel, content := range specs {
+		kitDir := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(kitDir, 0o755); err != nil {
+			t.Fatalf("mkdir kit: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(kitDir, "spec.yaml"), []byte(content), 0o644); err != nil {
+			t.Fatalf("write spec: %v", err)
+		}
+	}
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+	if _, err := worktree.Add("."); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if _, err := worktree.Commit("seed", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.com", When: time.Now()},
+	}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return dir
+}
+
+// newKitInspectErrorsStub installs a fake sbx whose `kit inspect` fails with the
+// required-argument message for a kit directory ending in needs-args, and with
+// an invalid-manifest message for one ending in badkind.
+func newKitInspectErrorsStub(t *testing.T) {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "sbx")
+	script := `#!/bin/sh
+if [ "$1" = "kit" ] && [ "$2" = "inspect" ]; then
+  case "$4" in
+    */badkind)
+      printf '%s\n' 'ERROR: manifest: invalid kind "nonsense" (must be "sandbox" or "mixin")' >&2
+      exit 1
+      ;;
+    */needs-args)
+      printf '%s\n' 'ERROR: kit "'"$4"'" requires an argument:' >&2
+      printf '\n' >&2
+      printf '%s\n' '  repo  spec.yaml:7  GitHub repository to clone' >&2
+      printf '\n' >&2
+      printf '%s\n' 'Supply it and re-run:' >&2
+      printf '%s\n' '  --kit-arg repo=<value>' >&2
+      exit 1
+      ;;
+  esac
+  printf '%s\n' '{"schemaVersion":"2","kind":"mixin","name":"plain"}'
+  exit 0
+fi
+exit 0
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write kit inspect stub: %v", err)
+	}
+	t.Setenv("SBX_BINARY", bin)
+}
+
+func TestSyncKitStoreFallsBackOnlyForRequiredArguments(t *testing.T) {
+	ctx := context.Background()
+	a, _ := newTestApp(t)
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	newKitInspectErrorsStub(t)
+
+	src := newKitRepoWithSpecs(t, map[string]string{
+		"badkind":    "schemaVersion: \"2\"\nkind: nonsense\nname: bad-kind\n",
+		"needs-args": "schemaVersion: \"2\"\nkind: mixin\nname: needs-args\nargs:\n  repo:\n    required: true\n",
+	})
+	reg, err := a.Fleet.CreateStore(fleet.StoreReg{Kind: fleet.StoreKits, Name: "kitbox", URL: "file://" + src})
+	if err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+	if _, err := a.syncKitStore(ctx, reg); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	items, err := a.Store.ListKitItems(ctx, reg.Slug)
+	if err != nil {
+		t.Fatalf("list kit items: %v", err)
+	}
+	if len(items) != 1 || items[0].Name != "needs-args" {
+		t.Fatalf("catalog = %+v, want only the required-argument kit", items)
+	}
+
+	states, err := a.Store.StoreStates(ctx, string(fleet.StoreKits))
+	if err != nil {
+		t.Fatalf("store states: %v", err)
+	}
+	msg := states[reg.Slug].Error
+	if !strings.Contains(msg, "badkind") || !strings.Contains(msg, "invalid kind") {
+		t.Fatalf("the invalid kit was not reported: %q", msg)
+	}
+	if strings.Contains(msg, "requires an argument") {
+		t.Fatalf("the required-argument kit was skipped: %q", msg)
 	}
 }
 

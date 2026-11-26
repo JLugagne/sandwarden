@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 
@@ -56,6 +57,16 @@ func (a *App) AttachKit(ctx context.Context, name, ref string, kitArgs []string,
 			return result, fmt.Errorf("kit argument %q must be in name=value form", arg)
 		}
 	}
+	if err := checkKitArgSecrets(kitArgs); err != nil {
+		return result, err
+	}
+	// `sbx kit add` applies a bare name=value argument to the added kit only,
+	// but a later recreate passes it through `sbx create`, where it would reach
+	// every kit. Scope the persisted form to the attached kit's name.
+	var persistedArgs []string
+	if len(kitArgs) > 0 {
+		persistedArgs = scopeKitArgs(kitArgs, a.kitArgScopeName(ctx, ref))
+	}
 	if err := a.withFleetLock(func() error {
 		s, ok := a.Fleet.SandboxByName(name)
 		if !ok {
@@ -76,7 +87,7 @@ func (a *App) AttachKit(ctx context.Context, name, ref string, kitArgs []string,
 			s.App.Create = &fleet.SandboxCreate{}
 		}
 		s.App.Create.Kits = append(s.App.Create.Kits, ref)
-		s.App.Create.KitArgs = append(s.App.Create.KitArgs, kitArgs...)
+		s.App.Create.KitArgs = append(s.App.Create.KitArgs, persistedArgs...)
 		if err := a.Fleet.SaveSandbox(s); err != nil {
 			return fmt.Errorf("sbx added the kit but recording it in the sidecar failed: %w", err)
 		}
@@ -92,4 +103,45 @@ func (a *App) AttachKit(ctx context.Context, name, ref string, kitArgs []string,
 	a.Notify(TopicSandboxes)
 	a.Notify(TopicSandbox(name))
 	return result, nil
+}
+
+// kitArgScopeName returns the kit name sbx uses to scope an argument to one
+// kit: the name declared by the kit spec, read from the local checkout when the
+// reference is a directory, else through `sbx kit inspect`, falling back to the
+// name derived from the reference itself.
+func (a *App) kitArgScopeName(ctx context.Context, ref string) string {
+	if info, err := os.Stat(ref); err == nil && info.IsDir() {
+		if spec, err := parseKitSpec(ref); err == nil {
+			if name := strings.TrimSpace(spec.Name); name != "" {
+				return name
+			}
+		}
+	}
+	if spec, err := a.Sbx.KitInspect(ctx, ref); err == nil {
+		if name := strings.TrimSpace(spec.Name); name != "" {
+			return name
+		}
+	}
+	return sbxenvKitName(ref)
+}
+
+// scopeKitArgs rewrites bare name=value arguments to kitName.name=value so a
+// recreate applies them to the attached kit alone. An argument already scoped
+// (a dot before the first '=') is left untouched.
+func scopeKitArgs(kitArgs []string, kitName string) []string {
+	kitName = strings.TrimSpace(kitName)
+	out := make([]string, 0, len(kitArgs))
+	for _, arg := range kitArgs {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			continue
+		}
+		left, _, found := strings.Cut(arg, "=")
+		if !found || kitName == "" || strings.Contains(left, ".") {
+			out = append(out, arg)
+			continue
+		}
+		out = append(out, kitName+"."+arg)
+	}
+	return out
 }

@@ -251,6 +251,100 @@ func TestExportSbxenvMapsCloneToTheWorkspace(t *testing.T) {
 	}
 }
 
+func TestExportSbxenvMergesDuplicateKitArgs(t *testing.T) {
+	core := newExportApp(t)
+	spec := fleet.NewMixin("")
+	spec.Requires = &fleet.SpecRequires{Agent: "claude"}
+	if _, err := core.Fleet.CreateSandbox("merge-args", spec, fleet.SandboxApp{
+		Create: &fleet.SandboxCreate{
+			Kits:    []string{"./mykit"},
+			KitArgs: []string{"repo=a", "mykit.repo=b"},
+		},
+	}); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+	result, err := core.ExportSbxenv("merge-args")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	doc := string(result.Document)
+	if n := strings.Count(doc, "repo:"); n != 1 {
+		t.Fatalf("document carries %d repo keys, want 1:\n%s", n, doc)
+	}
+	if !strings.Contains(doc, "repo: b") {
+		t.Fatalf("scoped value did not win:\n%s", doc)
+	}
+	if strings.Contains(doc, "repo: a") {
+		t.Fatalf("bare value was not overridden:\n%s", doc)
+	}
+	var reported bool
+	for _, line := range result.Unsupported {
+		if strings.Contains(line, "repo") && strings.Contains(line, "overrides") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Fatalf("no report line for the overridden repo value:\n%s", strings.Join(result.Unsupported, "\n"))
+	}
+}
+
+func TestExportSbxenvKeepsLastDuplicateInTheSameScope(t *testing.T) {
+	core := newExportApp(t)
+	spec := fleet.NewMixin("")
+	spec.Requires = &fleet.SpecRequires{Agent: "claude"}
+	if _, err := core.Fleet.CreateSandbox("dup-args", spec, fleet.SandboxApp{
+		Create: &fleet.SandboxCreate{
+			Kits:    []string{"./mykit"},
+			KitArgs: []string{"repo=a", "repo=b"},
+		},
+	}); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+	result, err := core.ExportSbxenv("dup-args")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	doc := string(result.Document)
+	if n := strings.Count(doc, "repo:"); n != 1 {
+		t.Fatalf("document carries %d repo keys, want 1:\n%s", n, doc)
+	}
+	if !strings.Contains(doc, "repo: b") {
+		t.Fatalf("the later value did not win:\n%s", doc)
+	}
+}
+
+func TestExportSbxenvPrimaryWorkspaceIsFirstWritable(t *testing.T) {
+	core := newExportApp(t)
+	spec := fleet.NewMixin("")
+	spec.Requires = &fleet.SpecRequires{Agent: "claude"}
+	if _, err := core.Fleet.CreateSandbox("clone-first", spec, fleet.SandboxApp{
+		Create: &fleet.SandboxCreate{
+			Workspaces: []string{"/repo:/src", "/data"},
+			Clone:      true,
+		},
+	}); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+	result, err := core.ExportSbxenv("clone-first")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	doc := string(result.Document)
+	if !strings.Contains(doc, "path: /repo") {
+		t.Fatalf("workspace.path is not the first writable entry:\n%s", doc)
+	}
+	if !strings.Contains(doc, "path: /repo\n  clone: true") {
+		t.Fatalf("clone is not attached to the first writable entry:\n%s", doc)
+	}
+	if !strings.Contains(doc, "additionalWorkspaces:") || !strings.Contains(doc, "path: /data") {
+		t.Fatalf("the remaining workspace is not additional:\n%s", doc)
+	}
+	want := "create.workspaces[0].target cannot be expressed in sbxenv.yaml (/src)"
+	if !exportContains(result.Unsupported, want) {
+		t.Fatalf("primary workspace target not reported:\n%s", strings.Join(result.Unsupported, "\n"))
+	}
+}
+
 func TestSbxenvParsePort(t *testing.T) {
 	cases := []struct {
 		raw     string

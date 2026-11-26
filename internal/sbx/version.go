@@ -6,7 +6,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// defaultVersionTTL bounds how long the cached `sbx version` result is served
+// before it is re-read. It caps the window in which an sbx upgrade goes
+// unnoticed by a long-running process such as the desktop app.
+const defaultVersionTTL = 5 * time.Minute
 
 // Version is the parsed `sbx version` output. Known is false when the output
 // carries no recognizable semver, as dev builds that print a bare commit hash.
@@ -84,18 +90,49 @@ func (v Version) AtLeast(min string) bool {
 	}
 }
 
-// Version runs `sbx version` once per client and caches the parsed result. A
+// clock returns the time source the version cache trusts.
+func (c *Client) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+// cacheTTL returns how long a cached version stays valid.
+func (c *Client) cacheTTL() time.Duration {
+	if c.versionTTL > 0 {
+		return c.versionTTL
+	}
+	return defaultVersionTTL
+}
+
+// Version runs `sbx version` and caches the parsed result for cacheTTL. A
 // failure to run the CLI returns an unknown Version together with the error;
 // callers treat that as "allow every feature".
 func (c *Client) Version(ctx context.Context) (Version, error) {
 	c.versionMu.Lock()
 	if c.versionLoaded {
-		cached := c.version
-		c.versionMu.Unlock()
-		return cached, nil
+		age := c.clock().Sub(c.versionAt)
+		if age < c.cacheTTL() {
+			cached := c.version
+			c.versionMu.Unlock()
+			return cached, nil
+		}
 	}
 	c.versionMu.Unlock()
+	return c.loadVersion(ctx)
+}
 
+// RefreshVersion re-reads `sbx version`, bypassing and replacing the cache. Use
+// it when an incompatibility was just detected so an sbx upgrade picked up
+// since the cache was filled is not ignored until the TTL expires.
+func (c *Client) RefreshVersion(ctx context.Context) (Version, error) {
+	return c.loadVersion(ctx)
+}
+
+// loadVersion runs `sbx version` and stores the parsed result with its
+// timestamp.
+func (c *Client) loadVersion(ctx context.Context) (Version, error) {
 	raw, err := c.runCLI(ctx, nil, nil, "version")
 	if err != nil {
 		return Version{Raw: strings.TrimSpace(raw)}, err
@@ -103,6 +140,7 @@ func (c *Client) Version(ctx context.Context) (Version, error) {
 	parsed := ParseVersion(raw)
 	c.versionMu.Lock()
 	c.version = parsed
+	c.versionAt = c.clock()
 	c.versionLoaded = true
 	c.versionMu.Unlock()
 	return parsed, nil
@@ -113,6 +151,7 @@ func (c *Client) Version(ctx context.Context) (Version, error) {
 func (c *Client) ResetVersionCache() {
 	c.versionMu.Lock()
 	c.version = Version{}
+	c.versionAt = time.Time{}
 	c.versionLoaded = false
 	c.versionMu.Unlock()
 }

@@ -135,7 +135,14 @@ func (a *App) checkCreateEnvSecrets(req CreateRequest) error {
 			return &SecretValueError{Key: key, Reason: reason}
 		}
 	}
-	for _, arg := range req.Opts.KitArgs {
+	return checkKitArgSecrets(req.Opts.KitArgs)
+}
+
+// checkKitArgSecrets refuses kit arguments whose value looks like secret
+// material. Kit arguments are written in clear to the configuration directory,
+// so `sbx kit add` must apply the same guard as create.
+func checkKitArgSecrets(kitArgs []string) error {
+	for _, arg := range kitArgs {
 		arg = strings.TrimSpace(arg)
 		if arg == "" {
 			continue

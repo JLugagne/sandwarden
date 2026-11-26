@@ -1,6 +1,12 @@
 package sbx
 
-import "testing"
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
 
 func TestParseVersion(t *testing.T) {
 	tests := []struct {
@@ -51,6 +57,79 @@ func TestVersionString(t *testing.T) {
 	}
 	if got := (Version{Raw: "dev-abc"}).String(); got != "dev-abc" {
 		t.Fatalf("unknown String = %q, want dev-abc", got)
+	}
+}
+
+// newVersionSbx installs a fake sbx answering `version` with the contents of
+// FAKE_SBX_VERSION_FILE at call time, so one test can change the reported
+// version between calls.
+func newVersionSbx(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	versionFile := filepath.Join(dir, "version")
+	if err := os.WriteFile(versionFile, []byte("sbx version: v0.43.0 abc"), 0o644); err != nil {
+		t.Fatalf("seed version: %v", err)
+	}
+	bin := filepath.Join(dir, "sbx")
+	script := "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then\n  cat \"$FAKE_SBX_VERSION_FILE\"\n  exit 0\nfi\nexit 0\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake sbx: %v", err)
+	}
+	t.Setenv(envBinary, bin)
+	t.Setenv("FAKE_SBX_VERSION_FILE", versionFile)
+	return versionFile
+}
+
+func setVersionOutput(t *testing.T, path, output string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(output), 0o644); err != nil {
+		t.Fatalf("write version: %v", err)
+	}
+}
+
+func TestVersionCacheExpiresAfterTTL(t *testing.T) {
+	versionFile := newVersionSbx(t)
+	client := New("/nonexistent.sock")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	client.now = func() time.Time { return now }
+
+	first, err := client.Version(context.Background())
+	if err != nil {
+		t.Fatalf("version: %v", err)
+	}
+	if got := first.String(); got != "v0.43.0" {
+		t.Fatalf("first version = %q, want v0.43.0", got)
+	}
+
+	setVersionOutput(t, versionFile, "sbx version: v0.54.0 abc")
+
+	now = now.Add(time.Minute)
+	if got, _ := client.Version(context.Background()); got.String() != "v0.43.0" {
+		t.Fatalf("version switched to %q before the TTL expired", got)
+	}
+
+	now = now.Add(defaultVersionTTL)
+	if got, _ := client.Version(context.Background()); got.String() != "v0.54.0" {
+		t.Fatalf("cache did not expire: got %q, want v0.54.0", got)
+	}
+}
+
+func TestRefreshVersionBypassesTheCache(t *testing.T) {
+	versionFile := newVersionSbx(t)
+	client := New("/nonexistent.sock")
+
+	if got, _ := client.Version(context.Background()); got.String() != "v0.43.0" {
+		t.Fatalf("version = %q, want v0.43.0", got)
+	}
+	setVersionOutput(t, versionFile, "sbx version: v0.54.0 abc")
+	if got, _ := client.Version(context.Background()); got.String() != "v0.43.0" {
+		t.Fatalf("cached version changed early: %q", got)
+	}
+	if got, err := client.RefreshVersion(context.Background()); err != nil || got.String() != "v0.54.0" {
+		t.Fatalf("RefreshVersion = %q, %v; want v0.54.0", got, err)
+	}
+	if got, _ := client.Version(context.Background()); got.String() != "v0.54.0" {
+		t.Fatalf("refreshed version was not cached: %q", got)
 	}
 }
 

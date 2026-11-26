@@ -26,7 +26,7 @@ import {
 import { cn } from "@/lib/cn";
 import { splitList } from "@/lib/format";
 import { agentMenuGroups } from "@/lib/catalog";
-import type { KitItemView, Template, WorkspaceInput } from "@/types";
+import type { CreateSandboxRequest, KitItemView, Template, WorkspaceInput } from "@/types";
 
 const AGENTS = [
   "claude",
@@ -52,6 +52,9 @@ interface KitArgRow {
   required?: boolean;
   description?: string;
   auto?: boolean;
+  /** Declared default of an auto row; an unchanged value is not submitted so
+   * the kit keeps handling its own default (and required/enum/pattern checks). */
+  defaultValue?: string;
 }
 
 const SKILLS_MODES = [
@@ -224,6 +227,17 @@ export function CreateSandboxDialog({
   const created = jobId !== null && job.status === "done";
   const logRef = useStickToBottom<HTMLPreElement>(job.output);
   const envIssue = useMemo(() => firstSecretEnvEntry(env), [env]);
+  // Required kit arguments must be filled before creating; when the installed
+  // sbx cannot take kit arguments they are not sent at all, so they cannot
+  // block the create either.
+  const missingRequiredKitArgs = useMemo(
+    () =>
+      kitArgsUnsupported
+        ? []
+        : kitArgs.filter((row) => row.required && row.key.trim() !== "" && row.value.trim() === ""),
+    [kitArgs, kitArgsUnsupported],
+  );
+  const missingRequiredKitArgKeys = missingRequiredKitArgs.map((row) => row.key.trim());
 
   // Prefill one row per argument the selected kits declare, scoped as
   // <kit>.<arg> so it applies to that kit only, and keep manually added rows.
@@ -241,6 +255,7 @@ export function CreateSandboxDialog({
             required: Boolean(arg.required),
             description: arg.description ?? "",
             auto: true,
+            defaultValue: arg.default ?? "",
           });
         }
       }
@@ -328,38 +343,54 @@ export function CreateSandboxDialog({
   }
 
   async function submit() {
-    if (busy || created) return;
+    if (busy || created || missingRequiredKitArgs.length > 0) return;
     setBusy(true);
     const id = newJobId();
     jobHub.reset(id);
     reported.current = null;
     setJobId(id);
+    // A row is only submitted when the user actually provided something: empty
+    // rows and auto rows left at the kit's declared default would override the
+    // kit's own default handling (and fail its required/enum/pattern checks).
+    const submittedKitArgs = kitArgs
+      .map((row) => ({ key: row.key.trim(), value: row.value, auto: row.auto, defaultValue: row.defaultValue }))
+      .filter((row) => row.key !== "" && row.value.trim() !== "")
+      .filter((row) => !row.auto || row.value.trim() !== (row.defaultValue ?? "").trim())
+      .map((row) => `${row.key}=${row.value}`);
+
+    const payload: CreateSandboxRequest = {
+      agent,
+      workspaces: workspaces
+        .map((workspace) => {
+          const path = workspace.path.trim();
+          const entry: WorkspaceInput = { path, read_only: workspace.read_only };
+          // A disabled target cannot be changed, so never send a stale one.
+          if (!workspacesUnsupported && workspace.target) entry.target = workspace.target.trim();
+          return entry;
+        })
+        .filter((workspace) => workspace.path !== ""),
+      name: name.trim() || undefined,
+      cpus: Number(cpus) || 0,
+      memory: memory.trim() || undefined,
+      profile: profile.trim() || undefined,
+      template: template.trim() || undefined,
+      kits: splitList(kits),
+      publish: splitList(publish),
+      env: splitList(env),
+      deny_network: splitList(denyNetwork),
+      clone,
+      attach_caches: attachCaches,
+      job_id: id,
+    };
+    // Fields disabled by an unsupported installed sbx are omitted entirely so
+    // the backend never refuses the create on a flag it cannot run.
+    if (!kitArgsUnsupported) payload.kit_args = submittedKitArgs;
+    if (!envFilesUnsupported) payload.env_files = splitList(envFiles);
+    if (!skillsUnsupported) payload.skills_mode = skillsMode || undefined;
+    if (!staticMcpUnsupported) payload.static_mcp = splitList(staticMcp);
+
     try {
-      await api.createSandbox({
-        agent,
-        workspaces: workspaces
-          .map((workspace) => ({ ...workspace, path: workspace.path.trim() }))
-          .filter((workspace) => workspace.path !== ""),
-        name: name.trim() || undefined,
-        cpus: Number(cpus) || 0,
-        memory: memory.trim() || undefined,
-        profile: profile.trim() || undefined,
-        template: template.trim() || undefined,
-        kits: splitList(kits),
-        kit_args: kitArgs
-          .map((row) => ({ key: row.key.trim(), value: row.value }))
-          .filter((row) => row.key !== "")
-          .map((row) => `${row.key}=${row.value}`),
-        env_files: splitList(envFiles),
-        skills_mode: skillsMode || undefined,
-        static_mcp: splitList(staticMcp),
-        publish: splitList(publish),
-        env: splitList(env),
-        deny_network: splitList(denyNetwork),
-        clone,
-        attach_caches: attachCaches,
-        job_id: id,
-      });
+      await api.createSandbox(payload);
     } catch (error) {
       setBusy(false);
       toast.push({ tone: "danger", title: "Create failed", body: errorMessage(error) });
@@ -383,7 +414,12 @@ export function CreateSandboxDialog({
             <Button variant="ghost" onClick={close} disabled={busy}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={submit} loading={busy} disabled={!agent || envIssue !== null || staticMcpNoneTyped}>
+            <Button
+              variant="primary"
+              onClick={submit}
+              loading={busy}
+              disabled={!agent || envIssue !== null || staticMcpNoneTyped || missingRequiredKitArgs.length > 0}
+            >
               Create
             </Button>
           </>
@@ -467,6 +503,7 @@ export function CreateSandboxDialog({
               {workspaces.map((workspace, index) => (
                 <div key={index} className="flex items-center gap-2">
                   <Input
+                    aria-label="Host path"
                     value={workspace.path}
                     onChange={(event) =>
                       setWorkspaces((current) =>
@@ -474,9 +511,10 @@ export function CreateSandboxDialog({
                       )
                     }
                     placeholder="/absolute/host/path"
-                    className="flex-1 font-mono text-xs"
+                    className="min-w-0 flex-1 font-mono text-xs"
                   />
                   <Input
+                    aria-label="Container target"
                     value={workspace.target ?? ""}
                     onChange={(event) =>
                       setWorkspaces((current) =>
@@ -484,7 +522,7 @@ export function CreateSandboxDialog({
                       )
                     }
                     placeholder="container target (optional)"
-                    className="w-44 font-mono text-xs"
+                    className="w-56 min-w-0 shrink font-mono text-xs"
                     disabled={workspacesUnsupported}
                     title={workspacesUnsupported ? unsupportedHint("create.workspaces") : undefined}
                   />
@@ -703,6 +741,12 @@ export function CreateSandboxDialog({
                   {row.description ? <span className="pl-1 text-2xs text-faint">{row.description}</span> : null}
                 </div>
               ))}
+              {missingRequiredKitArgs.length > 0 ? (
+                <p className="text-2xs text-danger" role="alert">
+                  Fill the required kit argument{missingRequiredKitArgs.length === 1 ? "" : "s"}:{" "}
+                  {missingRequiredKitArgKeys.join(", ")}
+                </p>
+              ) : null}
               <div>
                 <Button
                   size="sm"

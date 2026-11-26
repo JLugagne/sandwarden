@@ -47,7 +47,10 @@ export function TrafficPage() {
       allowed_hosts: (traffic.data?.allowed_hosts ?? []).filter(matches),
     };
   }, [traffic.data, sandboxFilter]);
-  const pendingCount = useMemo(() => classifyTraffic(traffic.data, rules.data ?? []).pending.length, [traffic.data, rules.data]);
+  const pendingCount = useMemo(
+    () => classifyTraffic(log, rules.data ?? [], sandboxFilter || undefined).pending.length,
+    [log, rules.data, sandboxFilter],
+  );
 
   return (
     <>

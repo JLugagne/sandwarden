@@ -93,8 +93,10 @@ func TestKitAddPassesKitArgs(t *testing.T) {
 	if !ok || s.App.Create == nil {
 		t.Fatal("sandbox alpha missing after kit add")
 	}
-	if len(s.App.Create.KitArgs) != 1 || s.App.Create.KitArgs[0] != "repo=acme/app" {
-		t.Fatalf("create.kitArgs = %v, want [repo=acme/app]", s.App.Create.KitArgs)
+	// A bare argument is scoped to the attached kit on disk, so a later
+	// recreate does not leak it to every kit.
+	if len(s.App.Create.KitArgs) != 1 || s.App.Create.KitArgs[0] != "mcp-postgres.repo=acme/app" {
+		t.Fatalf("create.kitArgs = %v, want [mcp-postgres.repo=acme/app]", s.App.Create.KitArgs)
 	}
 }
 

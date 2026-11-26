@@ -143,11 +143,11 @@ func (a *KitArgument) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	var raw struct {
-		Default     any      `json:"default,omitempty"`
-		Required    bool     `json:"required,omitempty"`
-		Description string   `json:"description,omitempty"`
-		Enum        []string `json:"enum,omitempty"`
-		Pattern     string   `json:"pattern,omitempty"`
+		Default     json.RawMessage `json:"default,omitempty"`
+		Required    bool            `json:"required,omitempty"`
+		Description string          `json:"description,omitempty"`
+		Enum        []string        `json:"enum,omitempty"`
+		Pattern     string          `json:"pattern,omitempty"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -156,11 +156,29 @@ func (a *KitArgument) UnmarshalJSON(data []byte) error {
 	a.Description = raw.Description
 	a.Enum = raw.Enum
 	a.Pattern = raw.Pattern
-	if raw.Default != nil {
-		str := fmt.Sprint(raw.Default)
-		a.Default = &str
+	if def, ok := kitArgDefaultText(raw.Default); ok {
+		a.Default = &def
 	}
 	return nil
+}
+
+// kitArgDefaultText renders a declared default without losing its literal form:
+// a string is unquoted, a number keeps its exact JSON text (so 1000000 stays
+// 1000000 rather than becoming 1e+06), and a boolean becomes "true"/"false".
+// null and structured values yield ok=false, leaving the default unset.
+func kitArgDefaultText(raw json.RawMessage) (string, bool) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return "", false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, true
+	}
+	if trimmed[0] == '{' || trimmed[0] == '[' {
+		return "", false
+	}
+	return trimmed, true
 }
 
 // KitInspect loads a kit artifact through `sbx kit inspect --json`. The

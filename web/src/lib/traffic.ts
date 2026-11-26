@@ -58,7 +58,12 @@ function decisionOf(rules: PolicyRule[], entry: LogEntry): "allow" | "deny" | nu
   return allowed ? "allow" : null;
 }
 
-export function classifyTraffic(log: PolicyLog | undefined, rules: PolicyRule[]): TrafficView {
+/**
+ * Splits a proxy log into pending / denied / allowed. When `sandbox` is given
+ * the view is scoped to that sandbox: other sandboxes' rules are ignored while
+ * global rules still apply. Without a scope every rule is considered.
+ */
+export function classifyTraffic(log: PolicyLog | undefined, rules: PolicyRule[], sandbox?: string): TrafficView {
   const view: TrafficView = { pending: [], denied: [], allowed: [] };
   const allowed = new Map<string, LogEntry>();
   const denied = new Map<string, LogEntry>();
@@ -78,10 +83,15 @@ export function classifyTraffic(log: PolicyLog | undefined, rules: PolicyRule[])
   for (const rule of rules) {
     if (rule.status && (rule.status.toLowerCase() === "disabled" || rule.status.toLowerCase() === "inactive")) continue;
     if (!rule.decision.toLowerCase().includes("deny")) continue;
+    // A scoped view only surfaces rules global to every sandbox or attached to
+    // the sandbox being viewed, never another sandbox's rules.
+    if (sandbox && rule.sandbox_id && !sandboxMatches(rule.sandbox_id, sandbox)) continue;
     for (const res of rule.resources ?? []) {
       if (res === "*" || res === "**") continue;
       const host = bareHost(res);
-      if (!host) continue;
+      // Wildcard patterns are not concrete hosts: listing them in a Host
+      // column would read as a recorded host instead of a policy pattern.
+      if (!host || host.includes("*")) continue;
       const alreadyCovered = [...denied.values()].some(
         (e) => hostMatches(res, e.host) && (!rule.sandbox_id || sandboxMatches(e.vm_name, rule.sandbox_id)),
       );

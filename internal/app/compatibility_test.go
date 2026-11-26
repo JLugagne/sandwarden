@@ -111,6 +111,40 @@ func TestAttachKitAllowsKitArgsOnUnknownSbx(t *testing.T) {
 	}
 }
 
+func TestFeatureChecksReReadTheVersionOnIncompatibility(t *testing.T) {
+	cases := []struct {
+		name  string
+		check func(*App) error
+	}{
+		{"create", func(a *App) error {
+			return a.checkCreateFeatures(context.Background(), sbx.CreateOptions{Workspaces: []string{"/host:/srv"}})
+		}},
+		{"kit add", func(a *App) error {
+			return a.checkKitAddFeatures(context.Background(), []string{"repo=acme/app"})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			a, _ := newTestApp(t)
+			newFakeSbx(t)
+			t.Setenv("FAKE_SBX_VERSION", "sbx version: v0.43.0 abc")
+
+			// Prime the cache with the old version, as a long-running desktop app would.
+			if got, _ := a.Sbx.Version(ctx); got.String() != "v0.43.0" {
+				t.Fatalf("primed version = %q, want v0.43.0", got)
+			}
+
+			// sbx is upgraded while the process stays alive; the cache still holds v0.43.0.
+			t.Setenv("FAKE_SBX_VERSION", "sbx version: v0.51.0 abc")
+
+			if err := tc.check(a); err != nil {
+				t.Fatalf("stale cached version blocked a supported feature: %v", err)
+			}
+		})
+	}
+}
+
 func TestSandboxCompatibilityReportsMessages(t *testing.T) {
 	a, _ := newTestApp(t)
 	newFakeSbx(t)

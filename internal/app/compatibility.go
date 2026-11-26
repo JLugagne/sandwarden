@@ -29,6 +29,12 @@ func (a *App) SandboxCompatibility(ctx context.Context, s *fleet.Sandbox) []stri
 		return nil
 	}
 	v, _ := a.Sbx.Version(ctx)
+	bad := sbx.Incompatible(v, required)
+	if len(bad) == 0 {
+		return nil
+	}
+	// The cache may predate an sbx upgrade: re-read once before reporting.
+	v, _ = a.Sbx.RefreshVersion(ctx)
 	return sbx.Messages(v, sbx.Incompatible(v, required))
 }
 
@@ -41,6 +47,12 @@ func (a *App) checkCreateFeatures(ctx context.Context, opts sbx.CreateOptions) e
 		return nil
 	}
 	v, _ := a.Sbx.Version(ctx)
+	if err := sbx.FormatIncompatible(v, required); err == nil {
+		return nil
+	}
+	// An incompatibility may be a stale cache: sbx is upgraded while the process
+	// runs. Re-read the version once before refusing.
+	v, _ = a.Sbx.RefreshVersion(ctx)
 	return sbx.FormatIncompatible(v, required)
 }
 
@@ -53,5 +65,11 @@ func (a *App) checkKitAddFeatures(ctx context.Context, kitArgs []string) error {
 		return nil
 	}
 	v, _ := a.Sbx.Version(ctx)
+	if err := sbx.FormatIncompatible(v, required); err == nil {
+		return nil
+	}
+	// An incompatibility may be a stale cache: sbx is upgraded while the process
+	// runs. Re-read the version once before refusing.
+	v, _ = a.Sbx.RefreshVersion(ctx)
 	return sbx.FormatIncompatible(v, required)
 }

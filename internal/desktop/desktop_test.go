@@ -148,6 +148,42 @@ func TestListSandboxes(t *testing.T) {
 	}
 }
 
+func TestSbxCompatibilityAlwaysRefreshes(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "fake-sbx")
+	content := "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then printf '%s\\n' \"$FAKE_SBX_VERSION\"; fi\nexit 0\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatalf("write fake sbx: %v", err)
+	}
+	t.Setenv("SBX_BINARY", script)
+	t.Setenv("FAKE_SBX_VERSION", "sbx version: v0.43.0 abc")
+
+	d, _, _ := newTestDesktop(t)
+
+	first, err := d.SbxCompatibility()
+	if err != nil {
+		t.Fatalf("compatibility: %v", err)
+	}
+	if first.Version != "v0.43.0" {
+		t.Fatalf("first version = %q, want v0.43.0", first.Version)
+	}
+
+	// The user upgrades sbx while the app keeps running.
+	t.Setenv("FAKE_SBX_VERSION", "sbx version: v0.54.0 abc")
+
+	second, err := d.SbxCompatibility()
+	if err != nil {
+		t.Fatalf("compatibility: %v", err)
+	}
+	if second.Version != "v0.54.0" {
+		t.Fatalf("compatibility served the cached version %q, want v0.54.0", second.Version)
+	}
+	for _, feature := range second.Features {
+		if feature.ID == sbx.FeatureSbxPort && !feature.Supported {
+			t.Fatalf("sbx port feature still reported unsupported on %s", second.Version)
+		}
+	}
+}
+
 func TestSandboxTrafficIsFiltered(t *testing.T) {
 	d, _, _ := newTestDesktop(t, "box", "other")
 

@@ -198,6 +198,16 @@ func (a *App) syncKitStore(ctx context.Context, reg *fleet.StoreReg) (*fleet.Sto
 		candidateDir := filepath.Join(path, filepath.FromSlash(candidate.RelPath))
 		spec, err := a.Sbx.KitInspect(ctx, candidateDir)
 		if err != nil {
+			// `sbx kit inspect` refuses a kit with an unset required argument, but
+			// its spec.yaml is still valid and can be parsed directly. Any other
+			// failure means the kit is broken: skip it and keep the CLI error.
+			if !kitInspectNeedsArgs(err) {
+				skipped++
+				if firstSkip == nil {
+					firstSkip = fmt.Errorf("%s: %w", candidate.RelPath, err)
+				}
+				continue
+			}
 			var parseErr error
 			spec, parseErr = parseKitSpec(candidateDir)
 			if parseErr != nil {
@@ -257,6 +267,27 @@ func (a *App) syncKitStore(ctx context.Context, reg *fleet.StoreReg) (*fleet.Sto
 		return reg, err
 	}
 	return reg, nil
+}
+
+// kitInspectNeedsArgs reports whether a `sbx kit inspect` failure is the
+// "required argument not supplied" case, the only one a direct spec.yaml parse
+// can answer. sbx prints, for a kit whose spec declares a required argument:
+//
+//	ERROR: kit "<dir>" requires an argument:
+//
+//	  repo  spec.yaml:7  GitHub repository to clone
+//
+//	Supply it and re-run:
+//	  --kit-arg repo=<value>
+//
+// The matcher stays narrow on purpose: an invalid manifest (or any other
+// failure) must be surfaced, not papered over by parsing the spec locally.
+func kitInspectNeedsArgs(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "requires an argument") && strings.Contains(msg, "--kit-arg")
 }
 
 // parseKitSpec reads spec.yaml directly when sbx kit inspect fails (such as

@@ -121,6 +121,33 @@ func TestKitArgumentUnmarshal(t *testing.T) {
 			hasDef:   true,
 			def:      "true",
 		},
+		{
+			json:     `{"description": "With integer default", "default": 1000000}`,
+			desc:     "With integer default",
+			required: false,
+			hasDef:   true,
+			def:      "1000000",
+		},
+		{
+			json:     `{"description": "With float default", "default": 1.5}`,
+			desc:     "With float default",
+			required: false,
+			hasDef:   true,
+			def:      "1.5",
+		},
+		{
+			json:     `{"description": "With string default", "default": "x"}`,
+			desc:     "With string default",
+			required: false,
+			hasDef:   true,
+			def:      "x",
+		},
+		{
+			json:     `{"description": "With null default", "default": null}`,
+			desc:     "With null default",
+			required: false,
+			hasDef:   false,
+		},
 	}
 
 	for _, tc := range cases {

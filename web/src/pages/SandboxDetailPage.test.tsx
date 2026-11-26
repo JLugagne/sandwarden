@@ -234,6 +234,27 @@ describe("sandbox config actions", () => {
       ]);
     });
   });
+
+  it("keeps commas inside a kit argument value when attaching a kit", async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Attach kit/ }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/Kit reference/), {
+      target: { value: "ghcr.io/acme/mcp-proxy:1.0" },
+    });
+    fireEvent.change(within(dialog).getByLabelText(/Kit arguments \(optional\)/), {
+      target: { value: "hosts=a.com,b.com\nmcp.strict=true" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Attach kit" }));
+
+    await waitFor(() => {
+      expect(api.attachKit).toHaveBeenCalledWith("alpha", "ghcr.io/acme/mcp-proxy:1.0", [
+        "hosts=a.com,b.com",
+        "mcp.strict=true",
+      ]);
+    });
+  });
 });
 
 function incompleteDetail(): SandboxDetail {

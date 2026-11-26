@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -157,8 +158,11 @@ func TestAttachKitPassesAndPersistsKitArgs(t *testing.T) {
 	if !ok || s.App.Create == nil {
 		t.Fatal("sandbox alpha missing after reopen")
 	}
-	if !slices.Equal(s.App.Create.KitArgs, args) {
-		t.Fatalf("create.kitArgs = %v, want %v", s.App.Create.KitArgs, args)
+	// A bare argument is scoped to the attached kit on disk so a recreate does
+	// not leak it to every kit; an already-scoped one is kept as-is.
+	wantPersisted := []string{"mcp-postgres.repo=acme/app", "mcp.strict=true"}
+	if !slices.Equal(s.App.Create.KitArgs, wantPersisted) {
+		t.Fatalf("create.kitArgs = %v, want %v", s.App.Create.KitArgs, wantPersisted)
 	}
 }
 
@@ -226,6 +230,68 @@ func TestAttachKitRejectsRecordedKit(t *testing.T) {
 	}
 	if calls := skillCalls(t, logPath); len(calls) != 0 {
 		t.Fatalf("sbx was called for a duplicate attach: %v", calls)
+	}
+}
+
+func TestAttachKitRefusesSecretKitArg(t *testing.T) {
+	a, logPath := newKitAddApp(t)
+	const secret = "ghp_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIII"
+
+	_, err := a.AttachKit(context.Background(), "alpha", "./mcp-postgres", []string{"token=" + secret}, nil)
+	if err == nil {
+		t.Fatal("AttachKit accepted a secret-looking kit argument")
+	}
+	var argErr *KitArgValueError
+	if !errors.As(err, &argErr) {
+		t.Fatalf("err = %v, want a *KitArgValueError", err)
+	}
+	if argErr.Arg != "token" {
+		t.Fatalf("error names %q, want token", argErr.Arg)
+	}
+	if got, want := sandboxKits(t, a, "alpha"), []string{"base"}; !slices.Equal(got, want) {
+		t.Fatalf("create.kits = %v, want the original %v", got, want)
+	}
+	fresh, err := fleet.Open(a.Fleet.Dir())
+	if err != nil {
+		t.Fatalf("reopen fleet: %v", err)
+	}
+	if s, ok := fresh.SandboxByName("alpha"); !ok || s.App.Create == nil || len(s.App.Create.KitArgs) != 0 {
+		t.Fatal("create.kitArgs was written despite the secret guard")
+	}
+	if calls := skillCalls(t, logPath); len(calls) != 0 {
+		t.Fatalf("sbx was called for a refused kit argument: %v", calls)
+	}
+}
+
+func TestAttachKitScopesBareKitArgsToAttachedKit(t *testing.T) {
+	ctx := context.Background()
+	a, _ := newKitAddApp(t)
+
+	kitDir := t.TempDir()
+	specContent := "schemaVersion: \"2\"\nkind: mixin\nname: B\n"
+	if err := os.WriteFile(filepath.Join(kitDir, "spec.yaml"), []byte(specContent), 0o644); err != nil {
+		t.Fatalf("write spec: %v", err)
+	}
+	args := []string{"name=value", "B.other=keep"}
+	if _, err := a.AttachKit(ctx, "alpha", kitDir, args, nil); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+
+	fresh, err := fleet.Open(a.Fleet.Dir())
+	if err != nil {
+		t.Fatalf("reopen fleet: %v", err)
+	}
+	s, ok := fresh.SandboxByName("alpha")
+	if !ok || s.App.Create == nil {
+		t.Fatal("sandbox alpha missing after reopen")
+	}
+	want := []string{"B.name=value", "B.other=keep"}
+	if !slices.Equal(s.App.Create.KitArgs, want) {
+		t.Fatalf("create.kitArgs = %v, want %v", s.App.Create.KitArgs, want)
+	}
+	opts := a.CreateOptionsFromConfig(s)
+	if !slices.Contains(opts.KitArgs, "B.name=value") {
+		t.Fatalf("recreate options lost the kit-scoped argument: %v", opts.KitArgs)
 	}
 }
 

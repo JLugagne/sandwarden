@@ -7,7 +7,9 @@ import "github.com/JLugagne/sandwarden/internal/sbx"
 // read yields Known=false and no restriction: the backend fails open for dev
 // builds and the UI mirrors that.
 func (d *Desktop) SbxCompatibility() (SbxCompatibilityDTO, error) {
-	version, _ := d.app.Sbx.Version(d.root)
+	// Always re-read: the compatibility panel must reflect an sbx upgraded
+	// while the app keeps running, not a version cached at startup.
+	version, _ := d.app.Sbx.RefreshVersion(d.root)
 	out := SbxCompatibilityDTO{
 		Version:  version.String(),
 		Known:    version.Known,

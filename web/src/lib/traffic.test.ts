@@ -62,6 +62,28 @@ describe("classifyTraffic", () => {
     const view = classifyTraffic({ blocked_hosts: [entry("x.test")], allowed_hosts: [entry("x.test")] }, [rule("allow", ["x.test"])]);
     expect(view.allowed).toHaveLength(1);
   });
+
+  it("only lists deny rules scoped to the viewed sandbox plus global rules", () => {
+    const rules = [rule("deny", ["a.test"], "box"), rule("deny", ["b.test"], "box-2"), rule("deny", ["global.test"])];
+
+    const view = classifyTraffic(undefined, rules, "box");
+
+    expect(view.denied.map((e) => e.host).sort()).toEqual(["a.test", "global.test"]);
+  });
+
+  it("keeps every deny rule when the view is not sandbox-scoped", () => {
+    const rules = [rule("deny", ["a.test"], "box"), rule("deny", ["b.test"], "box-2"), rule("deny", ["global.test"])];
+
+    const view = classifyTraffic(undefined, rules);
+
+    expect(view.denied.map((e) => e.host).sort()).toEqual(["a.test", "b.test", "global.test"]);
+  });
+
+  it("does not render wildcard deny patterns as concrete hosts", () => {
+    const view = classifyTraffic(undefined, [rule("deny", ["*.example.com", "exact.test"], "box")], "box");
+
+    expect(view.denied.map((e) => e.host)).toEqual(["exact.test"]);
+  });
 });
 
 describe("groupBySandbox", () => {

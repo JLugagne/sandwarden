@@ -38,10 +38,14 @@ type Client struct {
 	base     string
 	cliSlots chan struct{}
 	// versionMu guards the cached `sbx version` result. The zero value is ready
-	// to use, so a hand-built Client still works.
+	// to use, so a hand-built Client still works. now and versionTTL are test
+	// seams: both fall back to the real clock and defaultVersionTTL when nil/zero.
 	versionMu     sync.Mutex
 	version       Version
+	versionAt     time.Time
+	versionTTL    time.Duration
 	versionLoaded bool
+	now           func() time.Time
 }
 
 // SocketPath resolves the sandboxd unix socket path. Precedence: DOCKER_SANDBOXES_API,

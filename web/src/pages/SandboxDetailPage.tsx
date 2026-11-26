@@ -488,8 +488,9 @@ function AttachKitDialog({
     }
   }, [open]);
   const trimmed = ref.trim();
+  // One argument per line: commas are part of values such as hosts=a.com,b.com.
   const args = kitArgs
-    .split(/[\n,]/)
+    .split(/\r?\n/)
     .map((entry) => entry.trim())
     .filter((entry) => entry !== "");
 
