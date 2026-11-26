@@ -187,6 +187,12 @@ func newFakeSbx(t *testing.T) string {
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "$SBX_STUB_LOG"
 if [ "$1" = "version" ]; then
+  if [ "$2" = "--json" ]; then
+    printf '{"client":{"version":"%s"}' "${FAKE_SBX_VERSION:-}"
+    if [ -n "${FAKE_SBX_SERVER_JSON:-}" ]; then printf ',"server":%s' "$FAKE_SBX_SERVER_JSON"; fi
+    printf '}\n'
+    exit 0
+  fi
   printf '%s\n' "${FAKE_SBX_VERSION:-}"
   exit 0
 fi

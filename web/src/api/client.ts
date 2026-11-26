@@ -374,4 +374,5 @@ export const api = {
 
   sbxCompatibility: () =>
     Desktop.SbxCompatibility().then((info) => info as unknown as SbxCompatibility),
+  restartDaemon: () => Desktop.RestartDaemon(),
 };

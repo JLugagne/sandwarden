@@ -10,6 +10,7 @@ import (
 
 	"github.com/JLugagne/sandwarden/internal/app"
 	"github.com/JLugagne/sandwarden/internal/fleet"
+	"github.com/JLugagne/sandwarden/internal/sbx"
 	"github.com/spf13/cobra"
 )
 
@@ -33,9 +34,22 @@ func doctorCmd(opts *Options) *cobra.Command {
 			out := cmd.OutOrStdout()
 			sandboxes := core.Fleet.Sandboxes()
 
-			version, versionErr := core.Sbx.Version(cmd.Context())
+			versions, versionErr := core.Sbx.Versions(cmd.Context())
+			version := versions.Effective()
 			if versionErr != nil && !version.Known {
 				fmt.Fprintf(cmd.ErrOrStderr(), "doctor: could not read the sbx version: %v\n", versionErr)
+			}
+			if versions.Client.Known {
+				fmt.Fprintf(out, "doctor: sbx CLI is %s\n", versions.Client)
+			}
+			if versions.ServerPresent && versions.Server.Known {
+				fmt.Fprintf(out, "doctor: sbx daemon is %s\n", versions.Server)
+			}
+			restartRequired := versions.DaemonRestartRequired()
+			var restartErr error
+			if restartRequired {
+				restartErr = &sbx.DaemonRestartError{ClientVersion: versions.Client, ServerVersion: versions.Server}
+				fmt.Fprintf(out, "doctor: %v\n", restartErr)
 			}
 
 			// Compatibility section: list the sandboxes whose create block uses
@@ -70,7 +84,7 @@ func doctorCmd(opts *Options) *cobra.Command {
 			}
 			if findings == 0 {
 				fmt.Fprintf(out, "doctor: %d sandbox spec(s) scanned, no likely secrets found\n", len(sandboxes))
-				return nil
+				return restartErr
 			}
 			fmt.Fprintf(out, "doctor: %d environment value(s) look like secrets; rotate them, store them with `sbx secret set` (or from the Secrets page), then keep only the bare KEY form in spec.yaml\n", findings)
 			return fmt.Errorf("doctor: %d environment value(s) look like secrets", findings)

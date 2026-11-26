@@ -625,9 +625,16 @@ export interface SbxFeatureCompatibility {
   supported: boolean;
 }
 
-/** Installed sbx version plus the feature table; `known: false` means the UI shows no restriction. */
+/**
+ * Installed sbx versions plus the feature table. `version` is the effective
+ * version feature checks use (the lower of client and daemon). `known: false`
+ * means the UI shows no restriction.
+ */
 export interface SbxCompatibility {
   version: string;
+  client_version: string;
+  daemon_version: string;
   known: boolean;
+  daemon_restart_required: boolean;
   features: SbxFeatureCompatibility[] | null;
 }

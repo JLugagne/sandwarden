@@ -41,7 +41,7 @@ type Client struct {
 	// to use, so a hand-built Client still works. now and versionTTL are test
 	// seams: both fall back to the real clock and defaultVersionTTL when nil/zero.
 	versionMu     sync.Mutex
-	version       Version
+	versions      Versions
 	versionAt     time.Time
 	versionTTL    time.Duration
 	versionLoaded bool
@@ -176,6 +176,9 @@ func (c *Client) runCLI(ctx context.Context, stdin io.Reader, stream io.Writer, 
 		msg := strings.TrimSpace(captured)
 		if msg == "" {
 			msg = runErr.Error()
+		}
+		if daemonRestartNotice(msg) {
+			return captured, newDaemonRestartError(msg)
 		}
 		return captured, errors.New(msg)
 	}

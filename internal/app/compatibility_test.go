@@ -30,6 +30,26 @@ func TestCreateSandboxRefusesWorkspaceTargetOnOldSbx(t *testing.T) {
 	}
 }
 
+func TestCreateSandboxUsesTheOlderDaemonVersion(t *testing.T) {
+	a, _ := newTestApp(t)
+	newFakeSbx(t)
+	t.Setenv("FAKE_SBX_VERSION", "sbx version: v0.54.0 abc")
+	t.Setenv("FAKE_SBX_SERVER_JSON", `{"state":"running","version":"v0.43.0"}`)
+
+	req := CreateRequest{Opts: sbx.CreateOptions{
+		Agent:      "claude",
+		Name:       "box",
+		Workspaces: []string{"/host/project:/srv/project"},
+	}}
+	err := a.CreateSandbox(context.Background(), req, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "installed sbx is v0.43.0") {
+		t.Fatalf("err = %v, want a refusal naming the older daemon version", err)
+	}
+	if _, ok := a.Fleet.SandboxByName("box"); ok {
+		t.Fatal("the config was recorded despite the refusal")
+	}
+}
+
 func TestCreateSandboxAllowsWorkspaceTargetOnNewSbx(t *testing.T) {
 	a, _ := newTestApp(t)
 	newFakeSbx(t)

@@ -150,7 +150,17 @@ func TestListSandboxes(t *testing.T) {
 
 func TestSbxCompatibilityAlwaysRefreshes(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "fake-sbx")
-	content := "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then printf '%s\\n' \"$FAKE_SBX_VERSION\"; fi\nexit 0\n"
+	content := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"version\" ]; then\n" +
+		"  if [ \"$2\" = \"--json\" ]; then\n" +
+		"    printf '{\"client\":{\"version\":\"%s\"}' \"$FAKE_SBX_VERSION\"\n" +
+		"    if [ -n \"${FAKE_SBX_SERVER_JSON:-}\" ]; then printf ',\"server\":%s' \"$FAKE_SBX_SERVER_JSON\"; fi\n" +
+		"    printf '}\\n'\n" +
+		"    exit 0\n" +
+		"  fi\n" +
+		"  printf '%s\\n' \"$FAKE_SBX_VERSION\"\n" +
+		"fi\n" +
+		"exit 0\n"
 	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
 		t.Fatalf("write fake sbx: %v", err)
 	}
@@ -181,6 +191,42 @@ func TestSbxCompatibilityAlwaysRefreshes(t *testing.T) {
 		if feature.ID == sbx.FeatureSbxPort && !feature.Supported {
 			t.Fatalf("sbx port feature still reported unsupported on %s", second.Version)
 		}
+	}
+}
+
+func TestSbxCompatibilityExposesBothVersionsAndRestartFlag(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "fake-sbx")
+	content := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"version\" ]; then\n" +
+		"  if [ \"$2\" = \"--json\" ]; then\n" +
+		"    printf '{\"client\":{\"version\":\"%s\"}' \"$FAKE_SBX_VERSION\"\n" +
+		"    if [ -n \"${FAKE_SBX_SERVER_JSON:-}\" ]; then printf ',\"server\":%s' \"$FAKE_SBX_SERVER_JSON\"; fi\n" +
+		"    printf '}\\n'\n" +
+		"    exit 0\n" +
+		"  fi\n" +
+		"  printf '%s\\n' \"$FAKE_SBX_VERSION\"\n" +
+		"fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatalf("write fake sbx: %v", err)
+	}
+	t.Setenv("SBX_BINARY", script)
+	t.Setenv("FAKE_SBX_VERSION", "sbx version: v0.54.1 abc")
+	t.Setenv("FAKE_SBX_SERVER_JSON", `{"state":"running","version":"v0.43.0"}`)
+
+	d, _, _ := newTestDesktop(t)
+	info, err := d.SbxCompatibility()
+	if err != nil {
+		t.Fatalf("compatibility: %v", err)
+	}
+	if info.ClientVersion != "v0.54.1" || info.DaemonVersion != "v0.43.0" {
+		t.Fatalf("client = %q, daemon = %q", info.ClientVersion, info.DaemonVersion)
+	}
+	if !info.DaemonRestartRequired {
+		t.Fatal("daemon_restart_required should be true")
+	}
+	if info.Version != "v0.43.0" {
+		t.Fatalf("effective version = %q, want v0.43.0", info.Version)
 	}
 }
 

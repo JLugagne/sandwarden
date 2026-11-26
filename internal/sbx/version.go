@@ -26,6 +26,68 @@ type Version struct {
 	Known bool
 }
 
+// Versions is the full `sbx version` answer: the CLI (client) version and, when
+// `sbx version --json` reports one, the daemon (server) version. ServerPresent
+// records whether the server block existed at all, so a stopped daemon with no
+// version is distinguishable from an sbx that ignores --json.
+type Versions struct {
+	Client        Version
+	Server        Version
+	ServerPresent bool
+	ServerState   string
+}
+
+// ServerRunning reports whether the daemon reported the running state.
+func (vs Versions) ServerRunning() bool {
+	return strings.EqualFold(vs.ServerState, "running")
+}
+
+// Effective is the version feature checks must use: the lower of the client and
+// server versions when both are known. An unknown part never blocks a feature,
+// so an unknown client stays unknown (and thus allows everything), matching the
+// previous fail-open behaviour.
+func (vs Versions) Effective() Version {
+	if vs.Client.Known && vs.Server.Known && vs.Server.olderThan(vs.Client) {
+		return vs.Server
+	}
+	return vs.Client
+}
+
+// DaemonRestartRequired reports whether the daemon is running and its version
+// differs from the client's. A stopped or version-less daemon never asks for a
+// restart.
+func (vs Versions) DaemonRestartRequired() bool {
+	if !vs.ServerRunning() {
+		return false
+	}
+	if !vs.Client.Known || !vs.Server.Known {
+		return false
+	}
+	return !vs.Client.sameVersion(vs.Server)
+}
+
+// olderThan reports whether v precedes other. Pre-release tags are ignored, as
+// in AtLeast. Unknown versions never compare as older.
+func (v Version) olderThan(other Version) bool {
+	if !v.Known || !other.Known {
+		return false
+	}
+	switch {
+	case v.Major != other.Major:
+		return v.Major < other.Major
+	case v.Minor != other.Minor:
+		return v.Minor < other.Minor
+	default:
+		return v.Patch < other.Patch
+	}
+}
+
+// sameVersion reports whether two known versions are identical, including the
+// pre-release tag.
+func (v Version) sameVersion(other Version) bool {
+	return v.Major == other.Major && v.Minor == other.Minor && v.Patch == other.Patch && v.Pre == other.Pre
+}
+
 // versionPattern matches an optional "v" and a dotted triple, keeping an
 // optional pre-release suffix. It is searched anywhere in the output because
 // `sbx version` prefixes its answer with "sbx version:".
@@ -51,6 +113,46 @@ func ParseVersion(output string) Version {
 		Raw:   raw,
 		Known: true,
 	}
+}
+
+// versionJSON is the `sbx version --json` payload. The server block is absent
+// while the daemon is stopped or on older sbx builds.
+type versionJSON struct {
+	Client *struct {
+		Version string `json:"version"`
+	} `json:"client"`
+	Server *struct {
+		State   string `json:"state"`
+		Version string `json:"version"`
+	} `json:"server"`
+}
+
+// ParseVersions parses `sbx version` output. It recognises the `--json` payload
+// (client plus optional server) and falls back to the plain-text output, which
+// only names the client version. Noise before the JSON (warnings) is skipped.
+func ParseVersions(output string) Versions {
+	if vs, ok := parseVersionJSON(output); ok {
+		return vs
+	}
+	return Versions{Client: ParseVersion(output)}
+}
+
+// parseVersionJSON decodes the structured payload when output carries one. It
+// reports false for plain-text output so the caller can fall back.
+func parseVersionJSON(output string) (Versions, bool) {
+	var payload versionJSON
+	if err := decodeCLIJSON(output, &payload); err != nil || payload.Client == nil {
+		return Versions{}, false
+	}
+	vs := Versions{
+		Client:        ParseVersion(payload.Client.Version),
+		ServerPresent: payload.Server != nil,
+	}
+	if payload.Server != nil {
+		vs.ServerState = payload.Server.State
+		vs.Server = ParseVersion(payload.Server.Version)
+	}
+	return vs, true
 }
 
 // String renders the version as vMAJOR.MINOR.PATCH[-PRE], or the raw output
@@ -106,51 +208,78 @@ func (c *Client) cacheTTL() time.Duration {
 	return defaultVersionTTL
 }
 
-// Version runs `sbx version` and caches the parsed result for cacheTTL. A
+// Version returns the effective version: the lower of client and daemon when
+// both are known, otherwise the client. It runs and caches `sbx version`. A
 // failure to run the CLI returns an unknown Version together with the error;
 // callers treat that as "allow every feature".
 func (c *Client) Version(ctx context.Context) (Version, error) {
+	vs, err := c.Versions(ctx)
+	return vs.Effective(), err
+}
+
+// Versions runs `sbx version --json` (falling back to plain `sbx version`) and
+// caches the parsed client and server versions for cacheTTL.
+func (c *Client) Versions(ctx context.Context) (Versions, error) {
 	c.versionMu.Lock()
 	if c.versionLoaded {
 		age := c.clock().Sub(c.versionAt)
 		if age < c.cacheTTL() {
-			cached := c.version
+			cached := c.versions
 			c.versionMu.Unlock()
 			return cached, nil
 		}
 	}
 	c.versionMu.Unlock()
-	return c.loadVersion(ctx)
+	return c.loadVersions(ctx)
 }
 
 // RefreshVersion re-reads `sbx version`, bypassing and replacing the cache. Use
 // it when an incompatibility was just detected so an sbx upgrade picked up
 // since the cache was filled is not ignored until the TTL expires.
 func (c *Client) RefreshVersion(ctx context.Context) (Version, error) {
-	return c.loadVersion(ctx)
+	vs, err := c.RefreshVersions(ctx)
+	return vs.Effective(), err
 }
 
-// loadVersion runs `sbx version` and stores the parsed result with its
+// RefreshVersions re-reads both versions, bypassing and replacing the cache.
+func (c *Client) RefreshVersions(ctx context.Context) (Versions, error) {
+	return c.loadVersions(ctx)
+}
+
+// loadVersions runs `sbx version --json`, falling back to plain `sbx version`
+// when the installed sbx predates the flag, and stores the result with its
 // timestamp.
-func (c *Client) loadVersion(ctx context.Context) (Version, error) {
-	raw, err := c.runCLI(ctx, nil, nil, "version")
-	if err != nil {
-		return Version{Raw: strings.TrimSpace(raw)}, err
+func (c *Client) loadVersions(ctx context.Context) (Versions, error) {
+	raw, err := c.runCLI(ctx, nil, nil, "version", "--json")
+	if err == nil {
+		if vs, ok := parseVersionJSON(raw); ok {
+			c.storeVersions(vs)
+			return vs, nil
+		}
 	}
-	parsed := ParseVersion(raw)
+	rawText, textErr := c.runCLI(ctx, nil, nil, "version")
+	if textErr != nil {
+		return Versions{Client: Version{Raw: strings.TrimSpace(rawText)}}, textErr
+	}
+	vs := Versions{Client: ParseVersion(rawText)}
+	c.storeVersions(vs)
+	return vs, nil
+}
+
+// storeVersions caches the parsed result with its timestamp.
+func (c *Client) storeVersions(vs Versions) {
 	c.versionMu.Lock()
-	c.version = parsed
+	c.versions = vs
 	c.versionAt = c.clock()
 	c.versionLoaded = true
 	c.versionMu.Unlock()
-	return parsed, nil
 }
 
 // ResetVersionCache forgets the cached `sbx version` result, so the next call
 // re-reads it. Use it after upgrading sbx while the process stays alive.
 func (c *Client) ResetVersionCache() {
 	c.versionMu.Lock()
-	c.version = Version{}
+	c.versions = Versions{}
 	c.versionAt = time.Time{}
 	c.versionLoaded = false
 	c.versionMu.Unlock()

@@ -570,6 +570,15 @@ export function ResetAgentsFile(): $CancellablePromise<app$0.AgentsDoc> {
 }
 
 /**
+ * RestartDaemon restarts sandboxd non-interactively. The sbx client drops its
+ * version cache on success, so the next SbxCompatibility read sees the fresh
+ * daemon. Callers should invalidate the compatibility query afterwards.
+ */
+export function RestartDaemon(): $CancellablePromise<void> {
+    return $Call.ByID(3753818223);
+}
+
+/**
  * SandboxConfigDir returns the config directory of a sandbox.
  */
 export function SandboxConfigDir(slug: string): $CancellablePromise<string> {
@@ -622,10 +631,10 @@ export function SaveTemplate(sandbox: string, tag: string): $CancellablePromise<
 }
 
 /**
- * SbxCompatibility reports the installed sbx version and, for every feature
- * sandwarden version-gates, whether it is supported. A version that cannot be
- * read yields Known=false and no restriction: the backend fails open for dev
- * builds and the UI mirrors that.
+ * SbxCompatibility reports the installed sbx client and daemon versions and,
+ * for every feature sandwarden version-gates, whether it is supported. A
+ * version that cannot be read yields Known=false and no restriction: the
+ * backend fails open for dev builds and the UI mirrors that.
  */
 export function SbxCompatibility(): $CancellablePromise<$models.SbxCompatibilityDTO> {
     return $Call.ByID(3946712413);

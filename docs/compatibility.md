@@ -2,9 +2,38 @@
 
 sandwarden drives the `sbx` CLI. A few create options and flags were added over several
 sandbox releases, so a config that works on a recent sbx can fail on an older one with an
-obscure "unknown flag" error. sandwarden reads the installed version once (`sbx version`)
+obscure "unknown flag" error. sandwarden reads the installed versions (`sbx version --json`)
 and reports which features that version cannot run, instead of letting `sbx` reject the
 command.
+
+## Client and daemon versions
+
+`sandboxd` is the daemon behind `sbx`, and it is upgraded separately. sandwarden reads
+both versions:
+
+- the **client** version is the `sbx` binary on `PATH`;
+- the **daemon** version is reported by `sbx version --json` in its `server` block.
+
+Feature checks use the **effective version**, which is the *lower* of the client and the
+daemon when both are known. An unknown part (a dev build or a stopped daemon without a
+version) never blocks a feature. When `sbx` predates `version --json`, sandwarden falls
+back to the plain `sbx version` text and treats it as the client version alone.
+
+A running daemon whose version differs from the CLI requires a restart. sandwarden reports
+`daemon_restart_required` in the desktop compatibility payload, prints both versions in
+`sandwarden doctor`, and exits non-zero from `doctor` when a restart is pending. The
+desktop app shows a global banner with a confirmation dialog listing the running sandboxes.
+
+```
+sbx was updated (CLI v0.54.1, daemon v0.43.0) and sandboxd must restart; run `sbx daemon restart` (this stops running sandboxes)
+```
+
+`sbx` refuses daemon-touching commands non-interactively when an update is pending
+(`ensure daemon: cannot prompt for restart: stdin is not a terminal`); sandwarden turns
+that stderr into the typed, actionable error above instead of surfacing it raw. The daemon
+restart is performed with `sbx daemon restart --no-input`: `sbx` exposes no
+`--yes`/`--force` flag, and `--no-input` is its documented non-interactive switch (it fails
+with the command to run in a terminal if an answer is still required).
 
 ## Feature minimum versions
 
@@ -42,12 +71,15 @@ command.
 - **Export.** When the installed sbx predates v0.51.0, `sandwarden export --sbxenv` reports
   each `additionalWorkspaces[].target` as incompatible. The target stays in the document:
   the export is informational and is not silently downgraded.
-- **Settings.** The desktop app shows the installed sbx version and the feature table in
-  **Settings → General → sbx compatibility**. The create form disables the options the
-  installed sbx cannot run and shows the required minimum version.
+- **Settings.** The desktop app shows the effective, client and daemon versions plus the
+  feature table in **Settings → General → sbx compatibility**. The create form disables
+  the options the installed sbx cannot run and shows the required minimum version.
 
 ## Upgrading
 
-Upgrade Docker Sandboxes to get the newer `sbx`. After the upgrade, restart sandwarden
-(the desktop process caches the version for its lifetime) or run any CLI command again;
-the next check reads the new version.
+Upgrade Docker Sandboxes to get the newer `sbx`, then restart the daemon so `sandboxd`
+matches the CLI: `sbx daemon restart` (this stops running sandboxes). Until it is
+restarted, the effective version is the older daemon version and feature checks use it.
+sandwarden re-reads the versions on every compatibility check (`doctor` and the Settings
+panel) and after a restart, so an upgrade picked up by a long-running process is not
+ignored until a cache TTL expires.

@@ -386,11 +386,22 @@ export function SettingsPage() {
           ) : sbxCompatibility.data ? (
             <div className="flex flex-col gap-3 p-4">
               <DescriptionList>
-                <Description label="Installed sbx">
+                <Description label="Effective sbx">
                   <span className="inline-flex flex-wrap items-center gap-2">
                     <span className="font-mono text-xs">{sbxCompatibility.data.version}</span>
                     {!sbxCompatibility.data.known ? (
                       <span className="text-xs text-muted">version unknown; compatibility checks are skipped</span>
+                    ) : null}
+                  </span>
+                </Description>
+                <Description label="sbx CLI">
+                  <span className="font-mono text-xs">{sbxCompatibility.data.client_version || "unknown"}</span>
+                </Description>
+                <Description label="sandboxd">
+                  <span className="inline-flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-xs">{sbxCompatibility.data.daemon_version || "unknown"}</span>
+                    {sbxCompatibility.data.daemon_restart_required ? (
+                      <Badge tone="warning">restart required</Badge>
                     ) : null}
                   </span>
                 </Description>

@@ -77,7 +77,10 @@ vi.mock("@/api/client", () => ({
     resetAgentsFile: vi.fn(async () => agentsDoc(DEFAULT_AGENTS, true)),
     sbxCompatibility: vi.fn(async () => ({
       version: "v0.43.0",
+      client_version: "v0.54.1",
+      daemon_version: "v0.43.0",
       known: true,
+      daemon_restart_required: true,
       features: [
         { id: "create.workspaces", label: "workspace mount target", min_version: "v0.51.0", supported: false },
         { id: "create.skills", label: "skills mode", min_version: "v0.43.0", supported: true },
@@ -276,6 +279,8 @@ describe("settings tabs", () => {
 
     expect(await screen.findByText("sbx compatibility")).toBeDefined();
     expect((await screen.findAllByText("v0.43.0")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("v0.54.1")).toBeDefined();
+    expect(await screen.findByText("restart required")).toBeDefined();
     expect(await screen.findByText("workspace mount target")).toBeDefined();
     expect(await screen.findByText("unsupported")).toBeDefined();
     expect(await screen.findByText("supported")).toBeDefined();

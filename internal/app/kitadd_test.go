@@ -20,6 +20,12 @@ const kitSbxScript = `#!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_KIT_SBX_LOG"
 state="$FAKE_KIT_SBX_STATE"
 if [ "$1" = "version" ]; then
+  if [ "$2" = "--json" ]; then
+    printf '{"client":{"version":"%s"}' "${FAKE_SBX_VERSION:-}"
+    if [ -n "${FAKE_SBX_SERVER_JSON:-}" ]; then printf ',"server":%s' "$FAKE_SBX_SERVER_JSON"; fi
+    printf '}\n'
+    exit 0
+  fi
   printf '%s\n' "${FAKE_SBX_VERSION:-}"
   exit 0
 fi

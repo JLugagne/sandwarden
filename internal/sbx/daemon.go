@@ -46,3 +46,16 @@ func (c *Client) StartDaemon(ctx context.Context) error {
 	_, err := c.runCLI(ctx, nil, nil, "daemon", "start")
 	return err
 }
+
+// RestartDaemon runs `sbx daemon restart` non-interactively. sbx exposes no
+// --yes/--force confirmation flag; --no-input is its documented non-interactive
+// flag and fails with the command to run instead when an answer is still
+// required. On success the version cache is dropped so the next compatibility
+// read sees the restarted daemon.
+func (c *Client) RestartDaemon(ctx context.Context) error {
+	if _, err := c.runCLI(ctx, nil, nil, "daemon", "restart", "--no-input"); err != nil {
+		return err
+	}
+	c.ResetVersionCache()
+	return nil
+}

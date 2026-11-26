@@ -373,7 +373,10 @@ describe("new sandbox dialog", () => {
   it("omits create fields whose features the installed sbx does not support", async () => {
     vi.mocked(api.sbxCompatibility).mockResolvedValueOnce({
       version: "v0.40.0",
+      client_version: "v0.40.0",
+      daemon_version: "v0.40.0",
       known: true,
+      daemon_restart_required: false,
       features: [
         { id: "create.workspaces", label: "workspace mount target", min_version: "v0.40.0", supported: true },
         { id: "create.kitArgs", label: "kit arguments", min_version: "v0.99.0", supported: false },
@@ -434,7 +437,10 @@ describe("new sandbox dialog", () => {
   it("disables create options the installed sbx cannot run and explains the minimum version", async () => {
     vi.mocked(api.sbxCompatibility).mockResolvedValueOnce({
       version: "v0.43.0",
+      client_version: "v0.43.0",
+      daemon_version: "v0.43.0",
       known: true,
+      daemon_restart_required: false,
       features: [
         { id: "create.workspaces", label: "workspace mount target", min_version: "v0.51.0", supported: false },
         { id: "create.skills", label: "skills mode", min_version: "v0.43.0", supported: true },
@@ -457,7 +463,14 @@ describe("new sandbox dialog", () => {
   });
 
   it("shows no restriction when the installed sbx version is unknown", async () => {
-    vi.mocked(api.sbxCompatibility).mockResolvedValueOnce({ version: "dev-abc", known: false, features: null });
+    vi.mocked(api.sbxCompatibility).mockResolvedValueOnce({
+      version: "dev-abc",
+      client_version: "dev-abc",
+      daemon_version: "unknown",
+      known: false,
+      daemon_restart_required: false,
+      features: null,
+    });
     renderDialog();
 
     const target = screen.getByPlaceholderText("container target (optional)") as HTMLInputElement;

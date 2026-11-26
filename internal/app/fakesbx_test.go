@@ -30,7 +30,14 @@ cmd = args[0] if args else ""
 name = args[1] if len(args) > 1 else ""
 
 if cmd == "version":
-    sys.stdout.write(os.environ.get("FAKE_SBX_VERSION", ""))
+    if len(args) > 1 and args[1] == "--json":
+        payload = {"client": {"version": os.environ.get("FAKE_SBX_VERSION", "")}}
+        server = os.environ.get("FAKE_SBX_SERVER_JSON", "")
+        if server:
+            payload["server"] = json.loads(server)
+        sys.stdout.write(json.dumps(payload))
+    else:
+        sys.stdout.write(os.environ.get("FAKE_SBX_VERSION", ""))
     sys.exit(0)
 
 if cmd == "inspect":

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet } from "react-router-dom";
 import { api } from "@/api/client";
 import { cn } from "@/lib/cn";
@@ -13,7 +14,7 @@ import {
   setNotificationsEnabled,
 } from "@/lib/notifications";
 import { queryKeys } from "@/store/realtime";
-import { Button, IconAlert, IconRefresh, IconSearch } from "@/components/ui";
+import { Button, ConfirmDialog, IconAlert, IconRefresh, IconSearch } from "@/components/ui";
 import { OPEN_SEARCH_EVENT, SearchOverlay } from "@/components/SearchOverlay";
 
 const NAV = [
@@ -37,6 +38,24 @@ export function Layout() {
   const meta = STATUS_META[status];
   const [notificationsOn, setNotificationsOn] = useState(notificationsEnabled());
   const toast = useToasts();
+
+  const compatibility = useQuery({
+    queryKey: queryKeys.sbxCompatibility,
+    queryFn: api.sbxCompatibility,
+  });
+  const [confirmRestart, setConfirmRestart] = useState(false);
+  const runningSandboxes = useQuery({
+    queryKey: queryKeys.sandboxes,
+    queryFn: api.listSandboxes,
+    enabled: confirmRestart,
+  });
+  const restartDaemon = useApiMutation({
+    mutationFn: () => api.restartDaemon(),
+    success: "sandboxd restarted",
+    invalidate: [queryKeys.sbxCompatibility, queryKeys.sandboxes, queryKeys.health],
+  });
+  const restartRequired = compatibility.data?.daemon_restart_required === true;
+  const runningNames = (runningSandboxes.data ?? []).filter((sandbox) => sandbox.running).map((sandbox) => sandbox.name);
 
   const staleness = useConfigStaleness();
   const changedFiles = staleness.data?.changed ?? [];
@@ -128,6 +147,19 @@ export function Layout() {
 
       <main className="min-w-0 flex-1 px-6 py-6">
         <div className="mx-auto max-w-6xl">
+          {restartRequired && compatibility.data ? (
+            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-sm">
+              <IconAlert className="size-4 shrink-0 text-danger" />
+              <span className="flex-1 text-danger">
+                sbx was updated to {compatibility.data.client_version} but sandboxd still runs{" "}
+                {compatibility.data.daemon_version}. Restart the daemon to finish the update — this stops running
+                sandboxes.
+              </span>
+              <Button variant="primary" size="sm" onClick={() => setConfirmRestart(true)}>
+                Restart daemon
+              </Button>
+            </div>
+          ) : null}
           {changedFiles.length > 0 ? (
             <div className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-sm">
               <IconAlert className="size-4 shrink-0 text-warning" />
@@ -147,6 +179,31 @@ export function Layout() {
       </main>
 
       <SearchOverlay />
+
+      <ConfirmDialog
+        open={confirmRestart}
+        title="Restart sandboxd?"
+        confirmLabel="Restart daemon"
+        busy={restartDaemon.isPending}
+        body={
+          <>
+            <p>
+              sandboxd will restart to match the updated sbx CLI. Running sandboxes are stopped by the restart.
+            </p>
+            {runningNames.length > 0 ? (
+              <ul className="mt-2 list-disc pl-5 font-mono text-xs">
+                {runningNames.map((name) => (
+                  <li key={name}>{name}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2">No sandboxes are currently running.</p>
+            )}
+          </>
+        }
+        onConfirm={() => restartDaemon.mutate(undefined, { onSuccess: () => setConfirmRestart(false) })}
+        onClose={() => setConfirmRestart(false)}
+      />
     </div>
   );
 }

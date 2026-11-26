@@ -203,13 +203,20 @@ export interface RulesRequest {
 }
 
 /**
- * SbxCompatibilityDTO reports the installed sbx version and the feature table.
- * Known is false when the version could not be parsed; the UI then shows no
- * restriction, matching the backend's fail-open behaviour.
+ * SbxCompatibilityDTO reports the installed sbx versions and the feature table.
+ * Version is the effective version feature checks use (the lower of client and
+ * daemon). ClientVersion and DaemonVersion are the raw parts for display;
+ * DaemonVersion is "unknown" when the daemon does not report one.
+ * DaemonRestartRequired is true when the running daemon's version differs from
+ * the CLI's. Known is false when the effective version could not be parsed; the
+ * UI then shows no restriction, matching the backend's fail-open behaviour.
  */
 export interface SbxCompatibilityDTO {
     "version": string;
+    "client_version": string;
+    "daemon_version": string;
     "known": boolean;
+    "daemon_restart_required": boolean;
     "features": SbxFeatureCompatDTO[] | null;
 }
 
