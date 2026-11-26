@@ -522,7 +522,7 @@ export function CreateSandboxDialog({
                       )
                     }
                     placeholder="container target (optional)"
-                    className="w-56 min-w-0 shrink font-mono text-xs"
+                    className="min-w-0 shrink grow-0 basis-56 font-mono text-xs"
                     disabled={workspacesUnsupported}
                     title={workspacesUnsupported ? unsupportedHint("create.workspaces") : undefined}
                   />

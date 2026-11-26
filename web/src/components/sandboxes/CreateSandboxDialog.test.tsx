@@ -406,7 +406,7 @@ describe("new sandbox dialog", () => {
     expect(target.getAttribute("placeholder")).toBe("container target (optional)");
     expect(host.className).toContain("flex-1");
     expect(host.className).toContain("min-w-0");
-    expect(target.className).toContain("w-56");
+    expect(target.className).toContain("basis-56");
     expect(host.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
