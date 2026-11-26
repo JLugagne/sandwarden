@@ -52,10 +52,13 @@ type SandboxDetail struct {
 	Mounts      []sbx.MountInfo `json:"mounts"`
 	MountsError string          `json:"mounts_error,omitempty"`
 	// Incomplete reports a config directory adopted from the daemon without its original create parameters.
-	Incomplete           bool                  `json:"incomplete"`
-	Image                string                `json:"image,omitempty"`
-	ImageDigest          string                `json:"image_digest,omitempty"`
-	Kits                 []string              `json:"kits,omitempty"`
+	Incomplete  bool     `json:"incomplete"`
+	Image       string   `json:"image,omitempty"`
+	ImageDigest string   `json:"image_digest,omitempty"`
+	Kits        []string `json:"kits,omitempty"`
+	// Incompatible lists the create-block features the installed sbx cannot
+	// run. It is computed for the detail projection only.
+	Incompatible         []string              `json:"incompatible"`
 	Secrets              []sbx.Secret          `json:"secrets"`
 	CustomSecrets        []sbx.CustomSecret    `json:"custom_secrets"`
 	PolicyRules          []sbx.PolicyRule      `json:"policy_rules"`
@@ -138,6 +141,9 @@ func (a *App) SandboxDetail(ctx context.Context, name string) (SandboxDetail, er
 	detail.DirectMounts = a.sandboxMounts(cfg, detail.Mounts)
 	if skills := a.sandboxSkills(ctx, name, detail.Mounts); len(skills) > 0 {
 		detail.Skills = skills
+	}
+	if cfg != nil {
+		detail.Incompatible = a.SandboxCompatibility(ctx, cfg)
 	}
 	return detail, nil
 }

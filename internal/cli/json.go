@@ -53,8 +53,9 @@ type jsonStatusOutput struct {
 // jsonStatusSandbox adds the daemon detail and the per-name errors to jsonSandbox.
 type jsonStatusSandbox struct {
 	jsonSandbox
-	Errors []string           `json:"errors"`
-	Detail *app.SandboxDetail `json:"detail,omitempty"`
+	Errors       []string           `json:"errors"`
+	Incompatible []string           `json:"incompatible"`
+	Detail       *app.SandboxDetail `json:"detail,omitempty"`
 }
 
 // jsonApplyOutput is the apply --json envelope.

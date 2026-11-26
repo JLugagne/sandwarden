@@ -256,6 +256,11 @@ sbxenv cannot express on stderr ([docs/sbxenv.md](docs/sbxenv.md)). `sandwarden 
 `apply`, `start` and `import` accept `--json` with a stable schema
 ([docs/cli.md](docs/cli.md)).
 
+Newer `sbx` releases add create options over time. sandwarden reads the installed version and
+refuses a create, recreate or `kit add` that needs a newer `sbx` before invoking it, and reports
+affected configs in the sandbox page, `validate`, `doctor` and `status --json`. The feature table
+and minimum versions are in [docs/compatibility.md](docs/compatibility.md).
+
 sandwarden does not watch the configuration directory — reloading stays an explicit action,
 so the app never races your editor or the CLI. It fingerprints every file it loads and stats
 them on window focus and every few seconds: a file changed on disk gets a "changed on disk"

@@ -37,6 +37,11 @@ type Client struct {
 	http     *http.Client
 	base     string
 	cliSlots chan struct{}
+	// versionMu guards the cached `sbx version` result. The zero value is ready
+	// to use, so a hand-built Client still works.
+	versionMu     sync.Mutex
+	version       Version
+	versionLoaded bool
 }
 
 // SocketPath resolves the sandboxd unix socket path. Precedence: DOCKER_SANDBOXES_API,

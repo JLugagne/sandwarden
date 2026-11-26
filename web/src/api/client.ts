@@ -27,6 +27,7 @@ import type {
   RegistrySecretRequest,
   SandboxDetail,
   SandboxSummary,
+  SbxCompatibility,
   SearchResult,
   SecretList,
   ServiceSecretRequest,
@@ -370,4 +371,7 @@ export const api = {
 
   templates: () => Desktop.ListTemplates().then((rows) => asArray(rows) as unknown as Template[]),
   removeTemplate: (ref: string) => Desktop.RemoveTemplate(ref),
+
+  sbxCompatibility: () =>
+    Desktop.SbxCompatibility().then((info) => info as unknown as SbxCompatibility),
 };

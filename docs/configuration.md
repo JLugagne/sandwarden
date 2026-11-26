@@ -213,6 +213,11 @@ flags:
 `create` may be absent; `recreate` then replays only what the spec provides (`requires.agent`,
 environment variables and network deny patterns).
 
+Some create fields need a recent `sbx` (for example workspace mount targets and the `none`
+static MCP value need v0.51.0). sandwarden detects the installed version and refuses an
+incompatible create or recreate before calling `sbx`; see
+[sbx compatibility](compatibility.md) for the feature table and the reporting commands.
+
 ## sandwarden.yaml: profiles
 
 A profile is a named allow/deny bundle plus inherited items. Its `spec.yaml` carries the network
@@ -646,4 +651,5 @@ ref: main
 ## See also
 
 - [Cross-process locking](locking.md) — how concurrent GUI and CLI mutations are serialized.
+- [sbx compatibility](compatibility.md) — which create features need which sbx version.
 - `README.md` § Configuration — environment variables and command-line flags.

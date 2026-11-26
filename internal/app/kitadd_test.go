@@ -18,6 +18,10 @@ import (
 const kitSbxScript = `#!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_KIT_SBX_LOG"
 state="$FAKE_KIT_SBX_STATE"
+if [ "$1" = "version" ]; then
+  printf '%s\n' "${FAKE_SBX_VERSION:-}"
+  exit 0
+fi
 if [ "$1" = "kit" ] && [ "$2" = "add" ]; then
   if [ -n "$FAKE_KIT_SBX_REFUSAL" ]; then
     printf '%s\n' "$FAKE_KIT_SBX_REFUSAL" >&2

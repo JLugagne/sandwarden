@@ -293,6 +293,10 @@ func (a *App) RecreateSandbox(ctx context.Context, name string, w io.Writer) err
 	if !ok {
 		return fmt.Errorf("no configuration found for sandbox %q", name)
 	}
+	opts := a.CreateOptionsFromConfig(s)
+	if err := a.checkCreateFeatures(ctx, opts); err != nil {
+		return err
+	}
 	if sandboxIncomplete(s) {
 		fmt.Fprintln(w, incompleteRecreateWarning(name))
 	}
@@ -302,7 +306,6 @@ func (a *App) RecreateSandbox(ctx context.Context, name string, w io.Writer) err
 			return err
 		}
 	}
-	opts := a.CreateOptionsFromConfig(s)
 	fmt.Fprintf(w, "creating sandbox %s from %s\n", name, s.Dir)
 	if err := a.Sbx.CreateSandbox(ctx, opts, w); err != nil {
 		return err
@@ -448,6 +451,9 @@ func (a *App) StartRecreateJob(name, jobID string) string {
 // config directory and converges it.
 func (a *App) CreateSandbox(ctx context.Context, req CreateRequest, w io.Writer) error {
 	if err := a.checkCreateEnvSecrets(req); err != nil {
+		return err
+	}
+	if err := a.checkCreateFeatures(ctx, req.Opts); err != nil {
 		return err
 	}
 	before := a.sandboxNameSet(ctx)

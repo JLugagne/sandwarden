@@ -178,6 +178,20 @@ describe("sandbox config actions", () => {
     expect(vi.mocked(api.validateSandbox)).toHaveBeenCalledWith("alpha");
   });
 
+  it("warns about create features the installed sbx does not support", async () => {
+    vi.mocked(api.sandbox).mockResolvedValueOnce({
+      ...detail,
+      incompatible: [
+        "workspace mount target (create.workspaces) requires sbx v0.51.0 or later; installed sbx is v0.43.0",
+      ],
+    });
+    renderPage();
+
+    expect(await screen.findByText("Unsupported sbx features")).toBeDefined();
+    expect(screen.getByText(/recreate will fail until sbx is upgraded/)).toBeDefined();
+    expect(screen.getByText(/workspace mount target \(create.workspaces\) requires sbx v0.51.0/)).toBeDefined();
+  });
+
   it("warns before recreating the sandbox from its files", async () => {
     renderPage();
 

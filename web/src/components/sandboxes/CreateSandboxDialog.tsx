@@ -170,6 +170,34 @@ export function CreateSandboxDialog({
 
   const templates = useQuery({ queryKey: queryKeys.templates, queryFn: api.templates });
   const kitItems = useQuery({ queryKey: queryKeys.kitItems, queryFn: () => api.kitItems() });
+  // Installed sbx capabilities: unsupported options are disabled with a hint
+  // instead of letting `sbx create` fail on an unknown flag.
+  const compatibility = useQuery({
+    queryKey: queryKeys.sbxCompatibility,
+    queryFn: api.sbxCompatibility,
+    staleTime: 60_000,
+    retry: 0,
+  });
+  const compatibilityInfo = compatibility.data;
+  const featureSupported = (id: string) => {
+    if (!compatibilityInfo?.known) return true;
+    const feature = compatibilityInfo.features?.find((item) => item.id === id);
+    return feature ? feature.supported : true;
+  };
+  const unsupportedHint = (id: string) => {
+    if (!compatibilityInfo?.known) return undefined;
+    const feature = compatibilityInfo.features?.find((item) => item.id === id);
+    if (!feature || feature.supported) return undefined;
+    return `Requires sbx ≥ ${feature.min_version} (installed ${compatibilityInfo.version})`;
+  };
+  const workspacesUnsupported = !featureSupported("create.workspaces");
+  const staticMcpUnsupported = !featureSupported("create.staticMcp");
+  const staticMcpNoneUnsupported = !featureSupported("create.staticMcp.none");
+  const skillsUnsupported = !featureSupported("create.skills");
+  const kitArgsUnsupported = !featureSupported("create.kitArgs");
+  const envFilesUnsupported = !featureSupported("create.envFiles");
+  const staticMcpNoneTyped = staticMcpNoneUnsupported && splitList(staticMcp).includes("none");
+  const staticMcpNoneHint = staticMcpNoneTyped ? unsupportedHint("create.staticMcp.none") : undefined;
   const agentGroups = useMemo(() => agentMenuGroups(AGENTS, kitItems.data ?? []), [kitItems.data]);
   const mixinGroups = useMemo(() => {
     const groups = new Map<string, KitItemView[]>();
@@ -355,7 +383,7 @@ export function CreateSandboxDialog({
             <Button variant="ghost" onClick={close} disabled={busy}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={submit} loading={busy} disabled={!agent || envIssue !== null}>
+            <Button variant="primary" onClick={submit} loading={busy} disabled={!agent || envIssue !== null || staticMcpNoneTyped}>
               Create
             </Button>
           </>
@@ -457,6 +485,8 @@ export function CreateSandboxDialog({
                     }
                     placeholder="container target (optional)"
                     className="w-44 font-mono text-xs"
+                    disabled={workspacesUnsupported}
+                    title={workspacesUnsupported ? unsupportedHint("create.workspaces") : undefined}
                   />
                   <Button size="icon" variant="ghost" title="Choose folder…" onClick={() => void pickFolder(index)}>
                     <IconFolder className="size-3.5" />
@@ -488,6 +518,9 @@ export function CreateSandboxDialog({
                   <IconPlus className="size-3.5" /> Add workspace
                 </Button>
               </div>
+              {workspacesUnsupported ? (
+                <p className="text-2xs text-warning">{unsupportedHint("create.workspaces")}</p>
+              ) : null}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -632,6 +665,9 @@ export function CreateSandboxDialog({
                 One row per argument the kit declares. A bare name applies to every kit; kit.name targets one kit.
                 Selecting a kit below pre-fills its declared arguments.
               </span>
+              {kitArgsUnsupported ? (
+                <p className="text-2xs text-warning">{unsupportedHint("create.kitArgs")}</p>
+              ) : null}
               {kitArgs.length === 0 ? (
                 <p className="text-xs text-faint">No kit argument. Select a kit mixin or add a row.</p>
               ) : null}
@@ -644,6 +680,7 @@ export function CreateSandboxDialog({
                       placeholder="name or kit.name"
                       aria-label={`Kit argument ${index + 1} name`}
                       className="flex-1 font-mono text-xs"
+                      disabled={kitArgsUnsupported}
                     />
                     <Input
                       value={row.value}
@@ -651,6 +688,7 @@ export function CreateSandboxDialog({
                       placeholder="value"
                       aria-label={`Kit argument ${index + 1} value`}
                       className="flex-1 font-mono text-xs"
+                      disabled={kitArgsUnsupported}
                     />
                     {row.required ? <span className="text-2xs text-danger">required</span> : null}
                     <Button
@@ -669,6 +707,7 @@ export function CreateSandboxDialog({
                 <Button
                   size="sm"
                   variant="ghost"
+                  disabled={kitArgsUnsupported}
                   onClick={() => setKitArgs((current) => [...current, { key: "", value: "", auto: false }])}
                 >
                   <IconPlus className="size-3.5" /> Add argument
@@ -687,12 +726,21 @@ export function CreateSandboxDialog({
                 value={envFiles}
                 onChange={(event) => setEnvFiles(event.target.value)}
                 placeholder={"/home/you/.env"}
+                disabled={envFilesUnsupported}
               />
             </Field>
+            {envFilesUnsupported ? (
+              <p className="text-2xs text-warning">{unsupportedHint("create.envFiles")}</p>
+            ) : null}
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Skills mode" htmlFor="cs-skills" hint="Shared skills store mount mode; sbx default when unset.">
-                <Select id="cs-skills" value={skillsMode} onChange={(event) => setSkillsMode(event.target.value)}>
+                <Select
+                  id="cs-skills"
+                  value={skillsMode}
+                  onChange={(event) => setSkillsMode(event.target.value)}
+                  disabled={skillsUnsupported}
+                >
                   {SKILLS_MODES.map((mode) => (
                     <option key={mode.value} value={mode.value}>
                       {mode.label}
@@ -710,9 +758,19 @@ export function CreateSandboxDialog({
                   value={staticMcp}
                   onChange={(event) => setStaticMcp(event.target.value)}
                   placeholder="notion, atlassian"
+                  disabled={staticMcpUnsupported}
+                  aria-invalid={staticMcpNoneTyped ? true : undefined}
+                  className={staticMcpNoneTyped ? "border-warning" : undefined}
                 />
               </Field>
             </div>
+            {skillsUnsupported ? (
+              <p className="text-2xs text-warning">{unsupportedHint("create.skills")}</p>
+            ) : null}
+            {staticMcpUnsupported ? (
+              <p className="text-2xs text-warning">{unsupportedHint("create.staticMcp")}</p>
+            ) : null}
+            {staticMcpNoneHint ? <p className="text-2xs text-warning">{staticMcpNoneHint}</p> : null}
           </div>
         ) : null}
 

@@ -203,6 +203,28 @@ export interface RulesRequest {
 }
 
 /**
+ * SbxCompatibilityDTO reports the installed sbx version and the feature table.
+ * Known is false when the version could not be parsed; the UI then shows no
+ * restriction, matching the backend's fail-open behaviour.
+ */
+export interface SbxCompatibilityDTO {
+    "version": string;
+    "known": boolean;
+    "features": SbxFeatureCompatDTO[] | null;
+}
+
+/**
+ * SbxFeatureCompatDTO is one version-gated feature and whether the installed
+ * sbx supports it.
+ */
+export interface SbxFeatureCompatDTO {
+    "id": string;
+    "label": string;
+    "min_version": string;
+    "supported": boolean;
+}
+
+/**
  * ServiceSecretRequest is the service secret payload.
  */
 export interface ServiceSecretRequest {

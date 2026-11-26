@@ -92,6 +92,7 @@ the exit code is non-zero.
       "mounts": 0,
       "incomplete": false,
       "errors": [],
+      "incompatible": [],
       "detail": { "...": "full sandbox detail projection" }
     }
   ]
@@ -103,7 +104,8 @@ Each entry adds two keys to the shared sandbox shape:
 | Field | Type | Description |
 | --- | --- | --- |
 | `errors` | array of strings | Per-name problems; `["not in daemon: ..."]` when sandboxd does not know the sandbox |
-| `detail` | object, omitted when absent | The full daemon-side projection (same keys as the desktop event payload: `sandbox`, `profiles`, `mounts`, `mounts_error`, `incomplete`, `image`, `image_digest`, `kits`, `secrets`, `custom_secrets`, `policy_rules`, `caches`, `profile_mounts`, `direct_mounts`, `additional_workspaces`, `skills`). `detail.incomplete` mirrors the entry's top-level `incomplete`. |
+| `incompatible` | array of strings | Create-block features the installed sbx cannot run, for example a workspace mount target below v0.51.0. Empty when the version is unknown or everything is supported. See [sbx compatibility](compatibility.md). |
+| `detail` | object, omitted when absent | The full daemon-side projection (same keys as the desktop event payload: `sandbox`, `profiles`, `mounts`, `mounts_error`, `incomplete`, `image`, `image_digest`, `kits`, `incompatible`, `secrets`, `custom_secrets`, `policy_rules`, `caches`, `profile_mounts`, `direct_mounts`, `additional_workspaces`, `skills`). `detail.incomplete` mirrors the entry's top-level `incomplete`. |
 
 With no arguments, every configured sandbox is listed. When any name fails, the document is
 still printed and the exit code is non-zero.

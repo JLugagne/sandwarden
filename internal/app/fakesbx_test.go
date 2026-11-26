@@ -29,6 +29,10 @@ args = sys.argv[1:]
 cmd = args[0] if args else ""
 name = args[1] if len(args) > 1 else ""
 
+if cmd == "version":
+    sys.stdout.write(os.environ.get("FAKE_SBX_VERSION", ""))
+    sys.exit(0)
+
 if cmd == "inspect":
     rows = []
     for line in load():

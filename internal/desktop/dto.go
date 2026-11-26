@@ -203,3 +203,21 @@ type CompleteSandboxRequest struct {
 	Memory string   `json:"memory"`
 	Env    []string `json:"env"`
 }
+
+// SbxFeatureCompatDTO is one version-gated feature and whether the installed
+// sbx supports it.
+type SbxFeatureCompatDTO struct {
+	ID         string `json:"id"`
+	Label      string `json:"label"`
+	MinVersion string `json:"min_version"`
+	Supported  bool   `json:"supported"`
+}
+
+// SbxCompatibilityDTO reports the installed sbx version and the feature table.
+// Known is false when the version could not be parsed; the UI then shows no
+// restriction, matching the backend's fail-open behaviour.
+type SbxCompatibilityDTO struct {
+	Version  string                `json:"version"`
+	Known    bool                  `json:"known"`
+	Features []SbxFeatureCompatDTO `json:"features"`
+}

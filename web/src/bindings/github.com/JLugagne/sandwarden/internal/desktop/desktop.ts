@@ -622,6 +622,16 @@ export function SaveTemplate(sandbox: string, tag: string): $CancellablePromise<
 }
 
 /**
+ * SbxCompatibility reports the installed sbx version and, for every feature
+ * sandwarden version-gates, whether it is supported. A version that cannot be
+ * read yields Known=false and no restriction: the backend fails open for dev
+ * builds and the UI mirrors that.
+ */
+export function SbxCompatibility(): $CancellablePromise<$models.SbxCompatibilityDTO> {
+    return $Call.ByID(3946712413);
+}
+
+/**
  * Search ranks the fleet sandboxes, profiles and caches together with the
  * skill, command and kit catalogs against a free-text query. Results are
  * best-first and capped server side.

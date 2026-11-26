@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/JLugagne/sandwarden/internal/fleet"
+	"github.com/JLugagne/sandwarden/internal/sbx"
 	"github.com/goccy/go-yaml"
 )
 
@@ -19,6 +21,10 @@ type SbxenvExport struct {
 	Name        string
 	Document    []byte
 	Unsupported []string
+	// additionalTargets are the custom mount targets the document carries in
+	// additionalWorkspaces. They are reported when the installed sbx predates
+	// v0.51.0.
+	additionalTargets []string
 }
 
 // sbxenvSchemaVersion is the only schemaVersion `sbx env` accepts.
@@ -89,7 +95,30 @@ func (a *App) ExportSbxenv(name string) (SbxenvExport, error) {
 	if !ok {
 		return SbxenvExport{}, fmt.Errorf("sandbox %q not found in the config directory", name)
 	}
-	return renderSbxenv(s)
+	result, err := renderSbxenv(s)
+	if err != nil {
+		return SbxenvExport{}, err
+	}
+	// The compatibility annotation needs a live client; export stays usable
+	// from tests that build an App around the fleet alone.
+	if a.Sbx != nil {
+		v, _ := a.Sbx.Version(context.Background())
+		annotateSbxenvCompatibility(&result, v)
+	}
+	return result, nil
+}
+
+// annotateSbxenvCompatibility reports the additional-workspace mount targets
+// the installed sbx cannot honor. The targets stay in the document: the export
+// is informational, not a silent downgrade.
+func annotateSbxenvCompatibility(result *SbxenvExport, v sbx.Version) {
+	if result == nil || len(result.additionalTargets) == 0 || v.AtLeast("v0.51.0") {
+		return
+	}
+	result.Unsupported = append(result.Unsupported, fmt.Sprintf(
+		"additionalWorkspaces[].target %s requires sbx v0.51.0 or later; installed sbx is %s (the target is kept in the document)",
+		strings.Join(result.additionalTargets, ", "), v,
+	))
 }
 
 // renderSbxenv maps one sandbox onto the sbxenv schema.
@@ -114,7 +143,13 @@ func renderSbxenv(s *fleet.Sandbox) (SbxenvExport, error) {
 	if err != nil {
 		return SbxenvExport{}, fmt.Errorf("encode sbxenv.yaml for %q: %w", s.Label(), err)
 	}
-	return SbxenvExport{Slug: s.Slug, Name: s.Name(), Document: document, Unsupported: report}, nil
+	var targets []string
+	for _, workspace := range doc.AdditionalWorkspaces {
+		if target := strings.TrimSpace(workspace.Target); target != "" {
+			targets = append(targets, target)
+		}
+	}
+	return SbxenvExport{Slug: s.Slug, Name: s.Name(), Document: document, Unsupported: report, additionalTargets: targets}, nil
 }
 
 // sbxenvName returns the canonical sandbox name when sbxenv accepts it, and

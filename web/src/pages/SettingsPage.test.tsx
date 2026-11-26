@@ -75,6 +75,14 @@ vi.mock("@/api/client", () => ({
     agentsFile: vi.fn(async () => agentsDoc(DEFAULT_AGENTS, true)),
     saveAgentsFile: vi.fn(async (content: string) => agentsDoc(content, false)),
     resetAgentsFile: vi.fn(async () => agentsDoc(DEFAULT_AGENTS, true)),
+    sbxCompatibility: vi.fn(async () => ({
+      version: "v0.43.0",
+      known: true,
+      features: [
+        { id: "create.workspaces", label: "workspace mount target", min_version: "v0.51.0", supported: false },
+        { id: "create.skills", label: "skills mode", min_version: "v0.43.0", supported: true },
+      ],
+    })),
   },
 }));
 
@@ -261,6 +269,16 @@ describe("settings tabs", () => {
 
     expect(await screen.findByText("Shared caches")).toBeDefined();
     expect(screen.getByTestId("location-search").textContent).toBe("?tab=caches");
+  });
+
+  it("shows the installed sbx version and the feature compatibility table", async () => {
+    renderPage();
+
+    expect(await screen.findByText("sbx compatibility")).toBeDefined();
+    expect((await screen.findAllByText("v0.43.0")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("workspace mount target")).toBeDefined();
+    expect(await screen.findByText("unsupported")).toBeDefined();
+    expect(await screen.findByText("supported")).toBeDefined();
   });
 });
 

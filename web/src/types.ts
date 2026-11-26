@@ -164,6 +164,8 @@ export interface SandboxDetail {
   image?: string;
   image_digest?: string;
   kits?: string[] | null;
+  /** Create-block features the installed sbx cannot run. */
+  incompatible?: string[] | null;
   secrets: Secret[] | null;
   custom_secrets: CustomSecret[] | null;
   policy_rules: PolicyRule[] | null;
@@ -613,4 +615,19 @@ export interface NotificationStatus {
   available: boolean;
   authorized: boolean;
   reason?: string;
+}
+
+/** One version-gated sandwarden feature and whether the installed sbx supports it. */
+export interface SbxFeatureCompatibility {
+  id: string;
+  label: string;
+  min_version: string;
+  supported: boolean;
+}
+
+/** Installed sbx version plus the feature table; `known: false` means the UI shows no restriction. */
+export interface SbxCompatibility {
+  version: string;
+  known: boolean;
+  features: SbxFeatureCompatibility[] | null;
 }

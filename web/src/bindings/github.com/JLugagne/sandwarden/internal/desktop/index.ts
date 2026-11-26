@@ -27,6 +27,8 @@ export type {
     RegistrySecretRequest,
     RuleRequest,
     RulesRequest,
+    SbxCompatibilityDTO,
+    SbxFeatureCompatDTO,
     ServiceSecretRequest,
     SkillRefRequest,
     SkillStoreRequest,

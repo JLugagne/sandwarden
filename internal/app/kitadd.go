@@ -64,6 +64,9 @@ func (a *App) AttachKit(ctx context.Context, name, ref string, kitArgs []string,
 		if c := s.App.Create; c != nil && slices.Contains(c.Kits, ref) {
 			return fmt.Errorf("kit %s is already attached to sandbox %s", ref, name)
 		}
+		if err := a.checkKitAddFeatures(ctx, kitArgs); err != nil {
+			return err
+		}
 		output, err := a.Sbx.KitAdd(ctx, name, ref, kitArgs, w)
 		result.Output = output
 		if err != nil {

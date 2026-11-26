@@ -123,6 +123,12 @@ const EMPTY_CACHE: CacheInput = {
 
 export function SettingsPage() {
   const health = useQuery({ queryKey: queryKeys.health, queryFn: api.health, retry: 0 });
+  const sbxCompatibility = useQuery({
+    queryKey: queryKeys.sbxCompatibility,
+    queryFn: api.sbxCompatibility,
+    retry: 0,
+    staleTime: 60_000,
+  });
   const status = useConnectionStatus();
   const [notificationsOn, setNotificationsOn] = useState(notificationsEnabled());
 
@@ -362,6 +368,60 @@ export function SettingsPage() {
                   </span>
                 </div>
               ) : null}
+            </div>
+          ) : null}
+        </Panel>
+
+        <Panel
+          title="sbx compatibility"
+          description="Features sandwarden can use with the installed sbx CLI. An unknown version is treated as compatible."
+          bodyClassName="p-0"
+        >
+          {sbxCompatibility.isLoading ? (
+            <div className="flex justify-center p-6">
+              <Spinner />
+            </div>
+          ) : sbxCompatibility.error ? (
+            <p className="p-4 text-sm text-danger">{errorMessage(sbxCompatibility.error)}</p>
+          ) : sbxCompatibility.data ? (
+            <div className="flex flex-col gap-3 p-4">
+              <DescriptionList>
+                <Description label="Installed sbx">
+                  <span className="inline-flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-xs">{sbxCompatibility.data.version}</span>
+                    {!sbxCompatibility.data.known ? (
+                      <span className="text-xs text-muted">version unknown; compatibility checks are skipped</span>
+                    ) : null}
+                  </span>
+                </Description>
+              </DescriptionList>
+              <TableWrap>
+                <thead>
+                  <tr>
+                    <TH>Feature</TH>
+                    <TH>Requires</TH>
+                    <TH>Status</TH>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(sbxCompatibility.data.features ?? []).map((feature) => (
+                    <TRow key={feature.id}>
+                      <TD>
+                        <span>{feature.label}</span>
+                        <span className="ml-2 font-mono text-2xs text-faint">{feature.id}</span>
+                      </TD>
+                      <TD className="font-mono text-xs">{feature.min_version}</TD>
+                      <TD>
+                        {feature.supported ? (
+                          <Badge tone="success">supported</Badge>
+                        ) : (
+                          <Badge tone="danger">unsupported</Badge>
+                        )}
+                      </TD>
+                    </TRow>
+                  ))}
+                </tbody>
+              </TableWrap>
             </div>
           ) : null}
         </Panel>

@@ -186,6 +186,10 @@ func newFakeSbx(t *testing.T) string {
 	}
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "$SBX_STUB_LOG"
+if [ "$1" = "version" ]; then
+  printf '%s\n' "${FAKE_SBX_VERSION:-}"
+  exit 0
+fi
 if [ "$1" = inspect ]; then
   printf '{"workspace":"/w","runtime_mounts":['
   first=1

@@ -340,6 +340,21 @@ export function SandboxDetailPage() {
         </Panel>
       ) : null}
 
+      {(data.incompatible?.length ?? 0) > 0 ? (
+        <Panel title="Unsupported sbx features" className="mb-4">
+          <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-sm">
+            <span>
+              This config uses features your installed sbx does not support; recreate will fail until sbx is upgraded.
+            </span>
+            <ul className="list-disc pl-5 font-mono text-xs">
+              {(data.incompatible ?? []).map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+          </div>
+        </Panel>
+      ) : null}
+
       <Tabs
         tabs={[
           { id: "overview", label: "Overview" },

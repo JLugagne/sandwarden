@@ -43,6 +43,7 @@ vi.mock("@/api/client", () => ({
     kitItems: vi.fn(async () => []),
     fsPick: vi.fn(async () => ({ path: "/picked/folder" })),
     createSandbox: vi.fn(async () => ({ job_id: "job-1" })),
+    sbxCompatibility: vi.fn(async () => ({ version: "v0.54.0", known: true, features: [] })),
   },
 }));
 
@@ -328,6 +329,40 @@ describe("new sandbox dialog", () => {
         }),
       );
     });
+  });
+
+  it("disables create options the installed sbx cannot run and explains the minimum version", async () => {
+    vi.mocked(api.sbxCompatibility).mockResolvedValueOnce({
+      version: "v0.43.0",
+      known: true,
+      features: [
+        { id: "create.workspaces", label: "workspace mount target", min_version: "v0.51.0", supported: false },
+        { id: "create.skills", label: "skills mode", min_version: "v0.43.0", supported: true },
+        { id: "create.kitArgs", label: "kit arguments", min_version: "v0.43.0", supported: true },
+        { id: "create.envFiles", label: "environment files", min_version: "v0.43.0", supported: true },
+        { id: "create.staticMcp", label: "static MCP servers", min_version: "v0.43.0", supported: true },
+        { id: "create.staticMcp.none", label: "static MCP `none`", min_version: "v0.51.0", supported: false },
+      ],
+    });
+    renderDialog();
+
+    const target = screen.getByPlaceholderText("container target (optional)") as HTMLInputElement;
+    await waitFor(() => expect(target.disabled).toBe(true));
+    expect(screen.getAllByText(/Requires sbx ≥ v0.51.0 \(installed v0.43.0\)/).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("tab", { name: /Advanced/ }));
+    fireEvent.change(screen.getByLabelText(/^Static MCP servers/), { target: { value: "none" } });
+    expect(await screen.findByText(/Requires sbx ≥ v0.51.0/)).toBeDefined();
+    expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows no restriction when the installed sbx version is unknown", async () => {
+    vi.mocked(api.sbxCompatibility).mockResolvedValueOnce({ version: "dev-abc", known: false, features: null });
+    renderDialog();
+
+    const target = screen.getByPlaceholderText("container target (optional)") as HTMLInputElement;
+    expect(target.disabled).toBe(false);
+    expect(screen.queryByText(/Requires sbx/)).toBeNull();
   });
 });
 
