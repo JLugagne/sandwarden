@@ -40,15 +40,21 @@ func (r KitAddResult) Print(w io.Writer) {
 // labels — never leaves a phantom kit in create.kits. A sidecar write failure
 // after a successful sbx run is reported explicitly: the kit is live but
 // unrecorded.
-func (a *App) AttachKit(ctx context.Context, name, ref string, w io.Writer) (KitAddResult, error) {
+func (a *App) AttachKit(ctx context.Context, name, ref string, kitArgs []string, w io.Writer) (KitAddResult, error) {
 	name = strings.TrimSpace(name)
 	ref = a.resolveKitRef(ref)
+	kitArgs = cleanStrings(kitArgs)
 	result := KitAddResult{Sandbox: name, Ref: ref, Report: ApplyReport{Warnings: []string{}, Errors: []string{}}}
 	if name == "" {
 		return result, errors.New("sandbox name is required")
 	}
 	if ref == "" {
 		return result, errors.New("kit reference is required")
+	}
+	for _, arg := range kitArgs {
+		if !strings.Contains(arg, "=") {
+			return result, fmt.Errorf("kit argument %q must be in name=value form", arg)
+		}
 	}
 	if err := a.withFleetLock(func() error {
 		s, ok := a.Fleet.SandboxByName(name)
@@ -58,7 +64,7 @@ func (a *App) AttachKit(ctx context.Context, name, ref string, w io.Writer) (Kit
 		if c := s.App.Create; c != nil && slices.Contains(c.Kits, ref) {
 			return fmt.Errorf("kit %s is already attached to sandbox %s", ref, name)
 		}
-		output, err := a.Sbx.KitAdd(ctx, name, ref, w)
+		output, err := a.Sbx.KitAdd(ctx, name, ref, kitArgs, w)
 		result.Output = output
 		if err != nil {
 			return err
@@ -67,6 +73,7 @@ func (a *App) AttachKit(ctx context.Context, name, ref string, w io.Writer) (Kit
 			s.App.Create = &fleet.SandboxCreate{}
 		}
 		s.App.Create.Kits = append(s.App.Create.Kits, ref)
+		s.App.Create.KitArgs = append(s.App.Create.KitArgs, kitArgs...)
 		if err := a.Fleet.SaveSandbox(s); err != nil {
 			return fmt.Errorf("sbx added the kit but recording it in the sidecar failed: %w", err)
 		}

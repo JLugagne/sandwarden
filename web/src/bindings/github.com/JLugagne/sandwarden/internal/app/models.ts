@@ -277,6 +277,7 @@ export interface SandboxSummary {
     "daemon_profile"?: string;
     "created_at"?: string | null;
     "stopped_at"?: string | null;
+    "last_used_at"?: string | null;
     "ports"?: sbx$0.PublishedPort[] | null;
     "mount_policy_denied": boolean;
     "profiles": string[] | null;

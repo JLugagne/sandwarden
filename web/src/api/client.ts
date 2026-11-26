@@ -127,6 +127,7 @@ export const api = {
       agent: body.agent,
       workspaces: asArray(body.workspaces).map((workspace) => ({
         path: workspace.path,
+        target: workspace.target ?? "",
         read_only: workspace.read_only,
       })),
       name: body.name ?? "",
@@ -135,6 +136,7 @@ export const api = {
       profile: body.profile ?? "",
       template: body.template ?? "",
       kits: asArray(body.kits),
+      kit_args: asArray(body.kit_args),
       profiles: asArray(body.profiles),
       caches: asArray(body.caches),
       skills: asArray(body.skills),
@@ -142,6 +144,9 @@ export const api = {
       mounts: asArray(body.mounts),
       publish: asArray(body.publish),
       env: asArray(body.env),
+      env_files: asArray(body.env_files),
+      skills_mode: body.skills_mode ?? "",
+      static_mcp: asArray(body.static_mcp),
       deny_network: asArray(body.deny_network),
       clone: body.clone ?? false,
       attach_caches: body.attach_caches ?? false,
@@ -159,8 +164,8 @@ export const api = {
     Desktop.ApplySandbox(name, jobID).then((id) => ({ job_id: id })),
   recreateSandbox: (name: string, jobID: string) =>
     Desktop.RecreateSandbox(name, jobID).then((id) => ({ job_id: id })),
-  attachKit: (name: string, ref: string) =>
-    Desktop.AttachKit(name, ref).then((result) => result as unknown as KitAddResult),
+  attachKit: (name: string, ref: string, kitArgs: string[] = []) =>
+    Desktop.AttachKit(name, ref, kitArgs).then((result) => result as unknown as KitAddResult),
   saveTemplate: (name: string, tag: string) => Desktop.SaveTemplate(name, tag),
   validateSandbox: (slug: string) =>
     Desktop.ValidateSandbox(slug).then((result) => result as unknown as KitValidation),

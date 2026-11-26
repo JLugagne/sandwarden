@@ -99,7 +99,7 @@ func TestAttachKitRunsSbxAddAndPersistsReference(t *testing.T) {
 	a, logPath := newKitAddApp(t)
 
 	var out strings.Builder
-	result, err := a.AttachKit(ctx, "alpha", "./mcp-postgres", &out)
+	result, err := a.AttachKit(ctx, "alpha", "./mcp-postgres", nil, &out)
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
@@ -132,10 +132,47 @@ func TestAttachKitRunsSbxAddAndPersistsReference(t *testing.T) {
 	}
 }
 
+func TestAttachKitPassesAndPersistsKitArgs(t *testing.T) {
+	ctx := context.Background()
+	a, logPath := newKitAddApp(t)
+
+	args := []string{"repo=acme/app", "mcp.strict=true"}
+	if _, err := a.AttachKit(ctx, "alpha", "./mcp-postgres", args, nil); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	calls := skillCalls(t, logPath)
+	want := "kit add alpha ./mcp-postgres --kit-arg repo=acme/app --kit-arg mcp.strict=true"
+	if !slices.Contains(calls, want) {
+		t.Fatalf("sbx did not receive the kit arguments: %v", calls)
+	}
+	fresh, err := fleet.Open(a.Fleet.Dir())
+	if err != nil {
+		t.Fatalf("reopen fleet: %v", err)
+	}
+	s, ok := fresh.SandboxByName("alpha")
+	if !ok || s.App.Create == nil {
+		t.Fatal("sandbox alpha missing after reopen")
+	}
+	if !slices.Equal(s.App.Create.KitArgs, args) {
+		t.Fatalf("create.kitArgs = %v, want %v", s.App.Create.KitArgs, args)
+	}
+}
+
+func TestAttachKitRejectsMalformedKitArg(t *testing.T) {
+	a, logPath := newKitAddApp(t)
+	_, err := a.AttachKit(context.Background(), "alpha", "./mcp-postgres", []string{"repo"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "name=value") {
+		t.Fatalf("err = %v, want a name=value error", err)
+	}
+	if calls := skillCalls(t, logPath); len(calls) != 0 {
+		t.Fatalf("sbx was called for a malformed kit argument: %v", calls)
+	}
+}
+
 func TestAttachKitReferenceSurvivesRecreate(t *testing.T) {
 	ctx := context.Background()
 	a, _ := newKitAddApp(t)
-	if _, err := a.AttachKit(ctx, "alpha", "./mcp-postgres", nil); err != nil {
+	if _, err := a.AttachKit(ctx, "alpha", "./mcp-postgres", nil, nil); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	fresh, err := fleet.Open(a.Fleet.Dir())
@@ -161,7 +198,7 @@ func TestAttachKitRefusalLeavesSidecarUnchanged(t *testing.T) {
 	refusal := "ERROR: sandbox 'alpha' was created before the kit-add recreate feature shipped"
 	t.Setenv("FAKE_KIT_SBX_REFUSAL", refusal)
 
-	_, err := a.AttachKit(ctx, "alpha", "./mcp-postgres", nil)
+	_, err := a.AttachKit(ctx, "alpha", "./mcp-postgres", nil, nil)
 	if err == nil || err.Error() != refusal {
 		t.Fatalf("err = %v, want the refusal verbatim: %q", err, refusal)
 	}
@@ -179,7 +216,7 @@ func TestAttachKitRefusalLeavesSidecarUnchanged(t *testing.T) {
 
 func TestAttachKitRejectsRecordedKit(t *testing.T) {
 	a, logPath := newKitAddApp(t)
-	_, err := a.AttachKit(context.Background(), "alpha", "base", nil)
+	_, err := a.AttachKit(context.Background(), "alpha", "base", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "already attached") {
 		t.Fatalf("err = %v, want an already-attached error", err)
 	}
@@ -190,10 +227,10 @@ func TestAttachKitRejectsRecordedKit(t *testing.T) {
 
 func TestAttachKitValidatesBeforeCallingSbx(t *testing.T) {
 	a, logPath := newKitAddApp(t)
-	if _, err := a.AttachKit(context.Background(), "alpha", "   ", nil); err == nil {
+	if _, err := a.AttachKit(context.Background(), "alpha", "   ", nil, nil); err == nil {
 		t.Fatal("expected an error for an empty kit reference")
 	}
-	if _, err := a.AttachKit(context.Background(), "ghost", "./kit", nil); err == nil {
+	if _, err := a.AttachKit(context.Background(), "ghost", "./kit", nil, nil); err == nil {
 		t.Fatal("expected an error for a sandbox without a config")
 	}
 	if calls := skillCalls(t, logPath); len(calls) != 0 {

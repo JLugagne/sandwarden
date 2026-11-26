@@ -72,6 +72,32 @@ func TestKitAddAttachesAndPersists(t *testing.T) {
 	}
 }
 
+func TestKitAddPassesKitArgs(t *testing.T) {
+	env := newCLIEnv(t, "alpha")
+	env.sbxLog = kitSbxStub(t, "")
+	mustCreateSandbox(t, env.fleet(t), "alpha", fleet.SandboxApp{
+		Sandbox: "alpha",
+		Create:  &fleet.SandboxCreate{Kits: []string{"base"}},
+	})
+
+	if _, _, err := env.execute(t, "kit", "add", "alpha", "./mcp-postgres", "--kit-arg", "repo=acme/app"); err != nil {
+		t.Fatalf("kit add: %v", err)
+	}
+	env.requireSbxCall(t, "kit add alpha ./mcp-postgres --kit-arg repo=acme/app")
+
+	fresh, err := fleet.Open(env.opts.ConfigDir)
+	if err != nil {
+		t.Fatalf("reopen fleet: %v", err)
+	}
+	s, ok := fresh.SandboxByName("alpha")
+	if !ok || s.App.Create == nil {
+		t.Fatal("sandbox alpha missing after kit add")
+	}
+	if len(s.App.Create.KitArgs) != 1 || s.App.Create.KitArgs[0] != "repo=acme/app" {
+		t.Fatalf("create.kitArgs = %v, want [repo=acme/app]", s.App.Create.KitArgs)
+	}
+}
+
 func TestKitAddSurfacesRefusalVerbatim(t *testing.T) {
 	env := newCLIEnv(t, "alpha")
 	refusal := "ERROR: sandbox 'alpha' was created before the kit-add recreate feature shipped"

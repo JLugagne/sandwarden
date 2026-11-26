@@ -208,10 +208,16 @@ describe("sandbox config actions", () => {
     fireEvent.change(within(dialog).getByLabelText(/Kit reference/), {
       target: { value: "ghcr.io/acme/mcp-postgres:1.0" },
     });
+    fireEvent.change(within(dialog).getByLabelText(/Kit arguments \(optional\)/), {
+      target: { value: "repo=acme/app\nmcp.strict=true" },
+    });
     fireEvent.click(confirm);
 
     await waitFor(() => {
-      expect(api.attachKit).toHaveBeenCalledWith("alpha", "ghcr.io/acme/mcp-postgres:1.0");
+      expect(api.attachKit).toHaveBeenCalledWith("alpha", "ghcr.io/acme/mcp-postgres:1.0", [
+        "repo=acme/app",
+        "mcp.strict=true",
+      ]);
     });
   });
 });

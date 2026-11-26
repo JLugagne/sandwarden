@@ -74,7 +74,7 @@ func (f *fakeDaemon) handler() http.HandlerFunc {
 				if running {
 					status = "running"
 				}
-				out = append(out, map[string]string{"id": name, "name": name, "status": status, "workspace": "/w"})
+				out = append(out, map[string]string{"id": name, "name": name, "status": status, "workspace": "/w", "last_used_at": "2026-11-04T21:53:24Z"})
 			}
 			f.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(out)
@@ -90,7 +90,7 @@ func (f *fakeDaemon) handler() http.HandlerFunc {
 				_ = json.NewEncoder(w).Encode(map[string]string{"message": "sandbox " + name + " not found"})
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]string{"id": name, "name": name, "status": "running", "workspace": "/w"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": name, "name": name, "status": "running", "workspace": "/w", "last_used_at": "2026-11-04T21:53:24Z"})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/start"):
 			name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/sandbox/"), "/start")
 			f.mu.Lock()

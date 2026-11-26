@@ -12,7 +12,8 @@ backend over in-process bindings and events. The app is never served to a browse
 
 ## Features
 
-- **Sandboxes** — create (agent, workspaces, CPUs/memory, published ports, environment, `--deny-network`,
+- **Sandboxes** — create (agent, workspaces with optional in-container targets, CPUs/memory, published
+  ports, environment and env files, kit arguments, skills mode, static MCP set, `--deny-network`,
   clone), list, inspect, start/stop, delete, run an interactive terminal, and manage bind mounts.
 - **Profiles** — named allow/deny bundles compiled into sandbox-scoped `sandboxd` policy rules. A profile
   can be the *default* for new sandboxes and *global* to every sandbox. A profile is a whitelist **plus**
@@ -28,9 +29,9 @@ backend over in-process bindings and events. The app is never served to a browse
 - **Shared caches** — bind-mount host directories (Go module and build caches, npm, pnpm, yarn presets)
   into sandboxes, shareable across them, auto-attached on creation and re-applied after a restart.
 - **Secrets** — manage service, registry and custom secrets through the `sbx` CLI, including
-  import. sandwarden never writes secret values into a spec: the create form and
-  `sandwarden create --env` reject values that look like credentials (known prefixes such as
-  `sk-`, `ghp_`, `xoxb-`, AWS keys, PEM blocks, long high-entropy tokens); a bare `KEY` reads
+  import. sandwarden never writes secret values into a spec: the create form,
+  `sandwarden create --env` and `--kit-arg` reject values that look like credentials (known prefixes
+  such as `sk-`, `ghp_`, `xoxb-`, AWS keys, PEM blocks, long high-entropy tokens); a bare `KEY` reads
   the value from the host environment, and `sandwarden doctor` scans existing specs.
 - **Traffic** — live egress proxy allow/deny log per sandbox, native desktop notifications for newly
   blocked hosts, and ad-hoc policy actions.
@@ -245,7 +246,9 @@ clears the marker.
 `sandwarden kit add SANDBOX REF` (GUI: **Attach kit**) adds a mixin to an existing sandbox
 without deleting it: sbx swaps the container for one created with the kit appended, so
 kit-owned volumes (agent session state) and a `--clone` sandbox's working tree are
-preserved. The reference is recorded in `create.kits` and survives a later recreate.
+preserved. The reference is recorded in `create.kits` and survives a later recreate. Pass
+`--kit-arg name=value` (or `kit.name=value`) to supply arguments the kit declares; they are recorded
+in `create.kitArgs` too.
 
 Files are also the interface for other tools. `sandwarden export --sbxenv SANDBOX` renders a
 sandbox as an `sbxenv.yaml` for sbx's experimental `sbx env` command, reporting every field

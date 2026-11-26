@@ -16,6 +16,7 @@ type Sandbox struct {
 	Profile              *string           `json:"profile,omitempty"`
 	CreatedAt            *time.Time        `json:"created_at,omitempty"`
 	StoppedAt            *time.Time        `json:"stopped_at,omitempty"`
+	LastUsedAt           *time.Time        `json:"last_used_at,omitempty"`
 	Ports                []PublishedPort   `json:"ports,omitempty"`
 	AdditionalWorkspaces []WorkspaceMount  `json:"additional_workspaces,omitempty"`
 	MountPolicyDenied    *bool             `json:"mount_policy_denied,omitempty"`

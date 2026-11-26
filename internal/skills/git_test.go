@@ -23,7 +23,7 @@ import (
 )
 
 func TestCheckoutClonesAndSwitchesRefs(t *testing.T) {
-	src, _ := newSourceRepo(t)
+	src, first := newSourceRepo(t)
 
 	checkout := filepath.Join(t.TempDir(), "store", "checkout")
 	if err := Checkout(context.Background(), checkout, "file://"+src, "", AuthPublic); err != nil {
@@ -40,11 +40,28 @@ func TestCheckoutClonesAndSwitchesRefs(t *testing.T) {
 		t.Fatalf("expected feature branch content: %v", err)
 	}
 
-	if err := Checkout(context.Background(), checkout, "file://"+src, "v1", AuthPublic); err != nil {
-		t.Fatalf("checkout tag: %v", err)
+	if err := Checkout(context.Background(), checkout, "file://"+src, "refs/tags/v1", AuthPublic); err != nil {
+		t.Fatalf("checkout refs/tags/v1: %v", err)
+	}
+
+	if err := Checkout(context.Background(), checkout, "file://"+src, "refs/heads/feature", AuthPublic); err != nil {
+		t.Fatalf("checkout refs/heads/feature: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(checkout, "feature.txt")); err != nil {
+		t.Fatalf("expected feature branch content: %v", err)
+	}
+
+	firstCommit := first.String()
+	if err := Checkout(context.Background(), checkout, "file://"+src, firstCommit, AuthPublic); err != nil {
+		t.Fatalf("checkout commit SHA %s: %v", firstCommit, err)
 	}
 	if _, err := os.Stat(filepath.Join(checkout, "feature.txt")); !os.IsNotExist(err) {
-		t.Fatalf("tag checkout should not carry the feature file, got %v", err)
+		t.Fatalf("commit checkout should not carry feature.txt, got %v", err)
+	}
+
+	shortCommit := firstCommit[:7]
+	if err := Checkout(context.Background(), checkout, "file://"+src, shortCommit, AuthPublic); err != nil {
+		t.Fatalf("checkout short commit SHA %s: %v", shortCommit, err)
 	}
 
 	if err := Checkout(context.Background(), checkout, "file://"+src, "missing", AuthPublic); err == nil {
@@ -52,6 +69,26 @@ func TestCheckoutClonesAndSwitchesRefs(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(checkout, "feature.txt")); !os.IsNotExist(err) {
 		t.Fatalf("unknown ref should leave the failed clone out of the checkout, got %v", err)
+	}
+}
+
+func TestIsSSHURL(t *testing.T) {
+	cases := []struct {
+		url  string
+		want bool
+	}{
+		{"git@github.com:docker/sbx-kits-contrib.git", true},
+		{"git@gitlab.com:user/repo.git", true},
+		{"ssh://git@github.com/docker/sbx-kits-contrib.git", true},
+		{"ssh://user@server:2222/repo.git", true},
+		{"https://github.com/docker/sbx-kits-contrib.git", false},
+		{"http://github.com/docker/sbx-kits-contrib.git", false},
+		{"file:///local/path", false},
+	}
+	for _, tc := range cases {
+		if got := isSSHURL(tc.url); got != tc.want {
+			t.Errorf("isSSHURL(%q) = %v, want %v", tc.url, got, tc.want)
+		}
 	}
 }
 

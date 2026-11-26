@@ -23,6 +23,10 @@ type CreateSandboxRequest struct {
 	Mounts       []MountRequest    `json:"mounts"`
 	Publish      []string          `json:"publish"`
 	Env          []string          `json:"env"`
+	EnvFiles     []string          `json:"env_files"`
+	SkillsMode   string            `json:"skills_mode"`
+	StaticMCP    []string          `json:"static_mcp"`
+	KitArgs      []string          `json:"kit_args"`
 	DenyNetwork  []string          `json:"deny_network"`
 	Clone        bool              `json:"clone"`
 	AttachCaches bool              `json:"attach_caches"`
@@ -32,6 +36,7 @@ type CreateSandboxRequest struct {
 // WorkspaceSpec is one workspace entry of the create form.
 type WorkspaceSpec struct {
 	Path     string `json:"path"`
+	Target   string `json:"target"`
 	ReadOnly bool   `json:"read_only"`
 }
 

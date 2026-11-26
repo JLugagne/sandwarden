@@ -287,6 +287,70 @@ func TestSbxenvParsePort(t *testing.T) {
 	}
 }
 
+func TestExportSbxenvMapsKitArgsAndWorkspaceTargets(t *testing.T) {
+	core := newExportApp(t)
+	spec := fleet.NewMixin("")
+	spec.Requires = &fleet.SpecRequires{Agent: "claude"}
+	if _, err := core.Fleet.CreateSandbox("args-kit", spec, fleet.SandboxApp{
+		Create: &fleet.SandboxCreate{
+			Workspaces:   []string{"/home/you/src/web", "/home/you/src/api:/srv/api"},
+			Kits:         []string{"./mixins/base", "ghcr.io/org/mcp-postgres:1.0"},
+			KitArgs:      []string{"base.channel=stable", "repo=acme/app"},
+			KitArgsFiles: []string{"/home/you/kit-args"},
+			EnvFiles:     []string{"/home/you/secrets.env"},
+			Skills:       "readonly",
+			StaticMCP:    []string{"notion"},
+		},
+	}); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+	result, err := core.ExportSbxenv("args-kit")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	doc := string(result.Document)
+	for _, want := range []string{
+		"kits:",
+		"source: ./mixins/base",
+		"channel: stable",
+		"repo: acme/app",
+		"source: ghcr.io/org/mcp-postgres:1.0",
+		"additionalWorkspaces:",
+		"path: /home/you/src/api",
+		"target: /srv/api",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("sbxenv document is missing %q\ndocument:\n%s", want, doc)
+		}
+	}
+	for _, want := range []string{
+		"create.skills cannot be expressed in sbxenv.yaml (readonly)",
+		"create.staticMcp cannot be expressed in sbxenv.yaml (notion)",
+		"create.envFiles cannot be expressed in sbxenv.yaml (/home/you/secrets.env)",
+		"create.kitArgsFiles cannot be expressed in sbxenv.yaml (/home/you/kit-args)",
+	} {
+		if !exportContains(result.Unsupported, want) {
+			t.Errorf("unsupported report is missing %q\ngot:\n%s", want, strings.Join(result.Unsupported, "\n"))
+		}
+	}
+}
+
+func TestSbxenvKitName(t *testing.T) {
+	cases := map[string]string{
+		"./mixins/base":           "base",
+		"/home/you/kits/tool":     "tool",
+		"/home/you/kits/tool.zip": "tool",
+		"git+https://github.com/acme/kits#dir=node&ref=v1": "node",
+		"git+https://github.com/acme/kits.git":             "kits",
+		"ghcr.io/org/mcp-postgres:1.0":                     "mcp-postgres",
+	}
+	for ref, want := range cases {
+		if got := sbxenvKitName(ref); got != want {
+			t.Errorf("sbxenvKitName(%q) = %q, want %q", ref, got, want)
+		}
+	}
+}
+
 func TestExportSbxenvErrors(t *testing.T) {
 	core := newExportApp(t)
 	if _, err := core.ExportSbxenv("missing"); err == nil {

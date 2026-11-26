@@ -93,14 +93,26 @@ func SecretReason(value string) string {
 	return "long high-entropy token"
 }
 
-// checkCreateEnvSecrets refuses to persist environment values that look like
-// secret material. A value already present verbatim in the target sandbox's
-// on-disk spec is tolerated, so recreating an existing hand-written config
-// keeps working; `sandwarden doctor` reports those instead.
+// KitArgValueError reports a kit argument whose value looks like secret
+// material. Kit arguments are recorded verbatim in the configuration
+// directory, so a credential passed this way would be written in clear.
+type KitArgValueError struct {
+	Arg    string
+	Reason string
+}
+
+// Error implements error.
+func (e *KitArgValueError) Error() string {
+	return fmt.Sprintf(
+		"kit argument %s looks like a secret value (%s); kit arguments are written in clear to sandwarden.yaml: keep the credential in `sbx secret set` or an env file and reference it from the kit instead",
+		e.Arg, e.Reason)
+}
+
+// checkCreateEnvSecrets refuses to persist environment or kit-argument values
+// that look like secret material. A value already present verbatim in the
+// target sandbox's on-disk spec is tolerated, so recreating an existing
+// hand-written config keeps working; `sandwarden doctor` reports those instead.
 func (a *App) checkCreateEnvSecrets(req CreateRequest) error {
-	if len(req.Opts.Env) == 0 {
-		return nil
-	}
 	existing := map[string]string{}
 	if name := strings.TrimSpace(req.Opts.Name); name != "" {
 		if cfg, ok := a.Fleet.SandboxByName(name); ok {
@@ -121,6 +133,16 @@ func (a *App) checkCreateEnvSecrets(req CreateRequest) error {
 		}
 		if reason := SecretReason(value); reason != "" {
 			return &SecretValueError{Key: key, Reason: reason}
+		}
+	}
+	for _, arg := range req.Opts.KitArgs {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			continue
+		}
+		name, value, _ := strings.Cut(arg, "=")
+		if reason := SecretReason(value); reason != "" {
+			return &KitArgValueError{Arg: strings.TrimSpace(name), Reason: reason}
 		}
 	}
 	return nil

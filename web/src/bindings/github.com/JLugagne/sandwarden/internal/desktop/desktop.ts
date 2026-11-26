@@ -125,8 +125,8 @@ export function AttachCache(name: string, cacheSlug: string): $CancellablePromis
  * recreates the container while preserving kit-owned volumes and --clone
  * workspaces, then the sidecar is re-applied and its report returned.
  */
-export function AttachKit(name: string, ref: string): $CancellablePromise<app$0.KitAddResult> {
-    return $Call.ByID(4277206571, name, ref);
+export function AttachKit(name: string, ref: string, kitArgs: string[] | null): $CancellablePromise<app$0.KitAddResult> {
+    return $Call.ByID(4277206571, name, ref, kitArgs);
 }
 
 /**

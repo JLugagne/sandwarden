@@ -43,6 +43,10 @@ export interface CreateSandboxRequest {
     "mounts": MountRequest[] | null;
     "publish": string[] | null;
     "env": string[] | null;
+    "env_files": string[] | null;
+    "skills_mode": string;
+    "static_mcp": string[] | null;
+    "kit_args": string[] | null;
     "deny_network": string[] | null;
     "clone": boolean;
     "attach_caches": boolean;
@@ -246,5 +250,6 @@ export interface VersionInfo {
  */
 export interface WorkspaceSpec {
     "path": string;
+    "target": string;
     "read_only": boolean;
 }

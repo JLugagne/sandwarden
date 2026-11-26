@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // shortTempDir keeps unix socket paths inside the 104-byte limit macOS enforces.
@@ -40,7 +41,7 @@ func TestListSandboxes(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/sandbox" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`[{"id":"1","name":"box","status":"running","workspace":"/w","agent":"claude","additional_workspaces":[{"dir":"/data","read_only":true}],"ports":[{"host_ip":"127.0.0.1","host_port":8080,"protocol":"tcp","sandbox_port":80}]}]`))
+		_, _ = w.Write([]byte(`[{"id":"1","name":"box","status":"running","workspace":"/w","agent":"claude","last_used_at":"2026-11-04T21:53:24.824718647Z","additional_workspaces":[{"dir":"/data","read_only":true}],"ports":[{"host_ip":"127.0.0.1","host_port":8080,"protocol":"tcp","sandbox_port":80}]}]`))
 	})
 
 	client := New(socket)
@@ -60,6 +61,12 @@ func TestListSandboxes(t *testing.T) {
 	}
 	if len(sb.Ports) != 1 || sb.Ports[0].HostPort != 8080 {
 		t.Fatalf("unexpected ports: %+v", sb.Ports)
+	}
+	if sb.LastUsedAt == nil {
+		t.Fatal("expected last_used_at to decode")
+	}
+	if want := "2026-11-04T21:53:24.824718647Z"; sb.LastUsedAt.UTC().Format(time.RFC3339Nano) != want {
+		t.Fatalf("last_used_at = %s, want %s", sb.LastUsedAt.UTC().Format(time.RFC3339Nano), want)
 	}
 }
 

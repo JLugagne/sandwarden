@@ -220,8 +220,22 @@ func (a *App) recordCreatedSandbox(name string, req CreateRequest) (*fleet.Sandb
 		spec.Permissions = &fleet.SpecPermission{Network: &fleet.SpecNetwork{Deny: deny}}
 	}
 	sidecar := fleet.SandboxApp{
-		Sandbox:  name,
-		Create:   &fleet.SandboxCreate{CPUs: req.Opts.CPUs, Memory: req.Opts.Memory, Workspaces: cleanStrings(req.Opts.Workspaces), Clone: req.Opts.Clone, Template: req.Opts.Template, DaemonProfile: req.Opts.Profile, Publish: cleanStrings(req.Opts.Publish), Kits: a.resolveKitRefs(cleanStrings(req.Opts.Kits))},
+		Sandbox: name,
+		Create: &fleet.SandboxCreate{
+			CPUs:          req.Opts.CPUs,
+			Memory:        req.Opts.Memory,
+			Workspaces:    cleanStrings(req.Opts.Workspaces),
+			Clone:         req.Opts.Clone,
+			Template:      req.Opts.Template,
+			DaemonProfile: req.Opts.Profile,
+			Publish:       cleanStrings(req.Opts.Publish),
+			Kits:          a.resolveKitRefs(cleanStrings(req.Opts.Kits)),
+			KitArgs:       cleanStrings(req.Opts.KitArgs),
+			KitArgsFiles:  cleanStrings(req.Opts.KitArgsFiles),
+			EnvFiles:      cleanStrings(req.Opts.EnvFiles),
+			Skills:        strings.TrimSpace(req.Opts.Skills),
+			StaticMCP:     cleanStrings(req.Opts.StaticMCP),
+		},
 		Profiles: cleanStrings(req.Profiles),
 		Caches:   cleanStrings(req.Caches),
 		Skills:   req.Skills,
@@ -254,6 +268,11 @@ func (a *App) CreateOptionsFromConfig(s *fleet.Sandbox) sbx.CreateOptions {
 		opts.Profile = c.DaemonProfile
 		opts.Publish = append([]string(nil), c.Publish...)
 		opts.Kits = a.resolveKitRefs(c.Kits)
+		opts.KitArgs = append([]string(nil), c.KitArgs...)
+		opts.KitArgsFiles = expandHostPaths(c.KitArgsFiles)
+		opts.EnvFiles = expandHostPaths(c.EnvFiles)
+		opts.Skills = c.Skills
+		opts.StaticMCP = append([]string(nil), c.StaticMCP...)
 	}
 	for key, value := range s.Spec.Env() {
 		if value == "" {
@@ -385,6 +404,18 @@ func cleanStrings(in []string) []string {
 	for _, v := range in {
 		if v = strings.TrimSpace(v); v != "" {
 			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// expandHostPaths trims and resolves a leading ~ on each host path, dropping
+// blanks.
+func expandHostPaths(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, fleet.ExpandHome(v))
 		}
 	}
 	return out

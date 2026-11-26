@@ -88,6 +88,7 @@ func statusJSON(cmd *cobra.Command, core *app.App, args []string) error {
 		entry.ID = detail.Sandbox.ID
 		entry.Status = detail.Sandbox.Status
 		entry.Running = detail.Sandbox.Running
+		entry.LastUsedAt = detail.Sandbox.LastUsedAt
 		entry.Detail = &detail
 		out.Sandboxes = append(out.Sandboxes, entry)
 	}

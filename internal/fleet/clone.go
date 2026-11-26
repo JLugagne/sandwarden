@@ -64,6 +64,10 @@ func (a SandboxApp) Clone() SandboxApp {
 		create.Workspaces = append([]string(nil), a.Create.Workspaces...)
 		create.Publish = append([]string(nil), a.Create.Publish...)
 		create.Kits = append([]string(nil), a.Create.Kits...)
+		create.KitArgs = append([]string(nil), a.Create.KitArgs...)
+		create.KitArgsFiles = append([]string(nil), a.Create.KitArgsFiles...)
+		create.EnvFiles = append([]string(nil), a.Create.EnvFiles...)
+		create.StaticMCP = append([]string(nil), a.Create.StaticMCP...)
 		c.Create = &create
 	}
 	c.Profiles = append([]string(nil), a.Profiles...)

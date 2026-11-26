@@ -18,7 +18,8 @@ func kitCmd(opts *Options) *cobra.Command {
 }
 
 func kitAddCmd(opts *Options) *cobra.Command {
-	return &cobra.Command{
+	var kitArgs []string
+	cmd := &cobra.Command{
 		Use:   "add SANDBOX REF",
 		Short: "Attach a mixin kit to an existing sandbox",
 		Long: "Attach a mixin kit to an existing sandbox without recreating it from scratch.\n" +
@@ -33,7 +34,7 @@ func kitAddCmd(opts *Options) *cobra.Command {
 				return err
 			}
 			defer closeApp()
-			result, err := core.AttachKit(cmd.Context(), args[0], args[1], cmd.OutOrStdout())
+			result, err := core.AttachKit(cmd.Context(), args[0], args[1], kitArgs, cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
@@ -44,4 +45,6 @@ func kitAddCmd(opts *Options) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringArrayVar(&kitArgs, "kit-arg", nil, "value for an argument a kit declares, as name=value for every kit or kit.name=value for one (repeatable)")
+	return cmd
 }

@@ -31,6 +31,7 @@ export interface SandboxSummary {
   daemon_profile?: string;
   created_at?: string;
   stopped_at?: string;
+  last_used_at?: string | null;
   ports?: PublishedPort[] | null;
   mount_policy_denied: boolean;
   /** Config directory adopted from the daemon without its original create parameters. */
@@ -203,6 +204,7 @@ export interface EventEnvelope<T = unknown> {
 
 export interface WorkspaceInput {
   path: string;
+  target?: string;
   read_only: boolean;
 }
 
@@ -221,6 +223,10 @@ export interface CreateSandboxRequest {
   profile?: string;
   template?: string;
   kits?: string[];
+  kit_args?: string[];
+  env_files?: string[];
+  skills_mode?: string;
+  static_mcp?: string[];
   profiles?: string[];
   caches?: string[];
   skills?: SkillRef[];

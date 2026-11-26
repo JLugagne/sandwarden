@@ -46,12 +46,12 @@ func (d *Desktop) KitValidate(storeSlug, name string) (app.KitValidation, error)
 // AttachKit attaches a mixin kit to an existing sandbox: `sbx kit add`
 // recreates the container while preserving kit-owned volumes and --clone
 // workspaces, then the sidecar is re-applied and its report returned.
-func (d *Desktop) AttachKit(name, ref string) (app.KitAddResult, error) {
+func (d *Desktop) AttachKit(name, ref string, kitArgs []string) (app.KitAddResult, error) {
 	if strings.TrimSpace(name) == "" {
 		return app.KitAddResult{}, errors.New("name is required")
 	}
 	if strings.TrimSpace(ref) == "" {
 		return app.KitAddResult{}, errors.New("kit reference is required")
 	}
-	return d.app.AttachKit(d.root, name, ref, nil)
+	return d.app.AttachKit(d.root, name, ref, cleanStrings(kitArgs), nil)
 }

@@ -191,7 +191,11 @@ func TestCreateSandboxRunsJob(t *testing.T) {
 		JobID:      "job-1",
 		Publish:    []string{"8080:80"},
 		Env:        []string{"A=B"},
-		Workspaces: []WorkspaceSpec{{Path: "/tmp/work", ReadOnly: true}},
+		EnvFiles:   []string{"/tmp/api.env"},
+		SkillsMode: "readonly",
+		StaticMCP:  []string{"notion,atlassian"},
+		KitArgs:    []string{"repo=acme/app"},
+		Workspaces: []WorkspaceSpec{{Path: "/tmp/work", Target: "/srv/work", ReadOnly: true}},
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -226,7 +230,11 @@ func TestCreateSandboxRunsJob(t *testing.T) {
 		t.Fatalf("read args: %v", err)
 	}
 	got := strings.TrimSpace(string(args))
-	for _, want := range []string{"create", "shell", "/tmp/work:ro", "--name new-box", "--cpus 2", "--memory 4g", "-p 8080:80", "-e A=B"} {
+	for _, want := range []string{
+		"create", "shell", "/tmp/work:/srv/work:ro", "--name new-box", "--cpus 2", "--memory 4g",
+		"-p 8080:80", "-e A=B", "--kit-arg repo=acme/app", "--env-file /tmp/api.env",
+		"--skills readonly", "--static-mcp notion,atlassian",
+	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected args to contain %q, got %q", want, got)
 		}

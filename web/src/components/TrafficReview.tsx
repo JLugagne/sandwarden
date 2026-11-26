@@ -5,7 +5,7 @@ import { api } from "@/api/client";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { queryKeys } from "@/store/realtime";
 import { formatTime } from "@/lib/format";
-import { classifyTraffic, groupBySandbox, trafficKey } from "@/lib/traffic";
+import { classifyTraffic, groupBySandbox, sandboxMatches, trafficKey } from "@/lib/traffic";
 import { Button, Checkbox, EmptyState, Panel, Select, TableWrap, TD, TH, TRow } from "@/components/ui";
 import type { LogEntry, PolicyLog, PolicyRule, ProfileView } from "@/types";
 
@@ -38,8 +38,8 @@ export function TrafficReview({
   const view = useMemo(() => {
     const scoped = sandbox
       ? {
-          blocked_hosts: (log?.blocked_hosts ?? []).filter((entry) => entry.vm_name === sandbox),
-          allowed_hosts: (log?.allowed_hosts ?? []).filter((entry) => entry.vm_name === sandbox),
+          blocked_hosts: (log?.blocked_hosts ?? []).filter((entry) => sandboxMatches(entry.vm_name, sandbox)),
+          allowed_hosts: (log?.allowed_hosts ?? []).filter((entry) => sandboxMatches(entry.vm_name, sandbox)),
         }
       : log;
     return classifyTraffic(scoped, rules);

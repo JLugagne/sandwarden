@@ -217,7 +217,7 @@ func TestStatusJSONReportsConfigAndDaemonErrors(t *testing.T) {
 }
 
 func TestJSONSchemaKeysArePinned(t *testing.T) {
-	lsSandboxKeys := []string{"caches", "configPath", "configSlug", "id", "incomplete", "mounts", "name", "profiles", "running", "skills", "status"}
+	lsSandboxKeys := []string{"caches", "configPath", "configSlug", "id", "incomplete", "last_used_at", "mounts", "name", "profiles", "running", "skills", "status"}
 	statusSandboxKeys := append(append([]string{}, lsSandboxKeys...), "detail", "errors")
 	slices.Sort(lsSandboxKeys)
 	slices.Sort(statusSandboxKeys)

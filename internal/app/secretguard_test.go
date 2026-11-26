@@ -34,6 +34,49 @@ func TestCreateSandboxRefusesSecretEnvValues(t *testing.T) {
 	}
 }
 
+func TestCreateSandboxRefusesSecretKitArgValues(t *testing.T) {
+	newSkillsStub(t)
+	a, _ := newTestApp(t)
+
+	var out bytes.Buffer
+	err := a.CreateSandbox(context.Background(), CreateRequest{Opts: sbx.CreateOptions{
+		Name:    "box",
+		Agent:   "claude",
+		KitArgs: []string{"repo=acme/app", "token=ghp_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIII"},
+	}}, &out)
+	if err == nil {
+		t.Fatalf("CreateSandbox accepted a secret-looking kit argument; output:\n%s", out.String())
+	}
+	if !strings.Contains(err.Error(), "token") {
+		t.Fatalf("error does not name the kit argument: %v", err)
+	}
+	if _, ok := a.Fleet.SandboxByName("box"); ok {
+		t.Fatalf("a config was written despite the guard; spec:\n%s", out.String())
+	}
+}
+
+func TestCreateSandboxAllowsPlainKitArgValues(t *testing.T) {
+	newSkillsStub(t)
+	a, _ := newTestApp(t)
+
+	var out bytes.Buffer
+	err := a.CreateSandbox(context.Background(), CreateRequest{Opts: sbx.CreateOptions{
+		Name:    "box",
+		Agent:   "claude",
+		KitArgs: []string{"repo=acme/app", "linter.strict=true"},
+	}}, &out)
+	if err != nil {
+		t.Fatalf("CreateSandbox refused legitimate kit arguments: %v", err)
+	}
+	cfg, ok := a.Fleet.SandboxByName("box")
+	if !ok || cfg.App.Create == nil {
+		t.Fatalf("config was not written; output:\n%s", out.String())
+	}
+	if len(cfg.App.Create.KitArgs) != 2 {
+		t.Fatalf("create.kitArgs = %v, want two entries", cfg.App.Create.KitArgs)
+	}
+}
+
 func TestSecretReason(t *testing.T) {
 	cases := []struct {
 		name  string

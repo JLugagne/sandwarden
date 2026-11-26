@@ -100,7 +100,7 @@ func TestAttachKitResolvesRemoteKitToCheckout(t *testing.T) {
 	reg, local := registerKitStore(t, a, "git@github.com:acme/kits.git")
 
 	var out strings.Builder
-	result, err := a.AttachKit(ctx, "alpha", "git+"+reg.URL+"#dir=kits/go-agent&ref=v1", &out)
+	result, err := a.AttachKit(ctx, "alpha", "git+"+reg.URL+"#dir=kits/go-agent&ref=v1", nil, &out)
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
@@ -157,6 +157,79 @@ func TestResolveKitRefMatchesAcrossURLSchemes(t *testing.T) {
 	} {
 		if got := a.resolveKitRef(ref); got != local {
 			t.Fatalf("resolveKitRef(%q) = %q, want %q", ref, got, local)
+		}
+	}
+}
+
+func TestParseKitSpecWithRequiredArgs(t *testing.T) {
+	dir := t.TempDir()
+	specContent := `schemaVersion: "2"
+kind: mixin
+name: github-clone
+displayName: GitHub Clone
+description: Clones a GitHub repository into the sandbox at create time
+args:
+  repo:
+    required: true
+    description: GitHub repository to clone
+  ref:
+    default: ""
+    description: Optional git ref
+permissions:
+  network:
+    allow:
+      - api.github.com
+      - github.com
+setup:
+  install:
+    - command: echo "installing"
+`
+	if err := os.WriteFile(filepath.Join(dir, "spec.yaml"), []byte(specContent), 0o644); err != nil {
+		t.Fatalf("write spec: %v", err)
+	}
+
+	spec, err := parseKitSpec(dir)
+	if err != nil {
+		t.Fatalf("parseKitSpec failed: %v", err)
+	}
+	if spec.Name != "github-clone" {
+		t.Errorf("spec.Name = %q, want github-clone", spec.Name)
+	}
+	if spec.DisplayName != "GitHub Clone" {
+		t.Errorf("spec.DisplayName = %q, want GitHub Clone", spec.DisplayName)
+	}
+	if len(spec.Arguments) != 2 {
+		t.Fatalf("spec.Arguments length = %d, want 2", len(spec.Arguments))
+	}
+	repoArg, ok := spec.Arguments["repo"]
+	if !ok || !repoArg.Required {
+		t.Errorf("spec.Arguments[repo] = %+v, want required=true", repoArg)
+	}
+	refArg, ok := spec.Arguments["ref"]
+	if !ok || refArg.Default == nil || *refArg.Default != "" {
+		t.Errorf("spec.Arguments[ref] = %+v, want default empty string", refArg)
+	}
+	if len(spec.Permissions.Network.Allow) != 2 {
+		t.Errorf("network allow = %v, want 2 entries", spec.Permissions.Network.Allow)
+	}
+}
+
+func TestSandboxMatches(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"box", "box", true},
+		{"box", "BOX", true},
+		{"my-sandbox", "my_sandbox", true},
+		{"my-sandbox-1", "My-Sandbox-1", true},
+		{"box-1", "box-2", false},
+		{"", "", true},
+		{"box", "", false},
+	}
+	for _, tc := range cases {
+		if got := sandboxMatches(tc.a, tc.b); got != tc.want {
+			t.Errorf("sandboxMatches(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
 		}
 	}
 }

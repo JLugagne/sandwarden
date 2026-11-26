@@ -36,8 +36,11 @@ sandwarden export --sbxenv -o DIR               # one <slug>.sbxenv.yaml per san
 | `name` | sidecar `sandbox:`, falling back to `spec.displayName` | Emitted only when the name matches `^[a-zA-Z0-9][a-zA-Z0-9.-]+$`, is at least two characters and is not `default`. Otherwise the key is omitted (sbx derives `<agent>-<workspace basename>`) and the name is reported. |
 | `agent` | `spec.requires.agent` | Required: an export of a sandbox without an agent fails. |
 | `kits[]` | `create.kits` | Bare references, verbatim (the same values sandwarden passes to `sbx create --kit`). A relative source (`./…`, `../…`, `.`, `..`, `….zip`) is resolved by sbxenv against the directory of the `sbxenv.yaml`, which is reported. |
-| `workspace.path` | the first writable entry of `create.workspaces` | sbxenv mounts a single read-write workspace. Read-only (`:ro`) entries and additional workspaces are reported and dropped. A relative path is reported because sbxenv resolves it against the `sbxenv.yaml` file. |
+| `kits[].args` | `create.kitArgs` | A kit with matching arguments becomes a mapping (`source:` + `args:`) instead of a bare reference. A bare `name=value` kit argument is copied into every kit's `args`; `kit.name=value` goes to the kit whose reference or last path segment is `kit`. An argument that matches no kit is reported. |
+| `workspace.path` | the first writable entry of `create.workspaces` | sbxenv mounts a single read-write workspace. Read-only (`:ro`) entries are reported and dropped. A relative path is reported because sbxenv resolves it against the `sbxenv.yaml` file. |
 | `workspace.clone` | `create.clone` | Mapped when a workspace path exists, since `sbx env` exposes `workspace.clone` (the equivalent of `sbx create --clone`). Without a workspace it is reported. |
+| `additionalWorkspaces[].path` | every other writable entry of `create.workspaces` | Emitted when a primary workspace exists, as sbxenv requires. |
+| `additionalWorkspaces[].target` | the `TARGET` of a `PATH:TARGET[:ro]` workspace entry | Set when the entry names a custom in-container mount path. The primary workspace block has no target field, so a target on the only writable entry is reported. |
 | `env` | `spec.environment.variables` | A mapping with sorted keys. A bare key (no value) takes its value from the host environment at create time, which sbxenv cannot express, so it is reported and omitted. |
 | `ports[].sandbox` | `create.publish` entries | Parsed as `[[HOST_IP:]HOST_PORT:]SANDBOX_PORT[/PROTOCOL]`, the `sbx create -p` syntax. |
 | `ports[].host` | same | Set for `HOST:SANDBOX` entries; omitted for `SANDBOX` entries so sbxenv picks an ephemeral host port, exactly as `sbx create -p SANDBOX` does. |
@@ -60,8 +63,12 @@ them silently:
 | `runArgs` | `runArgs` |
 | `create.cpus`, `create.memory` | `create.cpus`, `create.memory` |
 | `create.template`, `create.daemonProfile` | `create.template`, `create.daemonProfile` |
+| `create.skills`, `create.staticMcp` | `create.skills`, `create.staticMcp` — sbxenv has no field for the skills store mode or the fixed MCP set |
+| `create.envFiles`, `create.kitArgsFiles` | `create.envFiles`, `create.kitArgsFiles` — sbxenv has no equivalent file input, and the exported document carries only the resolved `env` and `kits[].args` mappings |
+| `create.kitArgs` entries that match no kit | one line per entry |
 | `create.incomplete: true` | a warning that the export may be missing create parameters |
-| additional / read-only `create.workspaces` entries | one line per entry |
+| read-only `create.workspaces` entries | one line per entry |
+| the `TARGET` of the only writable `create.workspaces` entry | one line, because `workspace:` has no target field |
 | host-IP publishes (`127.0.0.1:8080:3000`) | one line per entry; the whole binding is dropped, because sbxenv has no bind-address field and publishing it anyway would widen the exposure to every interface |
 | `spec.permissions.network.allow`, `.deny` | `permissions.network.allow`, `permissions.network.deny`; sbxenv rejects a `network` key, so there is no equivalent to map onto |
 | `spec.ports` | `spec.ports` — kit-declared container ports are informational; publishing comes from `create.publish` |

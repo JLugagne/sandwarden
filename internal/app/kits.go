@@ -15,6 +15,7 @@ import (
 	"github.com/JLugagne/sandwarden/internal/sbx"
 	"github.com/JLugagne/sandwarden/internal/skills"
 	"github.com/JLugagne/sandwarden/internal/store"
+	"github.com/goccy/go-yaml"
 )
 
 // KitStoreView is a kit repository registration plus its checkout and sync
@@ -194,13 +195,18 @@ func (a *App) syncKitStore(ctx context.Context, reg *fleet.StoreReg) (*fleet.Sto
 	skipped := 0
 	var firstSkip error
 	for _, candidate := range candidates {
-		spec, err := a.Sbx.KitInspect(ctx, filepath.Join(path, filepath.FromSlash(candidate.RelPath)))
+		candidateDir := filepath.Join(path, filepath.FromSlash(candidate.RelPath))
+		spec, err := a.Sbx.KitInspect(ctx, candidateDir)
 		if err != nil {
-			skipped++
-			if firstSkip == nil {
-				firstSkip = fmt.Errorf("%s: %w", candidate.RelPath, err)
+			var parseErr error
+			spec, parseErr = parseKitSpec(candidateDir)
+			if parseErr != nil {
+				skipped++
+				if firstSkip == nil {
+					firstSkip = fmt.Errorf("%s: %w", candidate.RelPath, err)
+				}
+				continue
 			}
-			continue
 		}
 		raw, err := json.Marshal(spec)
 		if err != nil {
@@ -211,9 +217,13 @@ func (a *App) syncKitStore(ctx context.Context, reg *fleet.StoreReg) (*fleet.Sto
 		if name == "" {
 			name = candidate.Name
 		}
+		kind := strings.TrimSpace(spec.Kind)
+		if kind == "" {
+			kind = "mixin"
+		}
 		items = append(items, store.KitItem{
 			Store:         reg.Slug,
-			Kind:          strings.TrimSpace(spec.Kind),
+			Kind:          kind,
 			Name:          name,
 			DisplayName:   spec.DisplayName,
 			Description:   spec.Description,
@@ -247,6 +257,44 @@ func (a *App) syncKitStore(ctx context.Context, reg *fleet.StoreReg) (*fleet.Sto
 		return reg, err
 	}
 	return reg, nil
+}
+
+// parseKitSpec reads spec.yaml directly when sbx kit inspect fails (such as
+// when a kit requires runtime arguments like --kit-arg repo=...).
+func parseKitSpec(dir string) (sbx.KitSpec, error) {
+	specPath := filepath.Join(dir, "spec.yaml")
+	data, err := os.ReadFile(specPath)
+	if err != nil {
+		return sbx.KitSpec{}, err
+	}
+	var rawMap map[string]any
+	if err := yaml.Unmarshal(data, &rawMap); err != nil {
+		return sbx.KitSpec{}, fmt.Errorf("parse spec.yaml: %w", err)
+	}
+	if rawMap == nil {
+		rawMap = make(map[string]any)
+	}
+	// Normalize args -> arguments if arguments is not populated
+	if rawMap["arguments"] == nil && rawMap["args"] != nil {
+		rawMap["arguments"] = rawMap["args"]
+	}
+	// Normalize network permissions if allowedDomains is used instead of allow
+	if perms, ok := rawMap["permissions"].(map[string]any); ok {
+		if net, ok := perms["network"].(map[string]any); ok {
+			if net["allow"] == nil && net["allowedDomains"] != nil {
+				net["allow"] = net["allowedDomains"]
+			}
+		}
+	}
+	jsonBytes, err := json.Marshal(rawMap)
+	if err != nil {
+		return sbx.KitSpec{}, fmt.Errorf("marshal kit spec JSON: %w", err)
+	}
+	var spec sbx.KitSpec
+	if err := json.Unmarshal(jsonBytes, &spec); err != nil {
+		return sbx.KitSpec{}, fmt.Errorf("decode kit spec: %w", err)
+	}
+	return spec, nil
 }
 
 func (a *App) kitStoreView(ctx context.Context, reg fleet.StoreReg) KitStoreView {

@@ -14,27 +14,42 @@ export function trafficKey(entry: LogEntry): string {
   return `${entry.vm_name}\u0000${entry.host}`;
 }
 
-function bareHost(host: string): string {
-  return host.trim().toLowerCase().replace(/:\d+$/, "");
+export function bareHost(host: string): string {
+  let h = host.trim().toLowerCase();
+  h = h.replace(/^[a-z][a-z0-9+.-]*:\/\//, ""); // strip scheme (http://, https://)
+  h = h.replace(/\/.*$/, ""); // strip trailing path
+  return h.replace(/:\d+$/, ""); // strip port
+}
+
+export function sandboxMatches(a: string | undefined, b: string | undefined): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  const normA = a.trim().toLowerCase();
+  const normB = b.trim().toLowerCase();
+  if (normA === normB) return true;
+  const slugA = normA.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const slugB = normB.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return slugA === slugB;
 }
 
 /** Whether a policy resource pattern (exact, `*.domain`, `**.domain` or `*`) covers host. */
 export function hostMatches(pattern: string, host: string): boolean {
-  const want = pattern.trim().toLowerCase();
+  const want = bareHost(pattern);
   const got = bareHost(host);
   if (want === "*" || want === "**") return true;
   const wildcard = /^\*{1,2}\./.exec(want);
   if (wildcard) return got.endsWith(want.slice(wildcard[0].length - 1));
-  return bareHost(want) === got;
+  return want === got;
 }
 
 function appliesTo(rule: PolicyRule, sandbox: string): boolean {
-  return !rule.sandbox_id || rule.sandbox_id === sandbox;
+  return !rule.sandbox_id || sandboxMatches(rule.sandbox_id, sandbox);
 }
 
 function decisionOf(rules: PolicyRule[], entry: LogEntry): "allow" | "deny" | null {
   let allowed = false;
   for (const rule of rules) {
+    if (rule.status && (rule.status.toLowerCase() === "disabled" || rule.status.toLowerCase() === "inactive")) continue;
     if (!appliesTo(rule, entry.vm_name)) continue;
     if (!(rule.resources ?? []).some((resource) => hostMatches(resource, entry.host))) continue;
     if (rule.decision.toLowerCase().includes("deny")) return "deny";
@@ -46,15 +61,46 @@ function decisionOf(rules: PolicyRule[], entry: LogEntry): "allow" | "deny" | nu
 export function classifyTraffic(log: PolicyLog | undefined, rules: PolicyRule[]): TrafficView {
   const view: TrafficView = { pending: [], denied: [], allowed: [] };
   const allowed = new Map<string, LogEntry>();
+  const denied = new Map<string, LogEntry>();
   for (const entry of log?.allowed_hosts ?? []) allowed.set(trafficKey(entry), entry);
   for (const entry of log?.blocked_hosts ?? []) {
     const decision = decisionOf(rules, entry);
-    if (decision === "deny") view.denied.push(entry);
-    else if (decision === "allow") {
+    if (decision === "deny") {
+      denied.set(trafficKey(entry), entry);
+    } else if (decision === "allow") {
       if (!allowed.has(trafficKey(entry))) allowed.set(trafficKey(entry), entry);
-    } else view.pending.push(entry);
+    } else {
+      view.pending.push(entry);
+    }
   }
+
+  // Include explicit deny rules so rejected domains are visible even before or without logged proxy events
+  for (const rule of rules) {
+    if (rule.status && (rule.status.toLowerCase() === "disabled" || rule.status.toLowerCase() === "inactive")) continue;
+    if (!rule.decision.toLowerCase().includes("deny")) continue;
+    for (const res of rule.resources ?? []) {
+      if (res === "*" || res === "**") continue;
+      const host = bareHost(res);
+      if (!host) continue;
+      const alreadyCovered = [...denied.values()].some(
+        (e) => hostMatches(res, e.host) && (!rule.sandbox_id || sandboxMatches(e.vm_name, rule.sandbox_id)),
+      );
+      if (alreadyCovered) continue;
+      const syntheticEntry: LogEntry = {
+        host,
+        vm_name: rule.sandbox_id || "",
+        proxy_type: rule.origin || "policy",
+        rule: rule.name || rule.id || "deny",
+        last_seen: "",
+        since: "",
+        count_since: 0,
+      };
+      denied.set(trafficKey(syntheticEntry), syntheticEntry);
+    }
+  }
+
   view.allowed = [...allowed.values()];
+  view.denied = [...denied.values()];
   return view;
 }
 

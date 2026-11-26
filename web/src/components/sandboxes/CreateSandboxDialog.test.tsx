@@ -251,6 +251,84 @@ describe("new sandbox dialog", () => {
     fireEvent.click(create);
     expect(api.createSandbox).not.toHaveBeenCalled();
   });
+
+  it("collects the advanced create options", async () => {
+    vi.mocked(api.createSandbox).mockClear();
+    renderDialog();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Advanced/ }));
+    fireEvent.change(screen.getByLabelText(/^Environment files/), { target: { value: "/tmp/api.env" } });
+    fireEvent.change(screen.getByLabelText(/^Skills mode/), { target: { value: "readonly" } });
+    fireEvent.change(screen.getByLabelText(/^Static MCP servers/), {
+      target: { value: "notion, atlassian" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Add argument/ }));
+    fireEvent.change(screen.getByLabelText("Kit argument 1 name"), { target: { value: "repo" } });
+    fireEvent.change(screen.getByLabelText("Kit argument 1 value"), { target: { value: "acme/app" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => {
+      expect(api.createSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kit_args: ["repo=acme/app"],
+          env_files: ["/tmp/api.env"],
+          skills_mode: "readonly",
+          static_mcp: ["notion", "atlassian"],
+        }),
+      );
+    });
+  });
+
+  it("pre-fills the arguments a selected kit declares and marks required ones", async () => {
+    vi.mocked(api.kitItems).mockResolvedValue([
+      kitItem({
+        kind: "mixin",
+        name: "postgres",
+        display_name: "Postgres",
+        ref: "git+https://github.com/acme/kits#dir=postgres",
+        spec: {
+          schemaVersion: "1",
+          kind: "mixin",
+          name: "postgres",
+          arguments: {
+            repo: { required: true, description: "Repository to sync" },
+            version: { default: "1.0" },
+          },
+        },
+      }),
+    ]);
+    renderDialog();
+
+    fireEvent.click(await screen.findByLabelText("Postgres"));
+    fireEvent.click(screen.getByRole("tab", { name: /Advanced/ }));
+
+    expect(await screen.findByDisplayValue("postgres.repo")).toBeDefined();
+    expect(screen.getByDisplayValue("1.0")).toBeDefined();
+    expect(screen.getByText("required")).toBeDefined();
+    expect(screen.getByText("Repository to sync")).toBeDefined();
+  });
+
+  it("passes a workspace container target", async () => {
+    vi.mocked(api.createSandbox).mockClear();
+    renderDialog();
+
+    fireEvent.change(screen.getByPlaceholderText("/absolute/host/path"), {
+      target: { value: "/host/project" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("container target (optional)"), {
+      target: { value: "/srv/project" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => {
+      expect(api.createSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaces: [{ path: "/host/project", target: "/srv/project", read_only: false }],
+        }),
+      );
+    });
+  });
 });
 
 describe("secret env heuristic", () => {

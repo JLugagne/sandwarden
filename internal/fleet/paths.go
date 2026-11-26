@@ -31,6 +31,12 @@ func (a *SandboxApp) normalize() {
 		for i := range a.Create.Workspaces {
 			a.Create.Workspaces[i] = ExpandHome(a.Create.Workspaces[i])
 		}
+		for i := range a.Create.EnvFiles {
+			a.Create.EnvFiles[i] = ExpandHome(a.Create.EnvFiles[i])
+		}
+		for i := range a.Create.KitArgsFiles {
+			a.Create.KitArgsFiles[i] = ExpandHome(a.Create.KitArgsFiles[i])
+		}
 	}
 }
 

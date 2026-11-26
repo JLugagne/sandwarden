@@ -28,6 +28,7 @@ fails the command; it is reported here instead.
 | `id` | string | sandboxd id, empty when the daemon is unreachable or the sandbox is unknown |
 | `status` | string | sandboxd status (`running`, `stopped`, ...), empty when not in the daemon |
 | `running` | bool | Whether the daemon reports the sandbox as running |
+| `last_used_at` | string, omitted when unknown | Last-used timestamp reported by sandboxd (RFC3339) |
 | `configSlug` | string | Directory slug under `<config>/sandboxes/`, empty when there is no config directory |
 | `configPath` | string | Absolute path of that config directory, empty when there is none |
 | `profiles` | array of strings | Profile slugs recorded in `sandwarden.yaml` (file side, not daemon-resolved names) |
@@ -49,6 +50,7 @@ The counts and `profiles` describe the files; they do not claim the daemon has t
       "id": "web",
       "status": "running",
       "running": true,
+      "last_used_at": "2026-11-04T21:53:24Z",
       "configSlug": "web",
       "configPath": "/home/me/.config/sandwarden/sandboxes/web",
       "profiles": ["dev"],
@@ -81,6 +83,7 @@ the exit code is non-zero.
       "id": "web",
       "status": "running",
       "running": true,
+      "last_used_at": "2026-11-04T21:53:24Z",
       "configSlug": "web",
       "configPath": "/home/me/.config/sandwarden/sandboxes/web",
       "profiles": ["dev"],
@@ -183,6 +186,25 @@ doctor: 1 environment value(s) look like secrets; rotate them, store them with `
 ```
 
 A clean fleet exits 0. See [secrets.md](secrets.md) for the rules and the bare `KEY` form.
+
+## create and kit add flags
+
+`sandwarden create` records every new create option in `create:` (see
+[configuration.md](configuration.md#create-the-recorded-create-parameters)), so a later `recreate`
+replays it. The newer `sbx create` options are:
+
+| Flag | Recorded key | Description |
+| --- | --- | --- |
+| `--kit-arg name=value` (repeatable) | `kitArgs` | Value for an argument a kit declares. A bare `name=value` applies to every kit; `kit.name=value` targets one. |
+| `--kit-args-file PATH` (repeatable) | `kitArgsFiles` | File of `name=value` kit arguments, one per line. `--kit-arg` wins. |
+| `--env-file PATH` (repeatable) | `envFiles` | Read environment variables from a file, keeping secrets out of `spec.yaml`. `--env` wins. |
+| `--skills off\|readonly\|readwrite` | `skills` | Shared skills store mount mode. Empty uses sbx's default. |
+| `--static-mcp LIST` (repeatable) | `staticMcp` | Fixed MCP server set chosen at creation. Comma-separated values and repeated flags accumulate; `none` is allowed. |
+
+A workspace may be given as `PATH[:TARGET][:ro]`; `TARGET` is the in-container mount path.
+
+`sandwarden kit add SANDBOX REF --kit-arg name=value` (repeatable) passes the arguments to
+`sbx kit add` and records them in `create.kitArgs`, so later recreates keep them.
 
 ## Exit codes and stderr
 

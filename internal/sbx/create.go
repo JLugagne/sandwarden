@@ -27,18 +27,28 @@ func BinaryPath() string {
 // long image pull; the CLI owns naming, progress and lazy pulls, so creation is
 // delegated to it.
 type CreateOptions struct {
-	Agent       string
-	Workspaces  []string
-	Name        string
-	CPUs        int
-	Memory      string
-	Profile     string
-	Template    string
-	Kits        []string
-	Publish     []string
-	Env         []string
-	DenyNetwork []string
-	Clone       bool
+	Agent        string
+	Workspaces   []string
+	Name         string
+	CPUs         int
+	Memory       string
+	Profile      string
+	Template     string
+	Kits         []string
+	KitArgs      []string
+	KitArgsFiles []string
+	Publish      []string
+	Env          []string
+	EnvFiles     []string
+	Skills       string
+	StaticMCP    []string
+	DenyNetwork  []string
+	Clone        bool
+}
+
+// createSkillsModes are the values `sbx create --skills` accepts.
+var createSkillsModes = map[string]bool{
+	"off": true, "readonly": true, "readwrite": true,
 }
 
 // Args builds the sbx argument vector for the create options.
@@ -68,11 +78,43 @@ func (o CreateOptions) Args() ([]string, error) {
 			args = append(args, "--kit", kit)
 		}
 	}
+	for _, kitArg := range o.KitArgs {
+		kitArg = strings.TrimSpace(kitArg)
+		if kitArg == "" {
+			continue
+		}
+		if !strings.Contains(kitArg, "=") {
+			return nil, fmt.Errorf("kit argument %q must be in name=value form", kitArg)
+		}
+		args = append(args, "--kit-arg", kitArg)
+	}
+	for _, path := range o.KitArgsFiles {
+		if path = strings.TrimSpace(path); path != "" {
+			args = append(args, "--kit-args-file", path)
+		}
+	}
+	skills := strings.TrimSpace(o.Skills)
+	if skills != "" {
+		if !createSkillsModes[skills] {
+			return nil, fmt.Errorf("invalid skills mode %q (must be off, readonly or readwrite)", skills)
+		}
+		args = append(args, "--skills", skills)
+	}
+	for _, mcp := range o.StaticMCP {
+		if mcp = strings.TrimSpace(mcp); mcp != "" {
+			args = append(args, "--static-mcp", mcp)
+		}
+	}
 	for _, p := range o.Publish {
 		args = append(args, "-p", p)
 	}
 	for _, e := range o.Env {
 		args = append(args, "-e", e)
+	}
+	for _, path := range o.EnvFiles {
+		if path = strings.TrimSpace(path); path != "" {
+			args = append(args, "--env-file", path)
+		}
 	}
 	for _, h := range o.DenyNetwork {
 		args = append(args, "--deny-network", h)

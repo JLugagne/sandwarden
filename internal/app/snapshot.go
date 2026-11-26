@@ -29,6 +29,7 @@ type SandboxSummary struct {
 	DaemonProfile     string              `json:"daemon_profile,omitempty"`
 	CreatedAt         *time.Time          `json:"created_at,omitempty"`
 	StoppedAt         *time.Time          `json:"stopped_at,omitempty"`
+	LastUsedAt        *time.Time          `json:"last_used_at,omitempty"`
 	Ports             []sbx.PublishedPort `json:"ports,omitempty"`
 	MountPolicyDenied bool                `json:"mount_policy_denied"`
 	Profiles          []string            `json:"profiles"`
@@ -151,6 +152,7 @@ func buildSummary(s sbx.Sandbox, profileNames []string, runArgs string) SandboxS
 		Workspace:         s.Workspace,
 		CreatedAt:         s.CreatedAt,
 		StoppedAt:         s.StoppedAt,
+		LastUsedAt:        s.LastUsedAt,
 		Ports:             s.Ports,
 		MountPolicyDenied: s.MountPolicyDenied != nil && *s.MountPolicyDenied,
 		Profiles:          append([]string{}, profileNames...),
