@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -41,17 +42,19 @@ func lsCmd(opts *Options) *cobra.Command {
 					entry.ID = s.ID
 					entry.Status = s.Status
 					entry.Running = s.Running
+					entry.LastUsedAt = s.LastUsedAt
 					out.Sandboxes = append(out.Sandboxes, entry)
 				}
 				return writeJSON(cmd.OutOrStdout(), out)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%-28s %-10s %-24s %s\n", "SANDBOX", "STATUS", "PROFILES", "CONFIG")
+			now := time.Now()
+			fmt.Fprintf(cmd.OutOrStdout(), "%-28s %-10s %-24s %-10s %s\n", "SANDBOX", "STATUS", "PROFILES", "LAST USED", "CONFIG")
 			for _, s := range summaries {
 				configDir := "-"
 				if slug, ok := configSlug(core, s.Name); ok {
 					configDir = slug
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%-28s %-10s %-24s %s\n", s.Name, s.Status, strings.Join(s.Profiles, ","), configDir)
+				fmt.Fprintf(cmd.OutOrStdout(), "%-28s %-10s %-24s %-10s %s\n", s.Name, s.Status, strings.Join(s.Profiles, ","), humanizeAge(s.LastUsedAt, now), configDir)
 			}
 			return nil
 		},

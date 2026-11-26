@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/JLugagne/sandwarden/internal/fleet"
+	"github.com/JLugagne/sandwarden/internal/sbx"
 	"github.com/goccy/go-yaml"
 )
 
@@ -19,6 +21,10 @@ type SbxenvExport struct {
 	Name        string
 	Document    []byte
 	Unsupported []string
+	// additionalTargets are the custom mount targets the document carries in
+	// additionalWorkspaces. They are reported when the installed sbx predates
+	// v0.51.0.
+	additionalTargets []string
 }
 
 // sbxenvSchemaVersion is the only schemaVersion `sbx env` accepts.
@@ -27,13 +33,36 @@ const sbxenvSchemaVersion = 1
 // sbxenvDocument is the subset of the sbxenv.yaml schema sandwarden fills.
 // The field order is the document order, so the output is deterministic.
 type sbxenvDocument struct {
-	SchemaVersion int              `yaml:"schemaVersion"`
-	Name          string           `yaml:"name,omitempty"`
-	Agent         string           `yaml:"agent"`
-	Kits          []string         `yaml:"kits,omitempty"`
-	Workspace     *sbxenvWorkspace `yaml:"workspace,omitempty"`
-	Env           yaml.MapSlice    `yaml:"env,omitempty"`
-	Ports         []sbxenvPort     `yaml:"ports,omitempty"`
+	SchemaVersion        int                         `yaml:"schemaVersion"`
+	Name                 string                      `yaml:"name,omitempty"`
+	Agent                string                      `yaml:"agent"`
+	Kits                 []any                       `yaml:"kits,omitempty"`
+	Workspace            *sbxenvWorkspace            `yaml:"workspace,omitempty"`
+	AdditionalWorkspaces []sbxenvAdditionalWorkspace `yaml:"additionalWorkspaces,omitempty"`
+	Env                  yaml.MapSlice               `yaml:"env,omitempty"`
+	Ports                []sbxenvPort                `yaml:"ports,omitempty"`
+}
+
+// sbxenvKitEntry is the mapping form of a kits: entry, carrying the arguments
+// that kit declares. A kit without arguments is emitted as a bare string.
+type sbxenvKitEntry struct {
+	Source string        `yaml:"source"`
+	Args   yaml.MapSlice `yaml:"args,omitempty"`
+}
+
+// sbxenvKitArgValue is one resolved argument of a kit. scoped records whether
+// it names its kit, because a scoped value wins over a bare one for the same
+// key regardless of declaration order.
+type sbxenvKitArgValue struct {
+	value  string
+	scoped bool
+}
+
+// sbxenvAdditionalWorkspace is one extra workspace. The primary workspace is
+// the single workspace: block; additionalWorkspaces carries the rest.
+type sbxenvAdditionalWorkspace struct {
+	Path   string `yaml:"path"`
+	Target string `yaml:"target,omitempty"`
 }
 
 // sbxenvWorkspace is the single read-write workspace sbxenv mounts, cloned
@@ -74,7 +103,30 @@ func (a *App) ExportSbxenv(name string) (SbxenvExport, error) {
 	if !ok {
 		return SbxenvExport{}, fmt.Errorf("sandbox %q not found in the config directory", name)
 	}
-	return renderSbxenv(s)
+	result, err := renderSbxenv(s)
+	if err != nil {
+		return SbxenvExport{}, err
+	}
+	// The compatibility annotation needs a live client; export stays usable
+	// from tests that build an App around the fleet alone.
+	if a.Sbx != nil {
+		v, _ := a.Sbx.Version(context.Background())
+		annotateSbxenvCompatibility(&result, v)
+	}
+	return result, nil
+}
+
+// annotateSbxenvCompatibility reports the additional-workspace mount targets
+// the installed sbx cannot honor. The targets stay in the document: the export
+// is informational, not a silent downgrade.
+func annotateSbxenvCompatibility(result *SbxenvExport, v sbx.Version) {
+	if result == nil || len(result.additionalTargets) == 0 || v.AtLeast("v0.51.0") {
+		return
+	}
+	result.Unsupported = append(result.Unsupported, fmt.Sprintf(
+		"additionalWorkspaces[].target %s requires sbx v0.51.0 or later; installed sbx is %s (the target is kept in the document)",
+		strings.Join(result.additionalTargets, ", "), v,
+	))
 }
 
 // renderSbxenv maps one sandbox onto the sbxenv schema.
@@ -87,13 +139,8 @@ func renderSbxenv(s *fleet.Sandbox) (SbxenvExport, error) {
 	doc := sbxenvDocument{SchemaVersion: sbxenvSchemaVersion, Agent: agent}
 	doc.Name = sbxenvName(s, &report)
 	if c := s.App.Create; c != nil {
-		doc.Kits = cleanStrings(c.Kits)
-		for i, kit := range doc.Kits {
-			if sbxenvRelativeSource(kit) {
-				report = append(report, fmt.Sprintf("create.kits[%d] (%s): sbxenv resolves a relative kit source against the sbxenv.yaml file", i, kit))
-			}
-		}
-		doc.Workspace = sbxenvWorkspaceFrom(s, &report)
+		doc.Kits = sbxenvKits(c, &report)
+		doc.Workspace, doc.AdditionalWorkspaces = sbxenvWorkspacesFrom(s, &report)
 		doc.Ports = sbxenvPortsFrom(c.Publish, &report)
 		sbxenvCreateReport(c, &report)
 	}
@@ -104,7 +151,13 @@ func renderSbxenv(s *fleet.Sandbox) (SbxenvExport, error) {
 	if err != nil {
 		return SbxenvExport{}, fmt.Errorf("encode sbxenv.yaml for %q: %w", s.Label(), err)
 	}
-	return SbxenvExport{Slug: s.Slug, Name: s.Name(), Document: document, Unsupported: report}, nil
+	var targets []string
+	for _, workspace := range doc.AdditionalWorkspaces {
+		if target := strings.TrimSpace(workspace.Target); target != "" {
+			targets = append(targets, target)
+		}
+	}
+	return SbxenvExport{Slug: s.Slug, Name: s.Name(), Document: document, Unsupported: report, additionalTargets: targets}, nil
 }
 
 // sbxenvName returns the canonical sandbox name when sbxenv accepts it, and
@@ -135,46 +188,224 @@ func sbxenvNameOK(name string) bool {
 	return true
 }
 
-// sbxenvWorkspaceFrom maps create.workspaces onto the single read-write
-// workspace sbxenv supports and carries create.clone over as workspace.clone.
-func sbxenvWorkspaceFrom(s *fleet.Sandbox, report *[]string) *sbxenvWorkspace {
+// sbxenvWorkspacesFrom maps create.workspaces onto the single read-write
+// workspace sbxenv supports, carrying create.clone over as workspace.clone,
+// and returns the remaining writable entries as additionalWorkspaces (with
+// their custom mount target when one is set). Read-only entries are reported
+// and dropped.
+func sbxenvWorkspacesFrom(s *fleet.Sandbox, report *[]string) (*sbxenvWorkspace, []sbxenvAdditionalWorkspace) {
 	c := s.App.Create
 	if c == nil {
-		return nil
+		return nil, nil
 	}
-	var workspace *sbxenvWorkspace
+	type entry struct {
+		index    int
+		path     string
+		target   string
+		readOnly bool
+	}
+	var writable []entry
 	for i, raw := range c.Workspaces {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue
 		}
-		path, readOnly := sbxenvSplitWorkspace(raw)
-		if readOnly {
+		parsed := entry{index: i}
+		parsed.path, parsed.target, parsed.readOnly = sbxenvSplitWorkspace(raw)
+		if parsed.readOnly {
 			sbxenvUnsupported(report, fmt.Sprintf("create.workspaces[%d] (%s)", i, raw), "sbxenv mounts one read-write workspace")
 			continue
 		}
-		if workspace != nil {
-			sbxenvUnsupported(report, fmt.Sprintf("create.workspaces[%d] (%s)", i, raw), fmt.Sprintf("sbxenv mounts one workspace, %s is used", workspace.Path))
+		if parsed.path != "" && !filepath.IsAbs(parsed.path) {
+			*report = append(*report, fmt.Sprintf("create.workspaces[%d] (%s): sbxenv resolves a relative workspace path against the sbxenv.yaml file", i, parsed.path))
+		}
+		writable = append(writable, parsed)
+	}
+	if len(writable) == 0 {
+		if c.Clone {
+			sbxenvUnsupported(report, "create.clone", "workspace.clone needs a workspace path")
+		}
+		return nil, nil
+	}
+	// `sbx create` mounts the first workspace as the primary one, so the
+	// document's workspace block must mirror writable[0] even when it carries a
+	// custom target. A different choice would move clone and the primary mount.
+	primary := writable[0]
+	if primary.target != "" {
+		sbxenvUnsupported(report, fmt.Sprintf("create.workspaces[%d].target", primary.index), primary.target)
+	}
+	workspace := &sbxenvWorkspace{Path: primary.path, Clone: c.Clone}
+	var additional []sbxenvAdditionalWorkspace
+	for i, item := range writable {
+		if i == 0 {
 			continue
 		}
-		if path != "" && !filepath.IsAbs(path) {
-			*report = append(*report, fmt.Sprintf("create.workspaces[%d] (%s): sbxenv resolves a relative workspace path against the sbxenv.yaml file", i, path))
-		}
-		workspace = &sbxenvWorkspace{Path: path, Clone: c.Clone}
+		additional = append(additional, sbxenvAdditionalWorkspace{Path: item.path, Target: item.target})
 	}
-	if c.Clone && workspace == nil {
-		sbxenvUnsupported(report, "create.clone", "workspace.clone needs a workspace path")
-	}
-	return workspace
+	return workspace, additional
 }
 
-// sbxenvSplitWorkspace separates a workspace path from its read-only marker.
-func sbxenvSplitWorkspace(raw string) (string, bool) {
+// sbxenvSplitWorkspace separates a PATH[:TARGET][:ro] workspace entry into its
+// host path, optional container target and read-only marker.
+func sbxenvSplitWorkspace(raw string) (string, string, bool) {
 	value := strings.TrimSpace(raw)
+	readOnly := false
 	if strings.HasSuffix(value, ":ro") {
-		return strings.TrimSpace(strings.TrimSuffix(value, ":ro")), true
+		readOnly = true
+		value = strings.TrimSpace(strings.TrimSuffix(value, ":ro"))
 	}
-	return value, false
+	path, target := value, ""
+	if idx := strings.Index(value, ":"); idx >= 0 {
+		path = strings.TrimSpace(value[:idx])
+		target = strings.TrimSpace(value[idx+1:])
+	}
+	return path, target, readOnly
+}
+
+// sbxenvKits maps create.kits and create.kitArgs onto the sbxenv kits list. A
+// kit without arguments stays a bare reference; one with arguments becomes a
+// mapping carrying its args mapping. A bare name=value kit argument applies to
+// every kit, while kit.name=value selects the kit whose reference (or last path
+// segment) matches kit.
+func sbxenvKits(c *fleet.SandboxCreate, report *[]string) []any {
+	refs := cleanStrings(c.Kits)
+	entries := make([]sbxenvKitEntry, len(refs))
+	argsByIndex := make([]map[string]sbxenvKitArgValue, len(refs))
+	for i := range argsByIndex {
+		argsByIndex[i] = map[string]sbxenvKitArgValue{}
+	}
+	for i, ref := range refs {
+		entries[i] = sbxenvKitEntry{Source: ref}
+		if sbxenvRelativeSource(ref) {
+			*report = append(*report, fmt.Sprintf("create.kits[%d] (%s): sbxenv resolves a relative kit source against the sbxenv.yaml file", i, ref))
+		}
+	}
+	// setArgs merges one argument into a kit, letting a scoped value win over a
+	// bare one and a later value win over an earlier one in the same scope. A
+	// duplicate collapses to one key; the report names the key but never the
+	// value, which may look like a secret.
+	setArg := func(argIndex, kitIndex int, name, value string, scoped bool) {
+		current, exists := argsByIndex[kitIndex][name]
+		if exists {
+			*report = append(*report, fmt.Sprintf("create.kitArgs[%d]: argument %s for kit %s overrides an earlier value", argIndex, name, refs[kitIndex]))
+			if current.scoped && !scoped {
+				return
+			}
+		}
+		argsByIndex[kitIndex][name] = sbxenvKitArgValue{value: value, scoped: scoped}
+	}
+	for i, raw := range c.KitArgs {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		left, value, ok := strings.Cut(raw, "=")
+		if !ok {
+			sbxenvUnsupported(report, fmt.Sprintf("create.kitArgs[%d] (%s)", i, raw), "a kit argument must be name=value")
+			continue
+		}
+		selector, name, scoped := sbxenvSplitKitArg(strings.TrimSpace(left))
+		if name == "" {
+			sbxenvUnsupported(report, fmt.Sprintf("create.kitArgs[%d] (%s)", i, raw), "the argument name is empty")
+			continue
+		}
+		if !scoped {
+			if len(refs) == 0 {
+				sbxenvUnsupported(report, fmt.Sprintf("create.kitArgs[%d] (%s)", i, raw), "no kit to apply the argument to")
+				continue
+			}
+			for j := range entries {
+				setArg(i, j, name, value, false)
+			}
+			continue
+		}
+		index := sbxenvMatchKit(refs, selector)
+		if index < 0 {
+			sbxenvUnsupported(report, fmt.Sprintf("create.kitArgs[%d] (%s)", i, raw), fmt.Sprintf("no kit matching %q", selector))
+			continue
+		}
+		setArg(i, index, name, value, true)
+	}
+	out := make([]any, len(entries))
+	for i := range entries {
+		if len(argsByIndex[i]) == 0 {
+			out[i] = entries[i].Source
+			continue
+		}
+		items := make(yaml.MapSlice, 0, len(argsByIndex[i]))
+		for name, arg := range argsByIndex[i] {
+			items = append(items, yaml.MapItem{Key: name, Value: arg.value})
+		}
+		entries[i].Args = sortMapSlice(items)
+		out[i] = entries[i]
+	}
+	return out
+}
+
+// sbxenvSplitKitArg separates a scoped kit.name argument from a bare name.
+func sbxenvSplitKitArg(left string) (selector, name string, scoped bool) {
+	if idx := strings.Index(left, "."); idx > 0 {
+		return left[:idx], left[idx+1:], true
+	}
+	return "", left, false
+}
+
+// sbxenvMatchKit returns the index of the kit reference matching selector,
+// either by its full reference or by its derived name.
+func sbxenvMatchKit(refs []string, selector string) int {
+	for i, ref := range refs {
+		if ref == selector {
+			return i
+		}
+	}
+	for i, ref := range refs {
+		if sbxenvKitName(ref) == selector {
+			return i
+		}
+	}
+	return -1
+}
+
+// sbxenvKitName derives the name sbx uses to scope a kit argument: the last
+// path or URL segment, without a .git/.zip suffix or an OCI tag.
+func sbxenvKitName(ref string) string {
+	value := strings.TrimSpace(ref)
+	if strings.HasPrefix(value, "git+") {
+		value = strings.TrimPrefix(value, "git+")
+		target, fragment, _ := strings.Cut(value, "#")
+		for _, param := range strings.Split(fragment, "&") {
+			if dir, ok := strings.CutPrefix(param, "dir="); ok {
+				value = dir
+				return sbxenvLastSegment(value)
+			}
+		}
+		value = target
+	}
+	return sbxenvLastSegment(value)
+}
+
+// sbxenvLastSegment returns the final path segment of a reference, stripped of
+// suffixes and tags.
+func sbxenvLastSegment(value string) string {
+	value = strings.TrimRight(value, "/")
+	if i := strings.LastIndexByte(value, '/'); i >= 0 {
+		value = value[i+1:]
+	}
+	value = strings.TrimSuffix(value, ".git")
+	value = strings.TrimSuffix(value, ".zip")
+	if i := strings.LastIndexByte(value, ':'); i >= 0 {
+		value = value[:i]
+	}
+	return value
+}
+
+// sortMapSlice returns the entries ordered by key so the document is stable.
+func sortMapSlice(items yaml.MapSlice) yaml.MapSlice {
+	out := append(yaml.MapSlice(nil), items...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return fmt.Sprint(out[i].Key) < fmt.Sprint(out[j].Key)
+	})
+	return out
 }
 
 // sbxenvEnv maps environment.variables onto the env mapping, in key order. A
@@ -283,6 +514,18 @@ func sbxenvCreateReport(c *fleet.SandboxCreate, report *[]string) {
 	}
 	if c.DaemonProfile != "" {
 		sbxenvUnsupported(report, "create.daemonProfile", c.DaemonProfile)
+	}
+	if c.Skills != "" {
+		sbxenvUnsupported(report, "create.skills", c.Skills)
+	}
+	if len(c.StaticMCP) > 0 {
+		sbxenvUnsupported(report, "create.staticMcp", strings.Join(cleanStrings(c.StaticMCP), ", "))
+	}
+	if len(c.EnvFiles) > 0 {
+		sbxenvUnsupported(report, "create.envFiles", strings.Join(cleanStrings(c.EnvFiles), ", "))
+	}
+	if len(c.KitArgsFiles) > 0 {
+		sbxenvUnsupported(report, "create.kitArgsFiles", strings.Join(cleanStrings(c.KitArgsFiles), ", "))
 	}
 	if c.Incomplete {
 		*report = append(*report, "create is marked incomplete; the export may be missing create parameters")

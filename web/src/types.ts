@@ -31,6 +31,7 @@ export interface SandboxSummary {
   daemon_profile?: string;
   created_at?: string;
   stopped_at?: string;
+  last_used_at?: string | null;
   ports?: PublishedPort[] | null;
   mount_policy_denied: boolean;
   /** Config directory adopted from the daemon without its original create parameters. */
@@ -163,6 +164,8 @@ export interface SandboxDetail {
   image?: string;
   image_digest?: string;
   kits?: string[] | null;
+  /** Create-block features the installed sbx cannot run. */
+  incompatible?: string[] | null;
   secrets: Secret[] | null;
   custom_secrets: CustomSecret[] | null;
   policy_rules: PolicyRule[] | null;
@@ -203,6 +206,7 @@ export interface EventEnvelope<T = unknown> {
 
 export interface WorkspaceInput {
   path: string;
+  target?: string;
   read_only: boolean;
 }
 
@@ -221,6 +225,10 @@ export interface CreateSandboxRequest {
   profile?: string;
   template?: string;
   kits?: string[];
+  kit_args?: string[];
+  env_files?: string[];
+  skills_mode?: string;
+  static_mcp?: string[];
   profiles?: string[];
   caches?: string[];
   skills?: SkillRef[];
@@ -607,4 +615,26 @@ export interface NotificationStatus {
   available: boolean;
   authorized: boolean;
   reason?: string;
+}
+
+/** One version-gated sandwarden feature and whether the installed sbx supports it. */
+export interface SbxFeatureCompatibility {
+  id: string;
+  label: string;
+  min_version: string;
+  supported: boolean;
+}
+
+/**
+ * Installed sbx versions plus the feature table. `version` is the effective
+ * version feature checks use (the lower of client and daemon). `known: false`
+ * means the UI shows no restriction.
+ */
+export interface SbxCompatibility {
+  version: string;
+  client_version: string;
+  daemon_version: string;
+  known: boolean;
+  daemon_restart_required: boolean;
+  features: SbxFeatureCompatibility[] | null;
 }

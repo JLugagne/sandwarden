@@ -43,6 +43,7 @@ vi.mock("@/api/client", () => ({
     kitItems: vi.fn(async () => []),
     fsPick: vi.fn(async () => ({ path: "/picked/folder" })),
     createSandbox: vi.fn(async () => ({ job_id: "job-1" })),
+    sbxCompatibility: vi.fn(async () => ({ version: "v0.54.0", known: true, features: [] })),
   },
 }));
 
@@ -250,6 +251,231 @@ describe("new sandbox dialog", () => {
     expect(create.hasAttribute("disabled")).toBe(true);
     fireEvent.click(create);
     expect(api.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("collects the advanced create options", async () => {
+    vi.mocked(api.createSandbox).mockClear();
+    renderDialog();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Advanced/ }));
+    fireEvent.change(screen.getByLabelText(/^Environment files/), { target: { value: "/tmp/api.env" } });
+    fireEvent.change(screen.getByLabelText(/^Skills mode/), { target: { value: "readonly" } });
+    fireEvent.change(screen.getByLabelText(/^Static MCP servers/), {
+      target: { value: "notion, atlassian" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Add argument/ }));
+    fireEvent.change(screen.getByLabelText("Kit argument 1 name"), { target: { value: "repo" } });
+    fireEvent.change(screen.getByLabelText("Kit argument 1 value"), { target: { value: "acme/app" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => {
+      expect(api.createSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kit_args: ["repo=acme/app"],
+          env_files: ["/tmp/api.env"],
+          skills_mode: "readonly",
+          static_mcp: ["notion", "atlassian"],
+        }),
+      );
+    });
+  });
+
+  it("pre-fills the arguments a selected kit declares and marks required ones", async () => {
+    vi.mocked(api.kitItems).mockResolvedValue([
+      kitItem({
+        kind: "mixin",
+        name: "postgres",
+        display_name: "Postgres",
+        ref: "git+https://github.com/acme/kits#dir=postgres",
+        spec: {
+          schemaVersion: "1",
+          kind: "mixin",
+          name: "postgres",
+          arguments: {
+            repo: { required: true, description: "Repository to sync" },
+            version: { default: "1.0" },
+          },
+        },
+      }),
+    ]);
+    renderDialog();
+
+    fireEvent.click(await screen.findByLabelText("Postgres"));
+    fireEvent.click(screen.getByRole("tab", { name: /Advanced/ }));
+
+    expect(await screen.findByDisplayValue("postgres.repo")).toBeDefined();
+    expect(screen.getByDisplayValue("1.0")).toBeDefined();
+    expect(screen.getByText("required")).toBeDefined();
+    expect(screen.getByText("Repository to sync")).toBeDefined();
+  });
+
+  const argumentKit = kitItem({
+    kind: "mixin",
+    name: "postgres",
+    display_name: "Postgres",
+    ref: "git+https://github.com/acme/kits#dir=postgres",
+    spec: {
+      schemaVersion: "1",
+      kind: "mixin",
+      name: "postgres",
+      arguments: {
+        repo: { required: true, description: "Repository to sync" },
+        version: { default: "1.0" },
+      },
+    },
+  });
+
+  it("submits only kit arguments the user actually filled or changed", async () => {
+    vi.mocked(api.kitItems).mockResolvedValue([argumentKit]);
+    vi.mocked(api.createSandbox).mockClear();
+    renderDialog();
+
+    fireEvent.click(await screen.findByLabelText("Postgres"));
+    fireEvent.click(screen.getByRole("tab", { name: /Advanced/ }));
+
+    // The required argument starts empty and the optional one at its default.
+    fireEvent.change(screen.getByLabelText("Kit argument 1 value"), { target: { value: "acme/app" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => {
+      expect(api.createSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({ kit_args: ["postgres.repo=acme/app"] }),
+      );
+    });
+  });
+
+  it("blocks create while a required kit argument is empty", async () => {
+    vi.mocked(api.kitItems).mockResolvedValue([argumentKit]);
+    renderDialog();
+
+    fireEvent.click(await screen.findByLabelText("Postgres"));
+    fireEvent.click(screen.getByRole("tab", { name: /Advanced/ }));
+
+    expect(await screen.findByText(/Fill the required kit argument/)).toBeDefined();
+    expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("drops a manually added kit argument left without a value", async () => {
+    vi.mocked(api.createSandbox).mockClear();
+    renderDialog();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Advanced/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Add argument/ }));
+    fireEvent.change(screen.getByLabelText("Kit argument 1 name"), { target: { value: "repo" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(api.createSandbox).toHaveBeenCalled());
+    const payload = vi.mocked(api.createSandbox).mock.calls.at(-1)?.[0];
+    expect(payload?.kit_args).toEqual([]);
+  });
+
+  it("omits create fields whose features the installed sbx does not support", async () => {
+    vi.mocked(api.sbxCompatibility).mockResolvedValueOnce({
+      version: "v0.40.0",
+      client_version: "v0.40.0",
+      daemon_version: "v0.40.0",
+      known: true,
+      daemon_restart_required: false,
+      features: [
+        { id: "create.workspaces", label: "workspace mount target", min_version: "v0.40.0", supported: true },
+        { id: "create.kitArgs", label: "kit arguments", min_version: "v0.99.0", supported: false },
+        { id: "create.envFiles", label: "environment files", min_version: "v0.99.0", supported: false },
+        { id: "create.skills", label: "skills mode", min_version: "v0.99.0", supported: false },
+        { id: "create.staticMcp", label: "static MCP servers", min_version: "v0.99.0", supported: false },
+      ],
+    });
+    vi.mocked(api.kitItems).mockResolvedValue([argumentKit]);
+    vi.mocked(api.createSandbox).mockClear();
+    renderDialog();
+
+    fireEvent.click(await screen.findByLabelText("Postgres"));
+    fireEvent.click(await screen.findByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(api.createSandbox).toHaveBeenCalled());
+    const payload = vi.mocked(api.createSandbox).mock.calls.at(-1)?.[0];
+    expect(payload?.kit_args).toBeUndefined();
+    expect(payload?.env_files).toBeUndefined();
+    expect(payload?.skills_mode).toBeUndefined();
+    expect(payload?.static_mcp).toBeUndefined();
+  });
+
+  it("lays out the workspace host path as the flexible field before the container target", () => {
+    renderDialog();
+
+    const host = screen.getByLabelText("Host path");
+    const target = screen.getByLabelText("Container target");
+    expect(host.getAttribute("placeholder")).toBe("/absolute/host/path");
+    expect(target.getAttribute("placeholder")).toBe("container target (optional)");
+    expect(host.className).toContain("flex-1");
+    expect(host.className).toContain("min-w-0");
+    expect(target.className).toContain("basis-56");
+    expect(host.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("passes a workspace container target", async () => {
+    vi.mocked(api.createSandbox).mockClear();
+    renderDialog();
+
+    fireEvent.change(screen.getByPlaceholderText("/absolute/host/path"), {
+      target: { value: "/host/project" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("container target (optional)"), {
+      target: { value: "/srv/project" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => {
+      expect(api.createSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaces: [{ path: "/host/project", target: "/srv/project", read_only: false }],
+        }),
+      );
+    });
+  });
+
+  it("disables create options the installed sbx cannot run and explains the minimum version", async () => {
+    vi.mocked(api.sbxCompatibility).mockResolvedValueOnce({
+      version: "v0.43.0",
+      client_version: "v0.43.0",
+      daemon_version: "v0.43.0",
+      known: true,
+      daemon_restart_required: false,
+      features: [
+        { id: "create.workspaces", label: "workspace mount target", min_version: "v0.51.0", supported: false },
+        { id: "create.skills", label: "skills mode", min_version: "v0.43.0", supported: true },
+        { id: "create.kitArgs", label: "kit arguments", min_version: "v0.43.0", supported: true },
+        { id: "create.envFiles", label: "environment files", min_version: "v0.43.0", supported: true },
+        { id: "create.staticMcp", label: "static MCP servers", min_version: "v0.43.0", supported: true },
+        { id: "create.staticMcp.none", label: "static MCP `none`", min_version: "v0.51.0", supported: false },
+      ],
+    });
+    renderDialog();
+
+    const target = screen.getByPlaceholderText("container target (optional)") as HTMLInputElement;
+    await waitFor(() => expect(target.disabled).toBe(true));
+    expect(screen.getAllByText(/Requires sbx ≥ v0.51.0 \(installed v0.43.0\)/).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("tab", { name: /Advanced/ }));
+    fireEvent.change(screen.getByLabelText(/^Static MCP servers/), { target: { value: "none" } });
+    expect(await screen.findByText(/Requires sbx ≥ v0.51.0/)).toBeDefined();
+    expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows no restriction when the installed sbx version is unknown", async () => {
+    vi.mocked(api.sbxCompatibility).mockResolvedValueOnce({
+      version: "dev-abc",
+      client_version: "dev-abc",
+      daemon_version: "unknown",
+      known: false,
+      daemon_restart_required: false,
+      features: null,
+    });
+    renderDialog();
+
+    const target = screen.getByPlaceholderText("container target (optional)") as HTMLInputElement;
+    expect(target.disabled).toBe(false);
+    expect(screen.queryByText(/Requires sbx/)).toBeNull();
   });
 });
 

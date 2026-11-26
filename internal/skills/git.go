@@ -49,6 +49,9 @@ func Checkout(ctx context.Context, dir, url, ref string, auth Auth) error {
 	if dir == "" {
 		return errors.New("checkout directory is required")
 	}
+	if auth == AuthPublic && isSSHURL(url) {
+		auth = AuthSSH
+	}
 	if err := ValidateAuthURL(url, auth); err != nil {
 		return err
 	}
@@ -153,7 +156,23 @@ func agentSigners() ([]gossh.Signer, error) {
 	return nil, errors.New("no ssh agent socket found")
 }
 
-// checkoutRef switches a fresh clone to a branch or, failing that, a tag.
+// isSSHURL reports whether url uses SSH transport (ssh://, git@, or scp-style user@host:path).
+func isSSHURL(url string) bool {
+	if strings.HasPrefix(url, "ssh://") || strings.HasPrefix(url, "git@") {
+		return true
+	}
+	if strings.Contains(url, "://") {
+		return false
+	}
+	if at := strings.Index(url, "@"); at > 0 {
+		if colon := strings.Index(url[at:], ":"); colon > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// checkoutRef switches a fresh clone to a branch, tag, revision, or commit SHA.
 func checkoutRef(repo *git.Repository, ref string) error {
 	worktree, err := repo.Worktree()
 	if err != nil {
@@ -169,7 +188,42 @@ func checkoutRef(repo *git.Repository, ref string) error {
 	if tag, err := repo.Tag(ref); err == nil {
 		return worktree.Checkout(&git.CheckoutOptions{Hash: tag.Hash(), Force: true})
 	}
-	return fmt.Errorf("ref %q is neither a branch nor a tag", ref)
+	if tagRef, err := repo.Reference(plumbing.ReferenceName("refs/tags/"+ref), true); err == nil {
+		return worktree.Checkout(&git.CheckoutOptions{Hash: tagRef.Hash(), Force: true})
+	}
+	cleanRef := strings.TrimPrefix(ref, "refs/heads/")
+	cleanRef = strings.TrimPrefix(cleanRef, "refs/tags/")
+	cleanRef = strings.TrimPrefix(cleanRef, "refs/remotes/origin/")
+	if cleanRef != ref {
+		cleanBranch := plumbing.NewBranchReferenceName(cleanRef)
+		if err := worktree.Checkout(&git.CheckoutOptions{Branch: cleanBranch, Force: true}); err == nil {
+			return nil
+		}
+		if remote, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", cleanRef), true); err == nil {
+			return worktree.Checkout(&git.CheckoutOptions{Branch: cleanBranch, Hash: remote.Hash(), Create: true, Force: true})
+		}
+		if tag, err := repo.Tag(cleanRef); err == nil {
+			return worktree.Checkout(&git.CheckoutOptions{Hash: tag.Hash(), Force: true})
+		}
+		if tagRef, err := repo.Reference(plumbing.ReferenceName("refs/tags/"+cleanRef), true); err == nil {
+			return worktree.Checkout(&git.CheckoutOptions{Hash: tagRef.Hash(), Force: true})
+		}
+	}
+	if hash, err := repo.ResolveRevision(plumbing.Revision(ref)); err == nil {
+		return worktree.Checkout(&git.CheckoutOptions{Hash: *hash, Force: true})
+	}
+	if cleanRef != ref {
+		if hash, err := repo.ResolveRevision(plumbing.Revision(cleanRef)); err == nil {
+			return worktree.Checkout(&git.CheckoutOptions{Hash: *hash, Force: true})
+		}
+	}
+	if plumbing.IsHash(ref) {
+		h := plumbing.NewHash(ref)
+		if _, err := repo.CommitObject(h); err == nil {
+			return worktree.Checkout(&git.CheckoutOptions{Hash: h, Force: true})
+		}
+	}
+	return fmt.Errorf("ref %q is neither a branch, tag, nor commit revision", ref)
 }
 
 // sshAuth resolves an SSH auth method for url the way ssh itself would: the

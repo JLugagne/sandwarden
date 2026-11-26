@@ -27,6 +27,11 @@ type SandboxCreate struct {
 	DaemonProfile string   `yaml:"daemonProfile,omitempty" json:"daemon_profile"`
 	Publish       []string `yaml:"publish,omitempty" json:"publish"`
 	Kits          []string `yaml:"kits,omitempty" json:"kits"`
+	KitArgs       []string `yaml:"kitArgs,omitempty" json:"kit_args"`
+	KitArgsFiles  []string `yaml:"kitArgsFiles,omitempty" json:"kit_args_files"`
+	EnvFiles      []string `yaml:"envFiles,omitempty" json:"env_files"`
+	Skills        string   `yaml:"skills,omitempty" json:"skills_mode"`
+	StaticMCP     []string `yaml:"staticMcp,omitempty" json:"static_mcp"`
 	// Incomplete marks a sandbox imported without all create parameters.
 	Incomplete bool `yaml:"incomplete,omitempty" json:"incomplete"`
 }

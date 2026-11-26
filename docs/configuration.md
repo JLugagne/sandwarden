@@ -197,16 +197,26 @@ flags:
 | --- | --- | --- | --- |
 | `cpus` | int | `0` (not passed) | `--cpus` |
 | `memory` | string, e.g. `8g` | empty (not passed) | `--memory` |
-| `workspaces` | list of host paths | empty | positional arguments; a `:ro` suffix marks a read-only workspace |
+| `workspaces` | list of host paths | empty | positional arguments; `PATH[:TARGET][:ro]` (a `:ro` suffix marks a read-only workspace and an optional `TARGET` sets the in-container mount path) |
 | `clone` | bool | `false` | `--clone` |
 | `template` | string | empty | `--template` (container image template) |
 | `daemonProfile` | string | empty | `--profile` (sandboxd governance profile, not a sandwarden profile) |
 | `publish` | list of strings, e.g. `3000:3000` | empty | `-p` |
 | `kits` | list of kit references | empty | `--kit` (external mixin kits; any reference sbx accepts, for example a `git+…#dir=…&ref=…` URL) |
+| `kitArgs` | list of `name=value` strings | empty | `--kit-arg`: a bare `name=value` applies to every kit, `kit.name=value` targets one |
+| `kitArgsFiles` | list of host paths | empty | `--kit-args-file` (one `name=value` per line; `--kit-arg` wins) |
+| `envFiles` | list of host paths | empty | `--env-file` (keeps secrets out of `spec.yaml`; `-e`/`environment.variables` wins) |
+| `skills` | string: `off`, `readonly` or `readwrite` | empty (not passed) | `--skills` (shared skills store mount mode; empty uses sbx's default) |
+| `staticMcp` | list of strings | empty | `--static-mcp` (fixed MCP server set chosen at creation; comma-separated values and repeated flags both work, `none` is allowed) |
 | `incomplete` | bool | `false` | Marker, not a flag. See [incomplete: true](#incomplete-true). |
 
 `create` may be absent; `recreate` then replays only what the spec provides (`requires.agent`,
 environment variables and network deny patterns).
+
+Some create fields need a recent `sbx` (for example workspace mount targets and the `none`
+static MCP value need v0.51.0). sandwarden detects the installed version and refuses an
+incompatible create or recreate before calling `sbx`; see
+[sbx compatibility](compatibility.md) for the feature table and the reporting commands.
 
 ## sandwarden.yaml: profiles
 
@@ -641,4 +651,5 @@ ref: main
 ## See also
 
 - [Cross-process locking](locking.md) — how concurrent GUI and CLI mutations are serialized.
+- [sbx compatibility](compatibility.md) — which create features need which sbx version.
 - `README.md` § Configuration — environment variables and command-line flags.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 )
@@ -83,8 +84,19 @@ type KitCommand struct {
 	Description string `json:"description,omitempty"`
 }
 
-// UnmarshalJSON accepts both hook shapes: a string command or an argv array.
+// UnmarshalJSON accepts both hook shapes: a string command or an argv array,
+// either wrapped in an object or given directly.
 func (k *KitCommand) UnmarshalJSON(data []byte) error {
+	var direct string
+	if err := json.Unmarshal(data, &direct); err == nil {
+		k.Command = direct
+		return nil
+	}
+	var directArgv []string
+	if err := json.Unmarshal(data, &directArgv); err == nil {
+		k.Command = strings.Join(directArgv, " ")
+		return nil
+	}
 	var raw struct {
 		Command     json.RawMessage `json:"command"`
 		User        string          `json:"user"`
@@ -123,6 +135,52 @@ type KitArgument struct {
 	Pattern     string   `json:"pattern,omitempty"`
 }
 
+// UnmarshalJSON accepts a structured argument or a scalar description string.
+func (a *KitArgument) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		a.Description = s
+		return nil
+	}
+	var raw struct {
+		Default     json.RawMessage `json:"default,omitempty"`
+		Required    bool            `json:"required,omitempty"`
+		Description string          `json:"description,omitempty"`
+		Enum        []string        `json:"enum,omitempty"`
+		Pattern     string          `json:"pattern,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	a.Required = raw.Required
+	a.Description = raw.Description
+	a.Enum = raw.Enum
+	a.Pattern = raw.Pattern
+	if def, ok := kitArgDefaultText(raw.Default); ok {
+		a.Default = &def
+	}
+	return nil
+}
+
+// kitArgDefaultText renders a declared default without losing its literal form:
+// a string is unquoted, a number keeps its exact JSON text (so 1000000 stays
+// 1000000 rather than becoming 1e+06), and a boolean becomes "true"/"false".
+// null and structured values yield ok=false, leaving the default unset.
+func kitArgDefaultText(raw json.RawMessage) (string, bool) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return "", false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, true
+	}
+	if trimmed[0] == '{' || trimmed[0] == '[' {
+		return "", false
+	}
+	return trimmed, true
+}
+
 // KitInspect loads a kit artifact through `sbx kit inspect --json`. The
 // reference may be a directory, a ZIP, a git+ URL or an OCI reference.
 func (c *Client) KitInspect(ctx context.Context, ref string) (KitSpec, error) {
@@ -153,9 +211,11 @@ func (c *Client) KitValidate(ctx context.Context, ref string) (string, error) {
 
 // KitAdd runs `sbx kit add SANDBOX REF`: sbx recreates the sandbox's container
 // with the reference appended to its kit list, preserving kit-owned volumes
-// (agent session state) and --clone workspaces. Combined output is teed to
-// stream when it is non-nil; a refusal is returned verbatim.
-func (c *Client) KitAdd(ctx context.Context, sandbox, ref string, stream io.Writer) (string, error) {
+// (agent session state) and --clone workspaces. kitArgs are passed as repeated
+// --kit-arg flags (name=value for every kit, or kit.name=value for one).
+// Combined output is teed to stream when it is non-nil; a refusal is returned
+// verbatim.
+func (c *Client) KitAdd(ctx context.Context, sandbox, ref string, kitArgs []string, stream io.Writer) (string, error) {
 	sandbox = strings.TrimSpace(sandbox)
 	if sandbox == "" {
 		return "", errors.New("sandbox name is required")
@@ -164,5 +224,16 @@ func (c *Client) KitAdd(ctx context.Context, sandbox, ref string, stream io.Writ
 	if ref == "" {
 		return "", errors.New("kit reference is required")
 	}
-	return c.runCLI(ctx, nil, stream, "kit", "add", sandbox, ref)
+	args := []string{"kit", "add", sandbox, ref}
+	for _, kitArg := range kitArgs {
+		kitArg = strings.TrimSpace(kitArg)
+		if kitArg == "" {
+			continue
+		}
+		if !strings.Contains(kitArg, "=") {
+			return "", fmt.Errorf("kit argument %q must be in name=value form", kitArg)
+		}
+		args = append(args, "--kit-arg", kitArg)
+	}
+	return c.runCLI(ctx, nil, stream, args...)
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"io"
+	"time"
 
 	"github.com/JLugagne/sandwarden/internal/app"
 	"github.com/JLugagne/sandwarden/internal/fleet"
@@ -20,17 +21,18 @@ type jsonConfigError struct {
 
 // jsonSandbox is the stable, file-side projection shared by ls and status.
 type jsonSandbox struct {
-	Name       string   `json:"name"`
-	ID         string   `json:"id"`
-	Status     string   `json:"status"`
-	Running    bool     `json:"running"`
-	ConfigSlug string   `json:"configSlug"`
-	ConfigPath string   `json:"configPath"`
-	Profiles   []string `json:"profiles"`
-	Caches     int      `json:"caches"`
-	Skills     int      `json:"skills"`
-	Mounts     int      `json:"mounts"`
-	Incomplete bool     `json:"incomplete"`
+	Name       string     `json:"name"`
+	ID         string     `json:"id"`
+	Status     string     `json:"status"`
+	Running    bool       `json:"running"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	ConfigSlug string     `json:"configSlug"`
+	ConfigPath string     `json:"configPath"`
+	Profiles   []string   `json:"profiles"`
+	Caches     int        `json:"caches"`
+	Skills     int        `json:"skills"`
+	Mounts     int        `json:"mounts"`
+	Incomplete bool       `json:"incomplete"`
 }
 
 // jsonLsOutput is the ls --json envelope.
@@ -51,8 +53,9 @@ type jsonStatusOutput struct {
 // jsonStatusSandbox adds the daemon detail and the per-name errors to jsonSandbox.
 type jsonStatusSandbox struct {
 	jsonSandbox
-	Errors []string           `json:"errors"`
-	Detail *app.SandboxDetail `json:"detail,omitempty"`
+	Errors       []string           `json:"errors"`
+	Incompatible []string           `json:"incompatible"`
+	Detail       *app.SandboxDetail `json:"detail,omitempty"`
 }
 
 // jsonApplyOutput is the apply --json envelope.

@@ -125,8 +125,8 @@ export function AttachCache(name: string, cacheSlug: string): $CancellablePromis
  * recreates the container while preserving kit-owned volumes and --clone
  * workspaces, then the sidecar is re-applied and its report returned.
  */
-export function AttachKit(name: string, ref: string): $CancellablePromise<app$0.KitAddResult> {
-    return $Call.ByID(4277206571, name, ref);
+export function AttachKit(name: string, ref: string, kitArgs: string[] | null): $CancellablePromise<app$0.KitAddResult> {
+    return $Call.ByID(4277206571, name, ref, kitArgs);
 }
 
 /**
@@ -570,6 +570,15 @@ export function ResetAgentsFile(): $CancellablePromise<app$0.AgentsDoc> {
 }
 
 /**
+ * RestartDaemon restarts sandboxd non-interactively. The sbx client drops its
+ * version cache on success, so the next SbxCompatibility read sees the fresh
+ * daemon. Callers should invalidate the compatibility query afterwards.
+ */
+export function RestartDaemon(): $CancellablePromise<void> {
+    return $Call.ByID(3753818223);
+}
+
+/**
  * SandboxConfigDir returns the config directory of a sandbox.
  */
 export function SandboxConfigDir(slug: string): $CancellablePromise<string> {
@@ -619,6 +628,16 @@ export function SaveAgentsFile(content: string): $CancellablePromise<app$0.Agent
  */
 export function SaveTemplate(sandbox: string, tag: string): $CancellablePromise<string> {
     return $Call.ByID(3027933447, sandbox, tag);
+}
+
+/**
+ * SbxCompatibility reports the installed sbx client and daemon versions and,
+ * for every feature sandwarden version-gates, whether it is supported. A
+ * version that cannot be read yields Known=false and no restriction: the
+ * backend fails open for dev builds and the UI mirrors that.
+ */
+export function SbxCompatibility(): $CancellablePromise<$models.SbxCompatibilityDTO> {
+    return $Call.ByID(3946712413);
 }
 
 /**

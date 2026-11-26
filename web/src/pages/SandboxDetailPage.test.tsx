@@ -178,6 +178,20 @@ describe("sandbox config actions", () => {
     expect(vi.mocked(api.validateSandbox)).toHaveBeenCalledWith("alpha");
   });
 
+  it("warns about create features the installed sbx does not support", async () => {
+    vi.mocked(api.sandbox).mockResolvedValueOnce({
+      ...detail,
+      incompatible: [
+        "workspace mount target (create.workspaces) requires sbx v0.51.0 or later; installed sbx is v0.43.0",
+      ],
+    });
+    renderPage();
+
+    expect(await screen.findByText("Unsupported sbx features")).toBeDefined();
+    expect(screen.getByText(/recreate will fail until sbx is upgraded/)).toBeDefined();
+    expect(screen.getByText(/workspace mount target \(create.workspaces\) requires sbx v0.51.0/)).toBeDefined();
+  });
+
   it("warns before recreating the sandbox from its files", async () => {
     renderPage();
 
@@ -208,10 +222,37 @@ describe("sandbox config actions", () => {
     fireEvent.change(within(dialog).getByLabelText(/Kit reference/), {
       target: { value: "ghcr.io/acme/mcp-postgres:1.0" },
     });
+    fireEvent.change(within(dialog).getByLabelText(/Kit arguments \(optional\)/), {
+      target: { value: "repo=acme/app\nmcp.strict=true" },
+    });
     fireEvent.click(confirm);
 
     await waitFor(() => {
-      expect(api.attachKit).toHaveBeenCalledWith("alpha", "ghcr.io/acme/mcp-postgres:1.0");
+      expect(api.attachKit).toHaveBeenCalledWith("alpha", "ghcr.io/acme/mcp-postgres:1.0", [
+        "repo=acme/app",
+        "mcp.strict=true",
+      ]);
+    });
+  });
+
+  it("keeps commas inside a kit argument value when attaching a kit", async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Attach kit/ }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/Kit reference/), {
+      target: { value: "ghcr.io/acme/mcp-proxy:1.0" },
+    });
+    fireEvent.change(within(dialog).getByLabelText(/Kit arguments \(optional\)/), {
+      target: { value: "hosts=a.com,b.com\nmcp.strict=true" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Attach kit" }));
+
+    await waitFor(() => {
+      expect(api.attachKit).toHaveBeenCalledWith("alpha", "ghcr.io/acme/mcp-proxy:1.0", [
+        "hosts=a.com,b.com",
+        "mcp.strict=true",
+      ]);
     });
   });
 });

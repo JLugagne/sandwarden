@@ -108,6 +108,21 @@ describe("sandbox card resource indicators", () => {
   });
 });
 
+describe("sandbox card last used", () => {
+  it("shows the daemon's last-used timestamp as a relative age", () => {
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    renderCard(sandbox({ last_used_at: threeDaysAgo }));
+
+    expect(screen.getByText("Last used 3d ago")).toBeDefined();
+  });
+
+  it("omits the line when the daemon reports no last-used timestamp", () => {
+    renderCard(sandbox());
+
+    expect(screen.queryByText(/Last used/)).toBeNull();
+  });
+});
+
 describe("sandbox card incomplete config", () => {
   it("badges an incomplete config directory", () => {
     renderCard(sandbox({ incomplete: true }));

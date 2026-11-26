@@ -26,6 +26,7 @@ export const queryKeys = {
   updates: ["updates"] as const,
   terminals: ["terminals"] as const,
   config: ["config"] as const,
+  sbxCompatibility: ["sbx-compatibility"] as const,
 };
 
 /**

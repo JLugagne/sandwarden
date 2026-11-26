@@ -37,6 +37,15 @@ type Client struct {
 	http     *http.Client
 	base     string
 	cliSlots chan struct{}
+	// versionMu guards the cached `sbx version` result. The zero value is ready
+	// to use, so a hand-built Client still works. now and versionTTL are test
+	// seams: both fall back to the real clock and defaultVersionTTL when nil/zero.
+	versionMu     sync.Mutex
+	versions      Versions
+	versionAt     time.Time
+	versionTTL    time.Duration
+	versionLoaded bool
+	now           func() time.Time
 }
 
 // SocketPath resolves the sandboxd unix socket path. Precedence: DOCKER_SANDBOXES_API,
@@ -167,6 +176,9 @@ func (c *Client) runCLI(ctx context.Context, stdin io.Reader, stream io.Writer, 
 		msg := strings.TrimSpace(captured)
 		if msg == "" {
 			msg = runErr.Error()
+		}
+		if daemonRestartNotice(msg) {
+			return captured, newDaemonRestartError(msg)
 		}
 		return captured, errors.New(msg)
 	}

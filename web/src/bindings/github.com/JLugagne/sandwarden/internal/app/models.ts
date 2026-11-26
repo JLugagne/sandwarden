@@ -211,6 +211,12 @@ export interface SandboxDetail {
     "image"?: string;
     "image_digest"?: string;
     "kits"?: string[] | null;
+
+    /**
+     * Incompatible lists the create-block features the installed sbx cannot
+     * run. It is computed for the detail projection only.
+     */
+    "incompatible": string[] | null;
     "secrets": sbx$0.Secret[] | null;
     "custom_secrets": sbx$0.CustomSecret[] | null;
     "policy_rules": sbx$0.PolicyRule[] | null;
@@ -277,6 +283,7 @@ export interface SandboxSummary {
     "daemon_profile"?: string;
     "created_at"?: string | null;
     "stopped_at"?: string | null;
+    "last_used_at"?: string | null;
     "ports"?: sbx$0.PublishedPort[] | null;
     "mount_policy_denied": boolean;
     "profiles": string[] | null;

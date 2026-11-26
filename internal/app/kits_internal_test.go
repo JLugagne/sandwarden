@@ -7,9 +7,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JLugagne/sandwarden/internal/fleet"
 	"github.com/JLugagne/sandwarden/internal/store"
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 // registerKitStore registers a git-hosted kit store holding one discovered kit
@@ -100,7 +103,7 @@ func TestAttachKitResolvesRemoteKitToCheckout(t *testing.T) {
 	reg, local := registerKitStore(t, a, "git@github.com:acme/kits.git")
 
 	var out strings.Builder
-	result, err := a.AttachKit(ctx, "alpha", "git+"+reg.URL+"#dir=kits/go-agent&ref=v1", &out)
+	result, err := a.AttachKit(ctx, "alpha", "git+"+reg.URL+"#dir=kits/go-agent&ref=v1", nil, &out)
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
@@ -157,6 +160,185 @@ func TestResolveKitRefMatchesAcrossURLSchemes(t *testing.T) {
 	} {
 		if got := a.resolveKitRef(ref); got != local {
 			t.Fatalf("resolveKitRef(%q) = %q, want %q", ref, got, local)
+		}
+	}
+}
+
+// newKitRepoWithSpecs builds a local git repository holding one kit directory
+// per spec, keyed by relative path.
+func newKitRepoWithSpecs(t *testing.T, specs map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+	for rel, content := range specs {
+		kitDir := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(kitDir, 0o755); err != nil {
+			t.Fatalf("mkdir kit: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(kitDir, "spec.yaml"), []byte(content), 0o644); err != nil {
+			t.Fatalf("write spec: %v", err)
+		}
+	}
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+	if _, err := worktree.Add("."); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if _, err := worktree.Commit("seed", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.com", When: time.Now()},
+	}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return dir
+}
+
+// newKitInspectErrorsStub installs a fake sbx whose `kit inspect` fails with the
+// required-argument message for a kit directory ending in needs-args, and with
+// an invalid-manifest message for one ending in badkind.
+func newKitInspectErrorsStub(t *testing.T) {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "sbx")
+	script := `#!/bin/sh
+if [ "$1" = "kit" ] && [ "$2" = "inspect" ]; then
+  case "$4" in
+    */badkind)
+      printf '%s\n' 'ERROR: manifest: invalid kind "nonsense" (must be "sandbox" or "mixin")' >&2
+      exit 1
+      ;;
+    */needs-args)
+      printf '%s\n' 'ERROR: kit "'"$4"'" requires an argument:' >&2
+      printf '\n' >&2
+      printf '%s\n' '  repo  spec.yaml:7  GitHub repository to clone' >&2
+      printf '\n' >&2
+      printf '%s\n' 'Supply it and re-run:' >&2
+      printf '%s\n' '  --kit-arg repo=<value>' >&2
+      exit 1
+      ;;
+  esac
+  printf '%s\n' '{"schemaVersion":"2","kind":"mixin","name":"plain"}'
+  exit 0
+fi
+exit 0
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write kit inspect stub: %v", err)
+	}
+	t.Setenv("SBX_BINARY", bin)
+}
+
+func TestSyncKitStoreFallsBackOnlyForRequiredArguments(t *testing.T) {
+	ctx := context.Background()
+	a, _ := newTestApp(t)
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	newKitInspectErrorsStub(t)
+
+	src := newKitRepoWithSpecs(t, map[string]string{
+		"badkind":    "schemaVersion: \"2\"\nkind: nonsense\nname: bad-kind\n",
+		"needs-args": "schemaVersion: \"2\"\nkind: mixin\nname: needs-args\nargs:\n  repo:\n    required: true\n",
+	})
+	reg, err := a.Fleet.CreateStore(fleet.StoreReg{Kind: fleet.StoreKits, Name: "kitbox", URL: "file://" + src})
+	if err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+	if _, err := a.syncKitStore(ctx, reg); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	items, err := a.Store.ListKitItems(ctx, reg.Slug)
+	if err != nil {
+		t.Fatalf("list kit items: %v", err)
+	}
+	if len(items) != 1 || items[0].Name != "needs-args" {
+		t.Fatalf("catalog = %+v, want only the required-argument kit", items)
+	}
+
+	states, err := a.Store.StoreStates(ctx, string(fleet.StoreKits))
+	if err != nil {
+		t.Fatalf("store states: %v", err)
+	}
+	msg := states[reg.Slug].Error
+	if !strings.Contains(msg, "badkind") || !strings.Contains(msg, "invalid kind") {
+		t.Fatalf("the invalid kit was not reported: %q", msg)
+	}
+	if strings.Contains(msg, "requires an argument") {
+		t.Fatalf("the required-argument kit was skipped: %q", msg)
+	}
+}
+
+func TestParseKitSpecWithRequiredArgs(t *testing.T) {
+	dir := t.TempDir()
+	specContent := `schemaVersion: "2"
+kind: mixin
+name: github-clone
+displayName: GitHub Clone
+description: Clones a GitHub repository into the sandbox at create time
+args:
+  repo:
+    required: true
+    description: GitHub repository to clone
+  ref:
+    default: ""
+    description: Optional git ref
+permissions:
+  network:
+    allow:
+      - api.github.com
+      - github.com
+setup:
+  install:
+    - command: echo "installing"
+`
+	if err := os.WriteFile(filepath.Join(dir, "spec.yaml"), []byte(specContent), 0o644); err != nil {
+		t.Fatalf("write spec: %v", err)
+	}
+
+	spec, err := parseKitSpec(dir)
+	if err != nil {
+		t.Fatalf("parseKitSpec failed: %v", err)
+	}
+	if spec.Name != "github-clone" {
+		t.Errorf("spec.Name = %q, want github-clone", spec.Name)
+	}
+	if spec.DisplayName != "GitHub Clone" {
+		t.Errorf("spec.DisplayName = %q, want GitHub Clone", spec.DisplayName)
+	}
+	if len(spec.Arguments) != 2 {
+		t.Fatalf("spec.Arguments length = %d, want 2", len(spec.Arguments))
+	}
+	repoArg, ok := spec.Arguments["repo"]
+	if !ok || !repoArg.Required {
+		t.Errorf("spec.Arguments[repo] = %+v, want required=true", repoArg)
+	}
+	refArg, ok := spec.Arguments["ref"]
+	if !ok || refArg.Default == nil || *refArg.Default != "" {
+		t.Errorf("spec.Arguments[ref] = %+v, want default empty string", refArg)
+	}
+	if len(spec.Permissions.Network.Allow) != 2 {
+		t.Errorf("network allow = %v, want 2 entries", spec.Permissions.Network.Allow)
+	}
+}
+
+func TestSandboxMatches(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"box", "box", true},
+		{"box", "BOX", true},
+		{"my-sandbox", "my_sandbox", true},
+		{"my-sandbox-1", "My-Sandbox-1", true},
+		{"box-1", "box-2", false},
+		{"", "", true},
+		{"box", "", false},
+	}
+	for _, tc := range cases {
+		if got := sandboxMatches(tc.a, tc.b); got != tc.want {
+			t.Errorf("sandboxMatches(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
 		}
 	}
 }

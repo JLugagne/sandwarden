@@ -29,6 +29,7 @@ type SandboxSummary struct {
 	DaemonProfile     string              `json:"daemon_profile,omitempty"`
 	CreatedAt         *time.Time          `json:"created_at,omitempty"`
 	StoppedAt         *time.Time          `json:"stopped_at,omitempty"`
+	LastUsedAt        *time.Time          `json:"last_used_at,omitempty"`
 	Ports             []sbx.PublishedPort `json:"ports,omitempty"`
 	MountPolicyDenied bool                `json:"mount_policy_denied"`
 	Profiles          []string            `json:"profiles"`
@@ -51,10 +52,13 @@ type SandboxDetail struct {
 	Mounts      []sbx.MountInfo `json:"mounts"`
 	MountsError string          `json:"mounts_error,omitempty"`
 	// Incomplete reports a config directory adopted from the daemon without its original create parameters.
-	Incomplete           bool                  `json:"incomplete"`
-	Image                string                `json:"image,omitempty"`
-	ImageDigest          string                `json:"image_digest,omitempty"`
-	Kits                 []string              `json:"kits,omitempty"`
+	Incomplete  bool     `json:"incomplete"`
+	Image       string   `json:"image,omitempty"`
+	ImageDigest string   `json:"image_digest,omitempty"`
+	Kits        []string `json:"kits,omitempty"`
+	// Incompatible lists the create-block features the installed sbx cannot
+	// run. It is computed for the detail projection only.
+	Incompatible         []string              `json:"incompatible"`
 	Secrets              []sbx.Secret          `json:"secrets"`
 	CustomSecrets        []sbx.CustomSecret    `json:"custom_secrets"`
 	PolicyRules          []sbx.PolicyRule      `json:"policy_rules"`
@@ -138,6 +142,9 @@ func (a *App) SandboxDetail(ctx context.Context, name string) (SandboxDetail, er
 	if skills := a.sandboxSkills(ctx, name, detail.Mounts); len(skills) > 0 {
 		detail.Skills = skills
 	}
+	if cfg != nil {
+		detail.Incompatible = a.SandboxCompatibility(ctx, cfg)
+	}
 	return detail, nil
 }
 
@@ -151,6 +158,7 @@ func buildSummary(s sbx.Sandbox, profileNames []string, runArgs string) SandboxS
 		Workspace:         s.Workspace,
 		CreatedAt:         s.CreatedAt,
 		StoppedAt:         s.StoppedAt,
+		LastUsedAt:        s.LastUsedAt,
 		Ports:             s.Ports,
 		MountPolicyDenied: s.MountPolicyDenied != nil && *s.MountPolicyDenied,
 		Profiles:          append([]string{}, profileNames...),

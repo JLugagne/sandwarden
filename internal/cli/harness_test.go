@@ -74,7 +74,7 @@ func (f *fakeDaemon) handler() http.HandlerFunc {
 				if running {
 					status = "running"
 				}
-				out = append(out, map[string]string{"id": name, "name": name, "status": status, "workspace": "/w"})
+				out = append(out, map[string]string{"id": name, "name": name, "status": status, "workspace": "/w", "last_used_at": "2026-11-04T21:53:24Z"})
 			}
 			f.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(out)
@@ -90,7 +90,7 @@ func (f *fakeDaemon) handler() http.HandlerFunc {
 				_ = json.NewEncoder(w).Encode(map[string]string{"message": "sandbox " + name + " not found"})
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]string{"id": name, "name": name, "status": "running", "workspace": "/w"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": name, "name": name, "status": "running", "workspace": "/w", "last_used_at": "2026-11-04T21:53:24Z"})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/start"):
 			name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/sandbox/"), "/start")
 			f.mu.Lock()
@@ -186,6 +186,16 @@ func newFakeSbx(t *testing.T) string {
 	}
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "$SBX_STUB_LOG"
+if [ "$1" = "version" ]; then
+  if [ "$2" = "--json" ]; then
+    printf '{"client":{"version":"%s"}' "${FAKE_SBX_VERSION:-}"
+    if [ -n "${FAKE_SBX_SERVER_JSON:-}" ]; then printf ',"server":%s' "$FAKE_SBX_SERVER_JSON"; fi
+    printf '}\n'
+    exit 0
+  fi
+  printf '%s\n' "${FAKE_SBX_VERSION:-}"
+  exit 0
+fi
 if [ "$1" = inspect ]; then
   printf '{"workspace":"/w","runtime_mounts":['
   first=1

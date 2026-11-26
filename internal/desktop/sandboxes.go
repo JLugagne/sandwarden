@@ -22,6 +22,10 @@ func (d *Desktop) SandboxDetail(name string) (app.SandboxDetail, error) {
 // CreateSandbox validates the request and starts `sbx create` as a job,
 // writing the new sandbox's config directory and converging it.
 func (d *Desktop) CreateSandbox(req CreateSandboxRequest) (string, error) {
+	envFiles := cleanStrings(req.EnvFiles)
+	for i := range envFiles {
+		envFiles[i] = fleet.ExpandHome(envFiles[i])
+	}
 	opts := sbx.CreateOptions{
 		Agent:       strings.TrimSpace(req.Agent),
 		Name:        strings.TrimSpace(req.Name),
@@ -30,8 +34,12 @@ func (d *Desktop) CreateSandbox(req CreateSandboxRequest) (string, error) {
 		Profile:     strings.TrimSpace(req.Profile),
 		Template:    strings.TrimSpace(req.Template),
 		Kits:        cleanStrings(req.Kits),
+		KitArgs:     cleanStrings(req.KitArgs),
 		Publish:     cleanStrings(req.Publish),
 		Env:         cleanStrings(req.Env),
+		EnvFiles:    envFiles,
+		Skills:      strings.TrimSpace(req.SkillsMode),
+		StaticMCP:   cleanStrings(req.StaticMCP),
 		DenyNetwork: cleanStrings(req.DenyNetwork),
 		Clone:       req.Clone,
 	}
@@ -39,6 +47,9 @@ func (d *Desktop) CreateSandbox(req CreateSandboxRequest) (string, error) {
 		path := fleet.ExpandHome(workspace.Path)
 		if path == "" {
 			continue
+		}
+		if target := strings.TrimSpace(workspace.Target); target != "" {
+			path += ":" + target
 		}
 		if workspace.ReadOnly {
 			path += ":ro"

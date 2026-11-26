@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { RealtimeClient, type ConnectionStatus } from "@/api/ws";
-import { applyEvent } from "@/store/realtime";
+import { applyEvent, queryKeys } from "@/store/realtime";
 import { routeJobEvent } from "@/store/jobs";
 import { useToasts } from "@/components/Toaster";
 import { loadConfig } from "@/lib/config";
@@ -43,6 +43,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
           body: `sandbox ${data.sandbox} · rule ${data.rule}`,
         });
         notifyDesktop(`Traffic blocked in ${data.sandbox}`, data.host);
+        void queryClient.invalidateQueries({ queryKey: queryKeys.traffic });
         return;
       }
       applyEvent(queryClient, event);

@@ -43,6 +43,10 @@ export interface CreateSandboxRequest {
     "mounts": MountRequest[] | null;
     "publish": string[] | null;
     "env": string[] | null;
+    "env_files": string[] | null;
+    "skills_mode": string;
+    "static_mcp": string[] | null;
+    "kit_args": string[] | null;
     "deny_network": string[] | null;
     "clone": boolean;
     "attach_caches": boolean;
@@ -199,6 +203,35 @@ export interface RulesRequest {
 }
 
 /**
+ * SbxCompatibilityDTO reports the installed sbx versions and the feature table.
+ * Version is the effective version feature checks use (the lower of client and
+ * daemon). ClientVersion and DaemonVersion are the raw parts for display;
+ * DaemonVersion is "unknown" when the daemon does not report one.
+ * DaemonRestartRequired is true when the running daemon's version differs from
+ * the CLI's. Known is false when the effective version could not be parsed; the
+ * UI then shows no restriction, matching the backend's fail-open behaviour.
+ */
+export interface SbxCompatibilityDTO {
+    "version": string;
+    "client_version": string;
+    "daemon_version": string;
+    "known": boolean;
+    "daemon_restart_required": boolean;
+    "features": SbxFeatureCompatDTO[] | null;
+}
+
+/**
+ * SbxFeatureCompatDTO is one version-gated feature and whether the installed
+ * sbx supports it.
+ */
+export interface SbxFeatureCompatDTO {
+    "id": string;
+    "label": string;
+    "min_version": string;
+    "supported": boolean;
+}
+
+/**
  * ServiceSecretRequest is the service secret payload.
  */
 export interface ServiceSecretRequest {
@@ -246,5 +279,6 @@ export interface VersionInfo {
  */
 export interface WorkspaceSpec {
     "path": string;
+    "target": string;
     "read_only": boolean;
 }

@@ -11,23 +11,28 @@ import (
 
 func createCmd(opts *Options) *cobra.Command {
 	var (
-		agent      string
-		name       string
-		cpus       int
-		memory     string
-		daemonProf string
-		template   string
-		clone      bool
-		attach     bool
-		runArgs    string
-		workspaces []string
-		kits       []string
-		publish    []string
-		envs       []string
-		deny       []string
-		profiles   []string
-		caches     []string
-		skills     []string
+		agent       string
+		name        string
+		cpus        int
+		memory      string
+		daemonProf  string
+		template    string
+		clone       bool
+		attach      bool
+		runArgs     string
+		workspaces  []string
+		kits        []string
+		kitArgs     []string
+		kitArgFiles []string
+		publish     []string
+		envs        []string
+		envFiles    []string
+		skillsMode  string
+		staticMCP   []string
+		deny        []string
+		profiles    []string
+		caches      []string
+		skills      []string
 	)
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -37,6 +42,12 @@ func createCmd(opts *Options) *cobra.Command {
 			for i := range workspaces {
 				workspaces[i] = fleet.ExpandHome(workspaces[i])
 			}
+			for i := range kitArgFiles {
+				kitArgFiles[i] = fleet.ExpandHome(kitArgFiles[i])
+			}
+			for i := range envFiles {
+				envFiles[i] = fleet.ExpandHome(envFiles[i])
+			}
 
 			core, closeApp, err := openApp(cmd.Context(), opts)
 			if err != nil {
@@ -45,18 +56,23 @@ func createCmd(opts *Options) *cobra.Command {
 			defer closeApp()
 			create := app.CreateRequest{
 				Opts: sbx.CreateOptions{
-					Agent:       strings.TrimSpace(agent),
-					Name:        strings.TrimSpace(name),
-					CPUs:        cpus,
-					Memory:      strings.TrimSpace(memory),
-					Profile:     strings.TrimSpace(daemonProf),
-					Template:    strings.TrimSpace(template),
-					Kits:        kits,
-					Publish:     publish,
-					Env:         envs,
-					DenyNetwork: deny,
-					Clone:       clone,
-					Workspaces:  workspaces,
+					Agent:        strings.TrimSpace(agent),
+					Name:         strings.TrimSpace(name),
+					CPUs:         cpus,
+					Memory:       strings.TrimSpace(memory),
+					Profile:      strings.TrimSpace(daemonProf),
+					Template:     strings.TrimSpace(template),
+					Kits:         kits,
+					KitArgs:      kitArgs,
+					KitArgsFiles: kitArgFiles,
+					Publish:      publish,
+					Env:          envs,
+					EnvFiles:     envFiles,
+					Skills:       strings.TrimSpace(skillsMode),
+					StaticMCP:    staticMCP,
+					DenyNetwork:  deny,
+					Clone:        clone,
+					Workspaces:   workspaces,
 				},
 				Profiles:     profiles,
 				Caches:       caches,
@@ -84,8 +100,13 @@ func createCmd(opts *Options) *cobra.Command {
 	cmd.Flags().StringVar(&runArgs, "run-args", "", "arguments appended after -- on connect")
 	cmd.Flags().StringArrayVar(&workspaces, "workspace", nil, "workspace path, optionally :ro (repeatable)")
 	cmd.Flags().StringArrayVar(&kits, "kit", nil, "mixin kit reference (repeatable)")
+	cmd.Flags().StringArrayVar(&kitArgs, "kit-arg", nil, "value for an argument a kit declares, as name=value for every kit or kit.name=value for one (repeatable)")
+	cmd.Flags().StringArrayVar(&kitArgFiles, "kit-args-file", nil, "file of name=value kit arguments, one per line (repeatable)")
 	cmd.Flags().StringArrayVar(&publish, "publish", nil, "published port mapping (repeatable)")
 	cmd.Flags().StringArrayVar(&envs, "env", nil, "environment variable KEY=VALUE, or bare KEY for the host value (repeatable); never paste secrets here")
+	cmd.Flags().StringArrayVar(&envFiles, "env-file", nil, "file of environment variables, keeping secrets out of spec.yaml (repeatable)")
+	cmd.Flags().StringVar(&skillsMode, "skills", "", "shared skills store mode: off, readonly or readwrite (empty = sbx default)")
+	cmd.Flags().StringArrayVar(&staticMCP, "static-mcp", nil, "fixed MCP server set chosen at creation, comma-separated (repeatable; `none` allowed)")
 	cmd.Flags().StringArrayVar(&deny, "deny-network", nil, "network deny pattern (repeatable)")
 	cmd.Flags().StringArrayVar(&profiles, "profile", nil, "sandwarden profile slug (repeatable)")
 	cmd.Flags().StringArrayVar(&caches, "cache", nil, "cache slug (repeatable)")

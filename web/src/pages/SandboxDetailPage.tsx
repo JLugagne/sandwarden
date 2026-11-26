@@ -7,6 +7,7 @@ import { useJob } from "@/hooks/useJob";
 import { jobHub, newJobId } from "@/store/jobs";
 import { queryKeys } from "@/store/realtime";
 import { staleNames } from "@/lib/config";
+import { formatTime } from "@/lib/format";
 import { StaleBadge } from "@/components/StaleBadge";
 import {
   Badge,
@@ -30,6 +31,7 @@ import {
   Spinner,
   StatusBadge,
   Tabs,
+  TextArea,
 } from "@/components/ui";
 import { ConfirmDialog } from "@/components/ui";
 import { CachesTab } from "@/pages/sandbox/CachesTab";
@@ -105,7 +107,7 @@ export function SandboxDetailPage() {
     },
   });
   const attachKit = useApiMutation({
-    mutationFn: (ref: string) => api.attachKit(name, ref),
+    mutationFn: (input: { ref: string; kitArgs: string[] }) => api.attachKit(name, input.ref, input.kitArgs),
     success: `Kit attached to ${name}`,
     onSuccess: (result) => {
       if ((result.report.errors?.length ?? 0) > 0) {
@@ -225,6 +227,9 @@ export function SandboxDetailPage() {
                 <Badge tone="warning">incomplete config</Badge>
               </span>
             ) : null}
+            {sandbox.last_used_at ? (
+              <span className="text-xs font-normal text-faint">Last used {formatTime(sandbox.last_used_at)}</span>
+            ) : null}
           </span>
         }
         subtitle={
@@ -335,6 +340,21 @@ export function SandboxDetailPage() {
         </Panel>
       ) : null}
 
+      {(data.incompatible?.length ?? 0) > 0 ? (
+        <Panel title="Unsupported sbx features" className="mb-4">
+          <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-sm">
+            <span>
+              This config uses features your installed sbx does not support; recreate will fail until sbx is upgraded.
+            </span>
+            <ul className="list-disc pl-5 font-mono text-xs">
+              {(data.incompatible ?? []).map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+          </div>
+        </Panel>
+      ) : null}
+
       <Tabs
         tabs={[
           { id: "overview", label: "Overview" },
@@ -426,7 +446,7 @@ export function SandboxDetailPage() {
         name={sandbox.name}
         open={attachingKit}
         busy={attachKit.isPending}
-        onAttach={(ref) => attachKit.mutate(ref, { onSuccess: () => setAttachingKit(false) })}
+        onAttach={(ref, kitArgs) => attachKit.mutate({ ref, kitArgs }, { onSuccess: () => setAttachingKit(false) })}
         onClose={() => setAttachingKit(false)}
       />
 
@@ -456,14 +476,23 @@ function AttachKitDialog({
   name: string;
   open: boolean;
   busy: boolean;
-  onAttach: (ref: string) => void;
+  onAttach: (ref: string, kitArgs: string[]) => void;
   onClose: () => void;
 }) {
   const [ref, setRef] = useState("");
+  const [kitArgs, setKitArgs] = useState("");
   useEffect(() => {
-    if (open) setRef("");
+    if (open) {
+      setRef("");
+      setKitArgs("");
+    }
   }, [open]);
   const trimmed = ref.trim();
+  // One argument per line: commas are part of values such as hosts=a.com,b.com.
+  const args = kitArgs
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
 
   return (
     <Modal
@@ -481,7 +510,7 @@ function AttachKitDialog({
             variant="primary"
             disabled={trimmed === ""}
             loading={busy}
-            onClick={() => onAttach(trimmed)}
+            onClick={() => onAttach(trimmed, args)}
           >
             Attach kit
           </Button>
@@ -501,6 +530,18 @@ function AttachKitDialog({
             placeholder="ghcr.io/org/mcp-postgres:1.0"
             className="font-mono"
             autoFocus
+          />
+        </Field>
+        <Field
+          label="Kit arguments (optional)"
+          hint="One per line: name=value for every kit, or kit.name=value for one. Recorded in create.kitArgs."
+        >
+          <TextArea
+            rows={2}
+            value={kitArgs}
+            onChange={(event) => setKitArgs(event.target.value)}
+            placeholder="repo=acme/app"
+            className="font-mono text-xs"
           />
         </Field>
         <span className="text-xs text-faint">

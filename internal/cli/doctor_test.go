@@ -71,3 +71,63 @@ environment:
 	}
 	mustContain(t, stdout, "no likely secrets found")
 }
+
+func TestDoctorReportsSbxVersionAndCompatibility(t *testing.T) {
+	env := newCLIEnv(t)
+	t.Setenv("FAKE_SBX_VERSION", "sbx version: v0.43.0 abcdef")
+	writeDoctorFixture(t, env, "web", `schemaVersion: "2"
+kind: mixin
+name: web
+requires:
+  agent: claude
+environment:
+  variables:
+    NODE_ENV: development
+`, "sandbox: web\ncreate:\n  workspaces:\n    - /host/project:/srv/project\n")
+
+	stdout, _, err := env.execute(t, "doctor")
+	if err != nil {
+		t.Fatalf("doctor failed on a compatible-but-old sbx: %v\n%s", err, stdout)
+	}
+	mustContain(t, stdout, "installed sbx is v0.43.0")
+	mustContain(t, stdout, "sbx compatibility: sandbox web: workspace mount target (create.workspaces) requires sbx v0.51.0")
+}
+
+func TestDoctorReportsDaemonRestartRequired(t *testing.T) {
+	env := newCLIEnv(t)
+	t.Setenv("FAKE_SBX_VERSION", "sbx version: v0.54.1 abcdef")
+	t.Setenv("FAKE_SBX_SERVER_JSON", `{"state":"running","version":"v0.43.0"}`)
+	writeDoctorFixture(t, env, "clean", `schemaVersion: "2"
+kind: mixin
+name: clean
+environment:
+  variables:
+    NODE_ENV: development
+`, "sandbox: clean\n")
+
+	stdout, _, err := env.execute(t, "doctor")
+	if err == nil {
+		t.Fatalf("doctor exited zero despite a daemon restart being required:\n%s", stdout)
+	}
+	mustContain(t, stdout, "sbx CLI is v0.54.1")
+	mustContain(t, stdout, "sbx daemon is v0.43.0")
+	mustContain(t, stdout, "sandboxd must restart")
+}
+
+func TestDoctorReportsUnknownSbxVersion(t *testing.T) {
+	env := newCLIEnv(t)
+	t.Setenv("FAKE_SBX_VERSION", "sbx version: dev-abc")
+	writeDoctorFixture(t, env, "clean", `schemaVersion: "2"
+kind: mixin
+name: clean
+environment:
+  variables:
+    NODE_ENV: development
+`, "sandbox: clean\n")
+
+	stdout, _, err := env.execute(t, "doctor")
+	if err != nil {
+		t.Fatalf("doctor failed: %v\n%s", err, stdout)
+	}
+	mustContain(t, stdout, "installed sbx version is unknown")
+}

@@ -4,7 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { queryKeys } from "@/store/realtime";
-import { classifyTraffic } from "@/lib/traffic";
+import { classifyTraffic, sandboxMatches } from "@/lib/traffic";
 import { TrafficReview } from "@/components/TrafficReview";
 import {
   Badge,
@@ -41,13 +41,16 @@ export function TrafficPage() {
 
   const log = useMemo(() => {
     if (!sandboxFilter) return traffic.data;
-    const matches = (entry: LogEntry) => entry.vm_name === sandboxFilter;
+    const matches = (entry: LogEntry) => sandboxMatches(entry.vm_name, sandboxFilter);
     return {
       blocked_hosts: (traffic.data?.blocked_hosts ?? []).filter(matches),
       allowed_hosts: (traffic.data?.allowed_hosts ?? []).filter(matches),
     };
   }, [traffic.data, sandboxFilter]);
-  const pendingCount = useMemo(() => classifyTraffic(traffic.data, rules.data ?? []).pending.length, [traffic.data, rules.data]);
+  const pendingCount = useMemo(
+    () => classifyTraffic(log, rules.data ?? [], sandboxFilter || undefined).pending.length,
+    [log, rules.data, sandboxFilter],
+  );
 
   return (
     <>

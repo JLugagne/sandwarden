@@ -77,7 +77,7 @@ func statusJSON(cmd *cobra.Command, core *app.App, args []string) error {
 	failed := 0
 	for _, name := range names {
 		cfg, _ := core.Fleet.SandboxByName(name)
-		entry := jsonStatusSandbox{jsonSandbox: jsonSandboxFromConfig(name, cfg), Errors: []string{}}
+		entry := jsonStatusSandbox{jsonSandbox: jsonSandboxFromConfig(name, cfg), Errors: []string{}, Incompatible: []string{}}
 		detail, err := core.SandboxDetail(cmd.Context(), name)
 		if err != nil {
 			failed++
@@ -88,6 +88,8 @@ func statusJSON(cmd *cobra.Command, core *app.App, args []string) error {
 		entry.ID = detail.Sandbox.ID
 		entry.Status = detail.Sandbox.Status
 		entry.Running = detail.Sandbox.Running
+		entry.LastUsedAt = detail.Sandbox.LastUsedAt
+		entry.Incompatible = append([]string{}, detail.Incompatible...)
 		entry.Detail = &detail
 		out.Sandboxes = append(out.Sandboxes, entry)
 	}

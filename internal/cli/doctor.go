@@ -10,16 +10,19 @@ import (
 
 	"github.com/JLugagne/sandwarden/internal/app"
 	"github.com/JLugagne/sandwarden/internal/fleet"
+	"github.com/JLugagne/sandwarden/internal/sbx"
 	"github.com/spf13/cobra"
 )
 
 func doctorCmd(opts *Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
-		Short: "Scan sandbox specs for likely secret values written in clear",
+		Short: "Check sandbox specs for secrets and sbx compatibility",
 		Long: "doctor checks every sandbox spec.yaml environment block against the same\n" +
 			"heuristic the create path enforces. Findings report the variable name, file\n" +
-			"and line only: values are never printed. It exits non-zero when findings exist.",
+			"and line only: values are never printed. It also prints the installed sbx\n" +
+			"version and lists the sandboxes whose create block needs a newer sbx. It\n" +
+			"exits non-zero when secret findings exist.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			core, closeApp, err := openApp(cmd.Context(), opts)
@@ -30,6 +33,43 @@ func doctorCmd(opts *Options) *cobra.Command {
 
 			out := cmd.OutOrStdout()
 			sandboxes := core.Fleet.Sandboxes()
+
+			versions, versionErr := core.Sbx.Versions(cmd.Context())
+			version := versions.Effective()
+			if versionErr != nil && !version.Known {
+				fmt.Fprintf(cmd.ErrOrStderr(), "doctor: could not read the sbx version: %v\n", versionErr)
+			}
+			if versions.Client.Known {
+				fmt.Fprintf(out, "doctor: sbx CLI is %s\n", versions.Client)
+			}
+			if versions.ServerPresent && versions.Server.Known {
+				fmt.Fprintf(out, "doctor: sbx daemon is %s\n", versions.Server)
+			}
+			restartRequired := versions.DaemonRestartRequired()
+			var restartErr error
+			if restartRequired {
+				restartErr = &sbx.DaemonRestartError{ClientVersion: versions.Client, ServerVersion: versions.Server}
+				fmt.Fprintf(out, "doctor: %v\n", restartErr)
+			}
+
+			// Compatibility section: list the sandboxes whose create block uses
+			// features the installed sbx cannot run. An unknown version skips it.
+			if version.Known {
+				fmt.Fprintf(out, "doctor: installed sbx is %s\n", version)
+			} else {
+				fmt.Fprintln(out, "doctor: installed sbx version is unknown; compatibility checks are skipped")
+			}
+			affected := 0
+			for _, s := range sandboxes {
+				for _, message := range core.SandboxCompatibility(cmd.Context(), s) {
+					affected++
+					fmt.Fprintf(out, "sbx compatibility: sandbox %s: %s\n", s.Name(), message)
+				}
+			}
+			if version.Known && affected == 0 {
+				fmt.Fprintln(out, "doctor: no sbx compatibility issue found")
+			}
+
 			findings := 0
 			for _, s := range sandboxes {
 				lines, err := secretEnvFindings(s)
@@ -44,7 +84,7 @@ func doctorCmd(opts *Options) *cobra.Command {
 			}
 			if findings == 0 {
 				fmt.Fprintf(out, "doctor: %d sandbox spec(s) scanned, no likely secrets found\n", len(sandboxes))
-				return nil
+				return restartErr
 			}
 			fmt.Fprintf(out, "doctor: %d environment value(s) look like secrets; rotate them, store them with `sbx secret set` (or from the Secrets page), then keep only the bare KEY form in spec.yaml\n", findings)
 			return fmt.Errorf("doctor: %d environment value(s) look like secrets", findings)

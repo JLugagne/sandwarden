@@ -23,6 +23,10 @@ type CreateSandboxRequest struct {
 	Mounts       []MountRequest    `json:"mounts"`
 	Publish      []string          `json:"publish"`
 	Env          []string          `json:"env"`
+	EnvFiles     []string          `json:"env_files"`
+	SkillsMode   string            `json:"skills_mode"`
+	StaticMCP    []string          `json:"static_mcp"`
+	KitArgs      []string          `json:"kit_args"`
 	DenyNetwork  []string          `json:"deny_network"`
 	Clone        bool              `json:"clone"`
 	AttachCaches bool              `json:"attach_caches"`
@@ -32,6 +36,7 @@ type CreateSandboxRequest struct {
 // WorkspaceSpec is one workspace entry of the create form.
 type WorkspaceSpec struct {
 	Path     string `json:"path"`
+	Target   string `json:"target"`
 	ReadOnly bool   `json:"read_only"`
 }
 
@@ -197,4 +202,29 @@ type CompleteSandboxRequest struct {
 	CPUs   int      `json:"cpus"`
 	Memory string   `json:"memory"`
 	Env    []string `json:"env"`
+}
+
+// SbxFeatureCompatDTO is one version-gated feature and whether the installed
+// sbx supports it.
+type SbxFeatureCompatDTO struct {
+	ID         string `json:"id"`
+	Label      string `json:"label"`
+	MinVersion string `json:"min_version"`
+	Supported  bool   `json:"supported"`
+}
+
+// SbxCompatibilityDTO reports the installed sbx versions and the feature table.
+// Version is the effective version feature checks use (the lower of client and
+// daemon). ClientVersion and DaemonVersion are the raw parts for display;
+// DaemonVersion is "unknown" when the daemon does not report one.
+// DaemonRestartRequired is true when the running daemon's version differs from
+// the CLI's. Known is false when the effective version could not be parsed; the
+// UI then shows no restriction, matching the backend's fail-open behaviour.
+type SbxCompatibilityDTO struct {
+	Version               string                `json:"version"`
+	ClientVersion         string                `json:"client_version"`
+	DaemonVersion         string                `json:"daemon_version"`
+	Known                 bool                  `json:"known"`
+	DaemonRestartRequired bool                  `json:"daemon_restart_required"`
+	Features              []SbxFeatureCompatDTO `json:"features"`
 }

@@ -19,13 +19,14 @@ import {
   LogView,
   MenuSelect,
   Modal,
+  Select,
   Tabs,
   TextArea,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { splitList } from "@/lib/format";
 import { agentMenuGroups } from "@/lib/catalog";
-import type { KitItemView, Template, WorkspaceInput } from "@/types";
+import type { CreateSandboxRequest, KitItemView, Template, WorkspaceInput } from "@/types";
 
 const AGENTS = [
   "claude",
@@ -42,6 +43,26 @@ const AGENTS = [
 ];
 
 const EMPTY_WORKSPACES: WorkspaceInput[] = [{ path: "", read_only: false }];
+
+/** One kit-argument row of the Advanced tab. An auto row is derived from a
+ * selected kit's declared arguments and cannot outlive the selection. */
+interface KitArgRow {
+  key: string;
+  value: string;
+  required?: boolean;
+  description?: string;
+  auto?: boolean;
+  /** Declared default of an auto row; an unchanged value is not submitted so
+   * the kit keeps handling its own default (and required/enum/pattern checks). */
+  defaultValue?: string;
+}
+
+const SKILLS_MODES = [
+  { value: "", label: "sbx default" },
+  { value: "off", label: "off" },
+  { value: "readonly", label: "readonly" },
+  { value: "readwrite", label: "readwrite" },
+];
 
 function templateReference(template: Template): string {
   if (!template.repository || !template.tag) return template.id;
@@ -145,9 +166,41 @@ export function CreateSandboxDialog({
   const [denyNetwork, setDenyNetwork] = useState("");
   const [clone, setClone] = useState(false);
   const [attachCaches, setAttachCaches] = useState(true);
+  const [kitArgs, setKitArgs] = useState<KitArgRow[]>([]);
+  const [envFiles, setEnvFiles] = useState("");
+  const [skillsMode, setSkillsMode] = useState("");
+  const [staticMcp, setStaticMcp] = useState("");
 
   const templates = useQuery({ queryKey: queryKeys.templates, queryFn: api.templates });
   const kitItems = useQuery({ queryKey: queryKeys.kitItems, queryFn: () => api.kitItems() });
+  // Installed sbx capabilities: unsupported options are disabled with a hint
+  // instead of letting `sbx create` fail on an unknown flag.
+  const compatibility = useQuery({
+    queryKey: queryKeys.sbxCompatibility,
+    queryFn: api.sbxCompatibility,
+    staleTime: 60_000,
+    retry: 0,
+  });
+  const compatibilityInfo = compatibility.data;
+  const featureSupported = (id: string) => {
+    if (!compatibilityInfo?.known) return true;
+    const feature = compatibilityInfo.features?.find((item) => item.id === id);
+    return feature ? feature.supported : true;
+  };
+  const unsupportedHint = (id: string) => {
+    if (!compatibilityInfo?.known) return undefined;
+    const feature = compatibilityInfo.features?.find((item) => item.id === id);
+    if (!feature || feature.supported) return undefined;
+    return `Requires sbx ≥ ${feature.min_version} (installed ${compatibilityInfo.version})`;
+  };
+  const workspacesUnsupported = !featureSupported("create.workspaces");
+  const staticMcpUnsupported = !featureSupported("create.staticMcp");
+  const staticMcpNoneUnsupported = !featureSupported("create.staticMcp.none");
+  const skillsUnsupported = !featureSupported("create.skills");
+  const kitArgsUnsupported = !featureSupported("create.kitArgs");
+  const envFilesUnsupported = !featureSupported("create.envFiles");
+  const staticMcpNoneTyped = staticMcpNoneUnsupported && splitList(staticMcp).includes("none");
+  const staticMcpNoneHint = staticMcpNoneTyped ? unsupportedHint("create.staticMcp.none") : undefined;
   const agentGroups = useMemo(() => agentMenuGroups(AGENTS, kitItems.data ?? []), [kitItems.data]);
   const mixinGroups = useMemo(() => {
     const groups = new Map<string, KitItemView[]>();
@@ -158,7 +211,14 @@ export function CreateSandboxDialog({
     }
     return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
   }, [kitItems.data]);
-  const selectedKits = splitList(kits);
+  const selectedKits = useMemo(() => splitList(kits), [kits]);
+  // Catalogue kits whose declared arguments drive the pre-filled rows: the
+  // selected mixins and the agent when it is itself a kit reference.
+  const selectedKitItems = useMemo(() => {
+    const refs = new Set(selectedKits);
+    if (agent) refs.add(agent);
+    return (kitItems.data ?? []).filter((item) => refs.has(item.ref));
+  }, [kitItems.data, selectedKits, agent]);
 
   const [jobId, setJobId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -167,6 +227,45 @@ export function CreateSandboxDialog({
   const created = jobId !== null && job.status === "done";
   const logRef = useStickToBottom<HTMLPreElement>(job.output);
   const envIssue = useMemo(() => firstSecretEnvEntry(env), [env]);
+  // Required kit arguments must be filled before creating; when the installed
+  // sbx cannot take kit arguments they are not sent at all, so they cannot
+  // block the create either.
+  const missingRequiredKitArgs = useMemo(
+    () =>
+      kitArgsUnsupported
+        ? []
+        : kitArgs.filter((row) => row.required && row.key.trim() !== "" && row.value.trim() === ""),
+    [kitArgs, kitArgsUnsupported],
+  );
+  const missingRequiredKitArgKeys = missingRequiredKitArgs.map((row) => row.key.trim());
+
+  // Prefill one row per argument the selected kits declare, scoped as
+  // <kit>.<arg> so it applies to that kit only, and keep manually added rows.
+  useEffect(() => {
+    setKitArgs((current) => {
+      const manual = current.filter((row) => !row.auto);
+      const previous = new Map(current.map((row) => [row.key, row.value]));
+      const auto: KitArgRow[] = [];
+      for (const item of selectedKitItems) {
+        for (const [name, arg] of Object.entries(item.spec?.arguments ?? {})) {
+          const key = `${item.name}.${name}`;
+          auto.push({
+            key,
+            value: previous.get(key) ?? arg.default ?? "",
+            required: Boolean(arg.required),
+            description: arg.description ?? "",
+            auto: true,
+            defaultValue: arg.default ?? "",
+          });
+        }
+      }
+      return [...auto, ...manual];
+    });
+  }, [selectedKitItems]);
+
+  function updateKitArg(index: number, patch: Partial<KitArgRow>) {
+    setKitArgs((current) => current.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  }
 
   useEffect(() => {
     if (jobId) setTab("progress");
@@ -212,6 +311,10 @@ export function CreateSandboxDialog({
     setDenyNetwork("");
     setClone(false);
     setAttachCaches(true);
+    setKitArgs([]);
+    setEnvFiles("");
+    setSkillsMode("");
+    setStaticMcp("");
     setJobId(null);
     setBusy(false);
   }
@@ -240,31 +343,54 @@ export function CreateSandboxDialog({
   }
 
   async function submit() {
-    if (busy || created) return;
+    if (busy || created || missingRequiredKitArgs.length > 0) return;
     setBusy(true);
     const id = newJobId();
     jobHub.reset(id);
     reported.current = null;
     setJobId(id);
+    // A row is only submitted when the user actually provided something: empty
+    // rows and auto rows left at the kit's declared default would override the
+    // kit's own default handling (and fail its required/enum/pattern checks).
+    const submittedKitArgs = kitArgs
+      .map((row) => ({ key: row.key.trim(), value: row.value, auto: row.auto, defaultValue: row.defaultValue }))
+      .filter((row) => row.key !== "" && row.value.trim() !== "")
+      .filter((row) => !row.auto || row.value.trim() !== (row.defaultValue ?? "").trim())
+      .map((row) => `${row.key}=${row.value}`);
+
+    const payload: CreateSandboxRequest = {
+      agent,
+      workspaces: workspaces
+        .map((workspace) => {
+          const path = workspace.path.trim();
+          const entry: WorkspaceInput = { path, read_only: workspace.read_only };
+          // A disabled target cannot be changed, so never send a stale one.
+          if (!workspacesUnsupported && workspace.target) entry.target = workspace.target.trim();
+          return entry;
+        })
+        .filter((workspace) => workspace.path !== ""),
+      name: name.trim() || undefined,
+      cpus: Number(cpus) || 0,
+      memory: memory.trim() || undefined,
+      profile: profile.trim() || undefined,
+      template: template.trim() || undefined,
+      kits: splitList(kits),
+      publish: splitList(publish),
+      env: splitList(env),
+      deny_network: splitList(denyNetwork),
+      clone,
+      attach_caches: attachCaches,
+      job_id: id,
+    };
+    // Fields disabled by an unsupported installed sbx are omitted entirely so
+    // the backend never refuses the create on a flag it cannot run.
+    if (!kitArgsUnsupported) payload.kit_args = submittedKitArgs;
+    if (!envFilesUnsupported) payload.env_files = splitList(envFiles);
+    if (!skillsUnsupported) payload.skills_mode = skillsMode || undefined;
+    if (!staticMcpUnsupported) payload.static_mcp = splitList(staticMcp);
+
     try {
-      await api.createSandbox({
-        agent,
-        workspaces: workspaces
-          .map((workspace) => ({ ...workspace, path: workspace.path.trim() }))
-          .filter((workspace) => workspace.path !== ""),
-        name: name.trim() || undefined,
-        cpus: Number(cpus) || 0,
-        memory: memory.trim() || undefined,
-        profile: profile.trim() || undefined,
-        template: template.trim() || undefined,
-        kits: splitList(kits),
-        publish: splitList(publish),
-        env: splitList(env),
-        deny_network: splitList(denyNetwork),
-        clone,
-        attach_caches: attachCaches,
-        job_id: id,
-      });
+      await api.createSandbox(payload);
     } catch (error) {
       setBusy(false);
       toast.push({ tone: "danger", title: "Create failed", body: errorMessage(error) });
@@ -288,7 +414,12 @@ export function CreateSandboxDialog({
             <Button variant="ghost" onClick={close} disabled={busy}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={submit} loading={busy} disabled={!agent || envIssue !== null}>
+            <Button
+              variant="primary"
+              onClick={submit}
+              loading={busy}
+              disabled={!agent || envIssue !== null || staticMcpNoneTyped || missingRequiredKitArgs.length > 0}
+            >
               Create
             </Button>
           </>
@@ -302,6 +433,7 @@ export function CreateSandboxDialog({
             { id: "resources", label: "Resources" },
             { id: "network", label: "Network" },
             { id: "options", label: "Options" },
+            { id: "advanced", label: "Advanced" },
             ...(jobId ? [{ id: "progress", label: "Progress" }] : []),
           ]}
           active={tab}
@@ -371,6 +503,7 @@ export function CreateSandboxDialog({
               {workspaces.map((workspace, index) => (
                 <div key={index} className="flex items-center gap-2">
                   <Input
+                    aria-label="Host path"
                     value={workspace.path}
                     onChange={(event) =>
                       setWorkspaces((current) =>
@@ -378,7 +511,20 @@ export function CreateSandboxDialog({
                       )
                     }
                     placeholder="/absolute/host/path"
-                    className="flex-1 font-mono text-xs"
+                    className="min-w-0 flex-1 font-mono text-xs"
+                  />
+                  <Input
+                    aria-label="Container target"
+                    value={workspace.target ?? ""}
+                    onChange={(event) =>
+                      setWorkspaces((current) =>
+                        current.map((item, i) => (i === index ? { ...item, target: event.target.value } : item)),
+                      )
+                    }
+                    placeholder="container target (optional)"
+                    className="min-w-0 shrink grow-0 basis-56 font-mono text-xs"
+                    disabled={workspacesUnsupported}
+                    title={workspacesUnsupported ? unsupportedHint("create.workspaces") : undefined}
                   />
                   <Button size="icon" variant="ghost" title="Choose folder…" onClick={() => void pickFolder(index)}>
                     <IconFolder className="size-3.5" />
@@ -410,6 +556,9 @@ export function CreateSandboxDialog({
                   <IconPlus className="size-3.5" /> Add workspace
                 </Button>
               </div>
+              {workspacesUnsupported ? (
+                <p className="text-2xs text-warning">{unsupportedHint("create.workspaces")}</p>
+              ) : null}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -543,6 +692,129 @@ export function CreateSandboxDialog({
                 onChange={setAttachCaches}
               />
             </div>
+          </div>
+        ) : null}
+
+        {tab === "advanced" ? (
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-medium text-muted">Kit arguments</span>
+              <span className="text-2xs text-faint">
+                One row per argument the kit declares. A bare name applies to every kit; kit.name targets one kit.
+                Selecting a kit below pre-fills its declared arguments.
+              </span>
+              {kitArgsUnsupported ? (
+                <p className="text-2xs text-warning">{unsupportedHint("create.kitArgs")}</p>
+              ) : null}
+              {kitArgs.length === 0 ? (
+                <p className="text-xs text-faint">No kit argument. Select a kit mixin or add a row.</p>
+              ) : null}
+              {kitArgs.map((row, index) => (
+                <div key={`${row.key}-${index}`} className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={row.key}
+                      onChange={(event) => updateKitArg(index, { key: event.target.value })}
+                      placeholder="name or kit.name"
+                      aria-label={`Kit argument ${index + 1} name`}
+                      className="flex-1 font-mono text-xs"
+                      disabled={kitArgsUnsupported}
+                    />
+                    <Input
+                      value={row.value}
+                      onChange={(event) => updateKitArg(index, { value: event.target.value })}
+                      placeholder="value"
+                      aria-label={`Kit argument ${index + 1} value`}
+                      className="flex-1 font-mono text-xs"
+                      disabled={kitArgsUnsupported}
+                    />
+                    {row.required ? <span className="text-2xs text-danger">required</span> : null}
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      title="Remove kit argument"
+                      onClick={() => setKitArgs((current) => current.filter((_, i) => i !== index))}
+                    >
+                      <IconTrash className="size-3.5" />
+                    </Button>
+                  </div>
+                  {row.description ? <span className="pl-1 text-2xs text-faint">{row.description}</span> : null}
+                </div>
+              ))}
+              {missingRequiredKitArgs.length > 0 ? (
+                <p className="text-2xs text-danger" role="alert">
+                  Fill the required kit argument{missingRequiredKitArgs.length === 1 ? "" : "s"}:{" "}
+                  {missingRequiredKitArgKeys.join(", ")}
+                </p>
+              ) : null}
+              <div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={kitArgsUnsupported}
+                  onClick={() => setKitArgs((current) => [...current, { key: "", value: "", auto: false }])}
+                >
+                  <IconPlus className="size-3.5" /> Add argument
+                </Button>
+              </div>
+            </div>
+
+            <Field
+              label="Environment files (optional)"
+              htmlFor="cs-env-files"
+              hint="One path per line. Env vars are read from these files at create, keeping secrets out of spec.yaml."
+            >
+              <TextArea
+                id="cs-env-files"
+                rows={3}
+                value={envFiles}
+                onChange={(event) => setEnvFiles(event.target.value)}
+                placeholder={"/home/you/.env"}
+                disabled={envFilesUnsupported}
+              />
+            </Field>
+            {envFilesUnsupported ? (
+              <p className="text-2xs text-warning">{unsupportedHint("create.envFiles")}</p>
+            ) : null}
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Skills mode" htmlFor="cs-skills" hint="Shared skills store mount mode; sbx default when unset.">
+                <Select
+                  id="cs-skills"
+                  value={skillsMode}
+                  onChange={(event) => setSkillsMode(event.target.value)}
+                  disabled={skillsUnsupported}
+                >
+                  {SKILLS_MODES.map((mode) => (
+                    <option key={mode.value} value={mode.value}>
+                      {mode.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field
+                label="Static MCP servers (optional)"
+                htmlFor="cs-static-mcp"
+                hint="Comma-separated fixed MCP set chosen at creation; `none` is allowed."
+              >
+                <Input
+                  id="cs-static-mcp"
+                  value={staticMcp}
+                  onChange={(event) => setStaticMcp(event.target.value)}
+                  placeholder="notion, atlassian"
+                  disabled={staticMcpUnsupported}
+                  aria-invalid={staticMcpNoneTyped ? true : undefined}
+                  className={staticMcpNoneTyped ? "border-warning" : undefined}
+                />
+              </Field>
+            </div>
+            {skillsUnsupported ? (
+              <p className="text-2xs text-warning">{unsupportedHint("create.skills")}</p>
+            ) : null}
+            {staticMcpUnsupported ? (
+              <p className="text-2xs text-warning">{unsupportedHint("create.staticMcp")}</p>
+            ) : null}
+            {staticMcpNoneHint ? <p className="text-2xs text-warning">{staticMcpNoneHint}</p> : null}
           </div>
         ) : null}
 

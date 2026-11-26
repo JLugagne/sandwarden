@@ -247,16 +247,28 @@ func (a *App) SandboxTraffic(ctx context.Context, name string) (sbx.PolicyLog, e
 	}
 	var out sbx.PolicyLog
 	for _, e := range log.BlockedHosts {
-		if e.VMName == name {
+		if sandboxMatches(e.VMName, name) {
 			out.BlockedHosts = append(out.BlockedHosts, e)
 		}
 	}
 	for _, e := range log.AllowedHosts {
-		if e.VMName == name {
+		if sandboxMatches(e.VMName, name) {
 			out.AllowedHosts = append(out.AllowedHosts, e)
 		}
 	}
 	return out, nil
+}
+
+func sandboxMatches(a, b string) bool {
+	if a == b {
+		return true
+	}
+	normA := strings.ToLower(strings.TrimSpace(a))
+	normB := strings.ToLower(strings.TrimSpace(b))
+	if normA == normB {
+		return true
+	}
+	return fleet.Slugify(normA) == fleet.Slugify(normB)
 }
 
 // AddMountAt declares a bind mount in the sandbox sidecar and attaches it

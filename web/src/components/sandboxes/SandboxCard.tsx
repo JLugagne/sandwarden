@@ -115,6 +115,7 @@ export function SandboxCard({ sandbox }: { sandbox: SandboxSummary }) {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>created {formatTime(sandbox.created_at)}</span>
             {sandbox.stopped_at ? <span>stopped {formatTime(sandbox.stopped_at)}</span> : null}
+            {sandbox.last_used_at ? <span>Last used {formatTime(sandbox.last_used_at)}</span> : null}
           </div>
         </div>
 
